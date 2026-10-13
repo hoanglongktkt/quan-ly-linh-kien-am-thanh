@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { WEBHOOK_OPERATIONAL_INDEXES } from "../modules/operations/mongoIndexes.js";
 
 /**
  * Hàng đợi webhook Shopee bền trên Mongo.
@@ -19,6 +20,12 @@ const WebhookJobSchema = new mongoose.Schema(
     kind: { type: String, enum: ["webhook", "sync"], default: "webhook" },
     priority: { type: Number, default: 0 },
     orderKey: { type: String, default: "" },
+    // Shop và mốc thời gian riêng để đọc chỉ số không phải bóc payload.
+    shopId: { type: String },
+    received_at: { type: Date },
+    order_persisted_at: { type: Date },
+    finished_at: { type: Date },
+    retry_attempts: { type: Number, default: 0, min: 0 },
     claim_token: { type: String, default: "" },
     // Chỉ một job cron cùng loại đang chờ/chạy/retry; không tạo backlog trùng.
     active_key: { type: String },
@@ -53,6 +60,7 @@ const WebhookJobSchema = new mongoose.Schema(
 WebhookJobSchema.index({ jobId: 1 }, { unique: true, name: "webhook_jobs_jobId_unique" });
 WebhookJobSchema.index({ active_key: 1 }, { unique: true, sparse: true, name: "webhook_jobs_active_key_unique" });
 WebhookJobSchema.index({ state: 1, next_run_at: 1 }, { name: "webhook_jobs_state_next_run" });
+for (const [key, options] of WEBHOOK_OPERATIONAL_INDEXES) WebhookJobSchema.index(key, options);
 
 const WebhookJob =
   mongoose.models.WebhookJob || mongoose.model("WebhookJob", WebhookJobSchema);

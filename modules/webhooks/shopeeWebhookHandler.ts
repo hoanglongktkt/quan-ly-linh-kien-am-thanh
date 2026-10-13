@@ -16,6 +16,7 @@ type QueueOverflowHandler = (payload: Record<string, unknown>) => void | Promise
 type EagerStubHandler = (payload: Record<string, unknown>) => void | Promise<void>;
 
 type WebhookRequestSnapshot = {
+  receivedAt: Date;
   routeLabel: string;
   authorization: string;
   requestUrls: string[];
@@ -147,7 +148,7 @@ async function processShopeeWebhookAsync(
             : "order_related",
     };
     try {
-      const queued = await enqueueWebhookJob({ jobId, payload });
+      const queued = await enqueueWebhookJob({ jobId, payload, receivedAt: snapshot.receivedAt });
       if (queued.duplicate) {
         console.log(
           "[WEBHOOK] idempotent skip — jobId đã có, ACK thành công:",
@@ -214,6 +215,8 @@ export function createShopeeWebhookRouter(
   });
 
   router.post(paths, (req, res) => {
+    // Lấy mốc ngay khi vào handler, trước đọc body và gửi ACK.
+    const receivedAt = new Date();
     console.log("[WEBHOOK TRIGGERED]");
     console.log(
       "[WEBHOOK TRIGGERED] meta",
@@ -241,6 +244,8 @@ export function createShopeeWebhookRouter(
 
     // 3) Snapshot; tuyệt đối không truyền `res` vào tiến trình nền.
     const snapshot: WebhookRequestSnapshot = {
+      // Đo từ HTTP tiếp nhận, bao gồm thời gian đọc body và chờ hàng đợi.
+      receivedAt,
       routeLabel: `POST ${req.originalUrl || req.url}`,
       authorization: readAuthorizationHeader(req),
       requestUrls: buildWebhookUrlCandidates(req),

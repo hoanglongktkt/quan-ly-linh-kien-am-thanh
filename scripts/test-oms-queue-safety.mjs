@@ -7,6 +7,7 @@ import { acquireShopeeSyncLease, renewShopeeSyncLease } from "../services/orderS
 import { withOrderWorkLock } from "../services/orderSync/orderWorkLock.js";
 import { resolveShopeeOrderIdentities } from "../services/orderSync/orderIdentity.js";
 import { safeError, safeTokenMetadata } from "../utils/safeProductionLog.js";
+import { markWebhookOrderPersisted } from "../modules/operations/telemetry.js";
 
 // Fake Mongo trong bộ nhớ: kiểm thử không kết nối hoặc thay đổi dữ liệu thật.
 test("OMS: khóa, job cũ, ưu tiên, retry và idempotency", async (t) => {
@@ -54,7 +55,7 @@ test("OMS: khóa, job cũ, ưu tiên, retry và idempotency", async (t) => {
     if (jobs.some((j) => j.jobId === row.jobId || (row.active_key && j.active_key === row.active_key))) {
       throw Object.assign(new Error("duplicate"), { code: 11000 });
     }
-    const job = { _id: String(jobs.length), createdAt: new Date(), retry_count: 0, ...row };
+    const job = { _id: String(jobs.length), createdAt: new Date(), retry_count: 0, retry_attempts: 0, ...row };
     jobs.push(job); return job;
   });
   t.mock.method(WebhookJob, "updateMany", async (filter, update) => {
@@ -85,6 +86,7 @@ test("OMS: khóa, job cũ, ưu tiên, retry và idempotency", async (t) => {
     candidates.sort((a, b) => (b.priority || 0) - (a.priority || 0));
     const job = candidates[0];
     if (!job) return null;
+    if (job.state === "failed") job.retry_attempts += 1;
     Object.assign(job, { state: "running", claim_token: pipeline[0].$set.claim_token,
       next_run_at: pipeline[0].$set.next_run_at });
     return { ...job };
@@ -140,6 +142,25 @@ test("OMS: khóa, job cũ, ưu tiên, retry và idempotency", async (t) => {
     assert.ok(!job.error_log.includes("SECRET"));
     assert.ok(!safeError(new Error("SECRET")).includes("SECRET"));
     assert.ok(!JSON.stringify(safeTokenMetadata({ access_token: "SECRET", refresh_token: "SECRET" })).includes("SECRET"));
+  });
+  await t.test("giữ mốc lưu đơn qua retry; TTL chỉ bắt đầu khi job kết thúc", async () => {
+    const receivedAt = new Date(Date.now() - 5000);
+    await enqueueWebhookJob({ jobId: "latency-retry", payload: push("LATENCY"), receivedAt });
+    const job = jobs.find((row) => row.jobId === "latency-retry");
+    await drainOnce(async () => { markWebhookOrderPersisted(); throw Error("later_failure"); });
+    assert.equal(job.state, "failed");
+    assert.equal(job.retry_attempts, 0);
+    assert.equal(job.finished_at, undefined);
+    assert.equal(job.received_at, receivedAt);
+    assert.equal(job.shopId, "123");
+    const firstPersistedAt = job.order_persisted_at;
+    assert.ok(firstPersistedAt instanceof Date);
+    job.next_run_at = new Date(0);
+    await drainOnce(async () => { markWebhookOrderPersisted(); });
+    assert.equal(job.state, "succeeded");
+    assert.equal(job.retry_attempts, 1);
+    assert.equal(job.order_persisted_at, firstPersistedAt);
+    assert.ok(job.finished_at instanceof Date);
   });
   await t.test("identity giữ _id cũ và cùng cặp luôn dùng một _id", async () => {
     const model = { find: () => ({ select: () => ({ lean: async () => [{ _id: "legacy-id", shopId: "123", orderSn: "ID" }] }) }) };

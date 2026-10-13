@@ -10,6 +10,9 @@ export { normalizeScannedCode } from "../../modules/orders/scanCode.ts";
  */
 import { resolveShopeeOrderIdentities } from "../../services/orderSync/orderIdentity.js";
 import mongoose, { Schema, type Model } from "mongoose";
+import { markWebhookOrderPersisted } from "../../modules/operations/telemetry.js";
+import { ORDER_OPERATIONAL_INDEXES, LISTING_OPERATIONAL_INDEXES,
+  ensureOperationalIndexes, ensureMongoIndex, retentionSeconds } from "../../modules/operations/mongoIndexes.js";
 import fs from "fs";
 import path from "path";
 import {
@@ -185,14 +188,8 @@ type SyncJobDoc = {
 };
 
 /** TTL mặc định 14 ngày (1.209.600 giây) — Atlas Free 512MB dễ đầy vì order_events. */
-const ORDER_EVENT_TTL_SECONDS = Math.max(
-  24 * 60 * 60,
-  Number(process.env.ORDER_EVENT_TTL_SECONDS || 14 * 24 * 60 * 60),
-);
-const SYNC_JOB_TTL_SECONDS = Math.max(
-  24 * 60 * 60,
-  Number(process.env.SYNC_JOB_TTL_SECONDS || 14 * 24 * 60 * 60),
-);
+const ORDER_EVENT_TTL_SECONDS = retentionSeconds("ORDER_EVENT_TTL_SECONDS");
+const SYNC_JOB_TTL_SECONDS = retentionSeconds("SYNC_JOB_TTL_SECONDS");
 
 const ProductSchema = new Schema<ProductDoc>(
   {
@@ -251,6 +248,8 @@ const ChannelListingSchema = new Schema<ListingDoc>(
   },
   { collection: "channel_listings", versionKey: false }
 );
+
+for (const [key, options] of LISTING_OPERATIONAL_INDEXES) ChannelListingSchema.index(key, options);
 
 const MetaSchema = new Schema<MetaDoc>(
   {
@@ -339,6 +338,7 @@ OrderSchema.index(
   },
 );
 // Luồng in ấn / BG PDF: lọc hasPdf + isPrinted cùng lúc (thay index đơn lẻ).
+for (const [key, options] of ORDER_OPERATIONAL_INDEXES) OrderSchema.index(key, options);
 OrderSchema.index({ hasPdf: 1, isPrinted: 1 });
 // Quét đơn mới theo chiều giảm dần (Shopee update_time → last_shopee_update_at).
 OrderSchema.index({ last_shopee_update_at: -1 });
@@ -772,17 +772,20 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
       console.warn("[MongoDB] ensureScannerIndexesInStore:", idxErr);
     }
 
-    // TTL + dọn ngay order_events/sync_jobs (Atlas Free 512MB — không chờ TTL monitor).
+    // Bổ sung index theo truy vấn thực tế, không drop index sẵn có.
+    try { await ensureOperationalIndexes(mongoose.connection.db); }
+    catch { console.warn("[MongoDB] operational_indexes_failed — chạy scripts/ensure-oms-indexes.mjs để kiểm tra"); }
+    // TTL + dọn log theo thời hạn cấu hình, không xóa toàn bộ lịch sử.
     try {
       const ttl = await ensureRetentionTtlIndexes();
       console.log(
         `[MongoDB] TTL ready order_events=${ttl.orderEventsTtlSeconds}s sync_jobs=${ttl.syncJobsTtlSeconds}s` +
-          ` (recreated=${ttl.recreated.join(",") || "none"})`,
+          ` (ensured=${ttl.recreated.join(",") || "none"})`,
       );
     } catch (ttlErr: any) {
       console.warn("[MongoDB] ensureRetentionTtlIndexes:", ttlErr?.message || ttlErr);
     }
-    void purgeMongoTempCollections({ orderEventDays: 14, syncJobDays: 14 })
+    void purgeMongoTempCollections({ orderEventDays: ORDER_EVENT_TTL_SECONDS / 86400, syncJobDays: SYNC_JOB_TTL_SECONDS / 86400 })
       .then((r) => {
         console.log(
           `[MongoDB] Temp cleanup boot: order_events_deleted=${r.orderEventsDeleted}` +
@@ -4118,6 +4121,8 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
         const ops = accepted.map((item) => item.op);
         if (ops.length === 0) return;
         const result = await OrderModel.bulkWrite(ops as any, { ordered: false });
+        // Đo ngay sau ghi orders thành công, trước metadata/mirror hoặc bước khác.
+        if (result.upsertedCount || result.matchedCount) markWebhookOrderPersisted();
         await setMeta("orders_updated_at", new Date().toISOString());
         // Không ghi order_events (đã loại bỏ để tránh đầy Atlas Free).
         console.log(
@@ -11937,7 +11942,7 @@ export async function mergeDonHoanHuyIntoOrders(orders: any[]): Promise<any[]> {
 
 /**
  * Đảm bảo TTL Index trên order_events.occurred_at và sync_jobs.finished_at.
- * Nếu index cũ lệch expireAfterSeconds → drop + tạo lại (Mongo không cho sửa TTL tại chỗ).
+ * Nếu index cũ lệch expireAfterSeconds → collMod, không drop index.
  */
 export async function ensureRetentionTtlIndexes(): Promise<{
   orderEventsTtlSeconds: number;
@@ -11953,32 +11958,13 @@ export async function ensureRetentionTtlIndexes(): Promise<{
     key: Record<string, 1 | -1>,
     expireAfterSeconds: number,
   ) => {
-    const coll = model.collection;
-    const existing = await coll.indexes();
-    const hit = existing.find((idx: any) => idx?.name === indexName);
-    const currentTtl = hit?.expireAfterSeconds;
-    if (hit && Number(currentTtl) === Number(expireAfterSeconds)) {
-      return;
-    }
-    if (hit) {
-      try {
-        await coll.dropIndex(indexName);
-        console.log(
-          `[MongoDB] Dropped TTL index ${indexName} (old expireAfterSeconds=${currentTtl})`,
-        );
-      } catch (dropErr: any) {
-        // Index không tồn tại / đang build — thử tiếp create.
-        console.warn(`[MongoDB] dropIndex ${indexName}:`, dropErr?.message || dropErr);
-      }
-    }
-    await coll.createIndex(key, {
+    await ensureMongoIndex(mongoose.connection.db, model.collection.collectionName, key, {
       name: indexName,
       expireAfterSeconds,
-      background: true,
-    } as any);
+    });
     recreated.push(indexName);
     console.log(
-      `[MongoDB] Created TTL index ${indexName} expireAfterSeconds=${expireAfterSeconds}`,
+      `[MongoDB] Ensured TTL index ${indexName} expireAfterSeconds=${expireAfterSeconds}`,
     );
   };
 
@@ -11994,7 +11980,7 @@ export async function ensureRetentionTtlIndexes(): Promise<{
     { finished_at: 1 },
     SYNC_JOB_TTL_SECONDS,
   );
-  // don_hoan_huy TTL: schema scannedAt.expires = 1209600 (Mongoose tự tạo index)
+  // Không đặt TTL lên dữ liệu nghiệp vụ don_hoan_huy/orders/channel_listings.
 
   return {
     orderEventsTtlSeconds: ORDER_EVENT_TTL_SECONDS,
@@ -12074,8 +12060,7 @@ export async function purgeSyncJobsOlderThan(
 
 /**
  * Dọn collection tạm trên Atlas Free.
- * order_events đã NGỪNG ghi — xóa toàn bộ để giải phóng dung lượng.
- * sync_jobs: chỉ xóa job đã kết thúc >14 ngày.
+ * Giữ lịch sử trong thời hạn TTL; chỉ xóa log và job đã kết thúc quá hạn.
  */
 export async function purgeMongoTempCollections(opts?: {
   orderEventDays?: number;
@@ -12092,7 +12077,7 @@ export async function purgeMongoTempCollections(opts?: {
   note: string;
 }> {
   requireMongo();
-  const syncJobDays = opts?.syncJobDays ?? 14;
+  const syncJobDays = opts?.syncJobDays ?? SYNC_JOB_TTL_SECONDS / 86400;
   let ttl: Awaited<ReturnType<typeof ensureRetentionTtlIndexes>> | undefined;
   if (opts?.ensureTtl !== false) {
     try {
@@ -12102,29 +12087,10 @@ export async function purgeMongoTempCollections(opts?: {
     }
   }
 
-  const orderEventsBefore = await OrderEventModel.countDocuments().catch(() => 0);
-  let orderEventsDeleted = 0;
-  if (orderEventsBefore > 0) {
-    try {
-      await OrderEventModel.collection.drop();
-      orderEventsDeleted = orderEventsBefore;
-      console.log(
-        `[MongoDB] Dropped collection order_events entirely (was ${orderEventsBefore} docs)`,
-      );
-    } catch (dropErr: any) {
-      const msg = String(dropErr?.message || dropErr || "");
-      if (!/ns not found|NamespaceNotFound/i.test(msg)) {
-        console.warn("[MongoDB] drop order_events failed, fallback deleteMany:", msg);
-        try {
-          const r = await OrderEventModel.deleteMany({});
-          orderEventsDeleted = Number(r.deletedCount || 0);
-        } catch (delErr: any) {
-          console.warn("[MongoDB] deleteMany order_events failed:", delErr?.message || delErr);
-        }
-      }
-    }
-  }
-  const orderEventsAfter = await OrderEventModel.countDocuments().catch(() => 0);
+  const events = await purgeOrderEventsOlderThan(opts?.orderEventDays ?? ORDER_EVENT_TTL_SECONDS / 86400);
+  const orderEventsBefore = events.before;
+  const orderEventsDeleted = events.deleted;
+  const orderEventsAfter = events.after;
 
   const jobs = await purgeSyncJobsOlderThan(syncJobDays);
 
@@ -12136,8 +12102,7 @@ export async function purgeMongoTempCollections(opts?: {
     syncJobsBefore: jobs.before,
     syncJobsAfter: jobs.after,
     ttl,
-    note:
-      "Đã xóa order_events (ngừng ghi log). sync_jobs TTL 14d. don_hoan_huy TTL 14d riêng.",
+    note: "Chỉ xóa order_events và sync_jobs đã kết thúc quá thời hạn lưu cấu hình.",
   };
 }
 

@@ -21811,14 +21811,14 @@ var require_etag = __commonJS({
   "node_modules/etag/index.js"(exports2, module2) {
     "use strict";
     module2.exports = etag;
-    var crypto11 = require("crypto");
+    var crypto12 = require("crypto");
     var Stats = require("fs").Stats;
     var toString3 = Object.prototype.toString;
     function entitytag(entity) {
       if (entity.length === 0) {
         return '"0-2jmj7l5rSw0yVb/vlWAYkK/YBwk"';
       }
-      var hash = crypto11.createHash("sha1").update(entity, "utf8").digest("base64").substring(0, 27);
+      var hash = crypto12.createHash("sha1").update(entity, "utf8").digest("base64").substring(0, 27);
       var len = typeof entity === "string" ? Buffer.byteLength(entity, "utf8") : entity.length;
       return '"' + len.toString(16) + "-" + hash + '"';
     }
@@ -23695,7 +23695,7 @@ var require_application = __commonJS({
   "node_modules/express/lib/application.js"(exports2, module2) {
     "use strict";
     var finalhandler = require_finalhandler();
-    var Router30 = require_router();
+    var Router31 = require_router();
     var methods = require_methods();
     var middleware = require_init();
     var query = require_query();
@@ -23760,7 +23760,7 @@ var require_application = __commonJS({
     };
     app.lazyrouter = function lazyrouter() {
       if (!this._router) {
-        this._router = new Router30({
+        this._router = new Router31({
           caseSensitive: this.enabled("case sensitive routing"),
           strict: this.enabled("strict routing")
         });
@@ -24711,11 +24711,11 @@ var require_request = __commonJS({
 // node_modules/cookie-signature/index.js
 var require_cookie_signature = __commonJS({
   "node_modules/cookie-signature/index.js"(exports2) {
-    var crypto11 = require("crypto");
+    var crypto12 = require("crypto");
     exports2.sign = function(val, secret) {
       if ("string" !== typeof val) throw new TypeError("Cookie value must be provided as a string.");
       if (null == secret) throw new TypeError("Secret key must be provided.");
-      return val + "." + crypto11.createHmac("sha256", secret).update(val).digest("base64").replace(/\=+$/, "");
+      return val + "." + crypto12.createHmac("sha256", secret).update(val).digest("base64").replace(/\=+$/, "");
     };
     exports2.unsign = function(val, secret) {
       if ("string" !== typeof val) throw new TypeError("Signed cookie string must be provided.");
@@ -24724,7 +24724,7 @@ var require_cookie_signature = __commonJS({
       return sha1(mac) == sha1(val) ? str : false;
     };
     function sha1(str) {
-      return crypto11.createHash("sha1").update(str).digest("hex");
+      return crypto12.createHash("sha1").update(str).digest("hex");
     }
   }
 });
@@ -25624,7 +25624,7 @@ var require_express = __commonJS({
     var mixin = require_merge_descriptors();
     var proto = require_application();
     var Route = require_route();
-    var Router30 = require_router();
+    var Router31 = require_router();
     var req = require_request();
     var res = require_response();
     exports2 = module2.exports = createApplication;
@@ -25647,7 +25647,7 @@ var require_express = __commonJS({
     exports2.request = req;
     exports2.response = res;
     exports2.Route = Route;
-    exports2.Router = Router30;
+    exports2.Router = Router31;
     exports2.json = bodyParser.json;
     exports2.query = require_query();
     exports2.raw = bodyParser.raw;
@@ -25698,7 +25698,7 @@ var require_main = __commonJS({
     var fs26 = require("fs");
     var path26 = require("path");
     var os3 = require("os");
-    var crypto11 = require("crypto");
+    var crypto12 = require("crypto");
     var TIPS = [
       "\u25C8 encrypted .env [www.dotenvx.com]",
       "\u25C8 secrets for agents [www.dotenvx.com]",
@@ -25942,7 +25942,7 @@ var require_main = __commonJS({
       const authTag = ciphertext.subarray(-16);
       ciphertext = ciphertext.subarray(12, -16);
       try {
-        const aesgcm = crypto11.createDecipheriv("aes-256-gcm", key, nonce);
+        const aesgcm = crypto12.createDecipheriv("aes-256-gcm", key, nonce);
         aesgcm.setAuthTag(authTag);
         return `${aesgcm.update(ciphertext)}${aesgcm.final()}`;
       } catch (error) {
@@ -48130,11 +48130,11 @@ var DonHoanHuy_exports = {};
 __export(DonHoanHuy_exports, {
   default: () => DonHoanHuy_default
 });
-var import_mongoose4, DonHoanHuySchema, DonHoanHuy, DonHoanHuy_default;
+var import_mongoose6, DonHoanHuySchema, DonHoanHuy, DonHoanHuy_default;
 var init_DonHoanHuy = __esm({
   "models/DonHoanHuy.js"() {
-    import_mongoose4 = __toESM(require("mongoose"), 1);
-    DonHoanHuySchema = new import_mongoose4.default.Schema(
+    import_mongoose6 = __toESM(require("mongoose"), 1);
+    DonHoanHuySchema = new import_mongoose6.default.Schema(
       {
         orderSn: {
           type: String,
@@ -48202,7 +48202,7 @@ var init_DonHoanHuy = __esm({
     DonHoanHuySchema.index({ scannedAt: -1 }, { name: "don_hoan_huy_scannedAt" });
     DonHoanHuySchema.index({ type: 1 }, { name: "don_hoan_huy_type" });
     DonHoanHuySchema.index({ local_status: 1 }, { name: "don_hoan_huy_local_status" });
-    DonHoanHuy = import_mongoose4.default.models.DonHoanHuy || import_mongoose4.default.model("DonHoanHuy", DonHoanHuySchema);
+    DonHoanHuy = import_mongoose6.default.models.DonHoanHuy || import_mongoose6.default.model("DonHoanHuy", DonHoanHuySchema);
     DonHoanHuy_default = DonHoanHuy;
   }
 });
@@ -48457,14 +48457,14 @@ var require_buffer_equal_constant_time = __commonJS({
 var require_jwa = __commonJS({
   "node_modules/jwa/index.js"(exports2, module2) {
     var Buffer4 = require_safe_buffer().Buffer;
-    var crypto11 = require("crypto");
+    var crypto12 = require("crypto");
     var formatEcdsa = require_ecdsa_sig_formatter();
     var util4 = require("util");
     var MSG_INVALID_ALGORITHM = '"%s" is not a valid algorithm.\n  Supported algorithms are:\n  "HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512" and "none".';
     var MSG_INVALID_SECRET = "secret must be a string or buffer";
     var MSG_INVALID_VERIFIER_KEY = "key must be a string or a buffer";
     var MSG_INVALID_SIGNER_KEY = "key must be a string, a buffer or an object";
-    var supportsKeyObjects = typeof crypto11.createPublicKey === "function";
+    var supportsKeyObjects = typeof crypto12.createPublicKey === "function";
     if (supportsKeyObjects) {
       MSG_INVALID_VERIFIER_KEY += " or a KeyObject";
       MSG_INVALID_SECRET += "or a KeyObject";
@@ -48554,17 +48554,17 @@ var require_jwa = __commonJS({
       return function sign(thing, secret) {
         checkIsSecretKey(secret);
         thing = normalizeInput(thing);
-        var hmac = crypto11.createHmac("sha" + bits, secret);
+        var hmac = crypto12.createHmac("sha" + bits, secret);
         var sig = (hmac.update(thing), hmac.digest("base64"));
         return fromBase64(sig);
       };
     }
     var bufferEqual;
-    var timingSafeEqual = "timingSafeEqual" in crypto11 ? function timingSafeEqual2(a, b) {
+    var timingSafeEqual = "timingSafeEqual" in crypto12 ? function timingSafeEqual2(a, b) {
       if (a.byteLength !== b.byteLength) {
         return false;
       }
-      return crypto11.timingSafeEqual(a, b);
+      return crypto12.timingSafeEqual(a, b);
     } : function timingSafeEqual2(a, b) {
       if (!bufferEqual) {
         bufferEqual = require_buffer_equal_constant_time();
@@ -48581,7 +48581,7 @@ var require_jwa = __commonJS({
       return function sign(thing, privateKey) {
         checkIsPrivateKey(privateKey);
         thing = normalizeInput(thing);
-        var signer = crypto11.createSign("RSA-SHA" + bits);
+        var signer = crypto12.createSign("RSA-SHA" + bits);
         var sig = (signer.update(thing), signer.sign(privateKey, "base64"));
         return fromBase64(sig);
       };
@@ -48591,7 +48591,7 @@ var require_jwa = __commonJS({
         checkIsPublicKey(publicKey);
         thing = normalizeInput(thing);
         signature = toBase64(signature);
-        var verifier = crypto11.createVerify("RSA-SHA" + bits);
+        var verifier = crypto12.createVerify("RSA-SHA" + bits);
         verifier.update(thing);
         return verifier.verify(publicKey, signature, "base64");
       };
@@ -48600,11 +48600,11 @@ var require_jwa = __commonJS({
       return function sign(thing, privateKey) {
         checkIsPrivateKey(privateKey);
         thing = normalizeInput(thing);
-        var signer = crypto11.createSign("RSA-SHA" + bits);
+        var signer = crypto12.createSign("RSA-SHA" + bits);
         var sig = (signer.update(thing), signer.sign({
           key: privateKey,
-          padding: crypto11.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto11.constants.RSA_PSS_SALTLEN_DIGEST
+          padding: crypto12.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto12.constants.RSA_PSS_SALTLEN_DIGEST
         }, "base64"));
         return fromBase64(sig);
       };
@@ -48614,12 +48614,12 @@ var require_jwa = __commonJS({
         checkIsPublicKey(publicKey);
         thing = normalizeInput(thing);
         signature = toBase64(signature);
-        var verifier = crypto11.createVerify("RSA-SHA" + bits);
+        var verifier = crypto12.createVerify("RSA-SHA" + bits);
         verifier.update(thing);
         return verifier.verify({
           key: publicKey,
-          padding: crypto11.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto11.constants.RSA_PSS_SALTLEN_DIGEST
+          padding: crypto12.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto12.constants.RSA_PSS_SALTLEN_DIGEST
         }, signature, "base64");
       };
     }
@@ -61747,22 +61747,22 @@ var require_crypto2 = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.NodeCrypto = void 0;
-    var crypto11 = require("crypto");
+    var crypto12 = require("crypto");
     var NodeCrypto = class {
       async sha256DigestBase64(str) {
-        return crypto11.createHash("sha256").update(str).digest("base64");
+        return crypto12.createHash("sha256").update(str).digest("base64");
       }
       randomBytesBase64(count) {
-        return crypto11.randomBytes(count).toString("base64");
+        return crypto12.randomBytes(count).toString("base64");
       }
       async verify(pubkey, data, signature) {
-        const verifier = crypto11.createVerify("RSA-SHA256");
+        const verifier = crypto12.createVerify("RSA-SHA256");
         verifier.update(data);
         verifier.end();
         return verifier.verify(pubkey, signature, "base64");
       }
       async sign(privateKey, data) {
-        const signer = crypto11.createSign("RSA-SHA256");
+        const signer = crypto12.createSign("RSA-SHA256");
         signer.update(data);
         signer.end();
         return signer.sign(privateKey, "base64");
@@ -61780,7 +61780,7 @@ var require_crypto2 = __commonJS({
        *   string in hexadecimal encoding.
        */
       async sha256DigestHex(str) {
-        return crypto11.createHash("sha256").update(str).digest("hex");
+        return crypto12.createHash("sha256").update(str).digest("hex");
       }
       /**
        * Computes the HMAC hash of a message using the provided crypto key and the
@@ -61792,7 +61792,7 @@ var require_crypto2 = __commonJS({
        */
       async signWithHmacSha256(key, msg) {
         const cryptoKey = typeof key === "string" ? key : toBuffer(key);
-        return toArrayBuffer(crypto11.createHmac("sha256", cryptoKey).update(msg).digest());
+        return toArrayBuffer(crypto12.createHmac("sha256", cryptoKey).update(msg).digest());
       }
     };
     exports2.NodeCrypto = NodeCrypto;
@@ -62483,10 +62483,10 @@ var require_oauth2client = __commonJS({
        * https://github.com/googleapis/google-auth-library-nodejs/blob/main/samples/oauth2-codeVerifier.js
        */
       async generateCodeVerifierAsync() {
-        const crypto11 = (0, crypto_1.createCrypto)();
-        const randomString = crypto11.randomBytesBase64(96);
+        const crypto12 = (0, crypto_1.createCrypto)();
+        const randomString = crypto12.randomBytesBase64(96);
         const codeVerifier = randomString.replace(/\+/g, "~").replace(/=/g, "_").replace(/\//g, "-");
-        const unencodedCodeChallenge = await crypto11.sha256DigestBase64(codeVerifier);
+        const unencodedCodeChallenge = await crypto12.sha256DigestBase64(codeVerifier);
         const codeChallenge = unencodedCodeChallenge.split("=")[0].replace(/\+/g, "-").replace(/\//g, "_");
         return { codeVerifier, codeChallenge };
       }
@@ -62927,7 +62927,7 @@ var require_oauth2client = __commonJS({
        * @return Returns a promise resolving to LoginTicket on verification.
        */
       async verifySignedJwtWithCertsAsync(jwt2, certs, requiredAudience, issuers, maxExpiry) {
-        const crypto11 = (0, crypto_1.createCrypto)();
+        const crypto12 = (0, crypto_1.createCrypto)();
         if (!maxExpiry) {
           maxExpiry = _OAuth2Client.DEFAULT_MAX_TOKEN_LIFETIME_SECS_;
         }
@@ -62940,7 +62940,7 @@ var require_oauth2client = __commonJS({
         let envelope;
         let payload;
         try {
-          envelope = JSON.parse(crypto11.decodeBase64StringUtf8(segments[0]));
+          envelope = JSON.parse(crypto12.decodeBase64StringUtf8(segments[0]));
         } catch (err) {
           if (err instanceof Error) {
             err.message = `Can't parse token envelope: ${segments[0]}': ${err.message}`;
@@ -62951,7 +62951,7 @@ var require_oauth2client = __commonJS({
           throw new Error("Can't parse token envelope: " + segments[0]);
         }
         try {
-          payload = JSON.parse(crypto11.decodeBase64StringUtf8(segments[1]));
+          payload = JSON.parse(crypto12.decodeBase64StringUtf8(segments[1]));
         } catch (err) {
           if (err instanceof Error) {
             err.message = `Can't parse token payload '${segments[0]}`;
@@ -62968,7 +62968,7 @@ var require_oauth2client = __commonJS({
         if (envelope.alg === "ES256") {
           signature = formatEcdsa.joseToDer(signature, "ES256").toString("base64");
         }
-        const verified = await crypto11.verify(cert, signed, signature);
+        const verified = await crypto12.verify(cert, signed, signature);
         if (!verified) {
           throw new Error("Invalid token signature: " + jwt2);
         }
@@ -65538,14 +65538,14 @@ var require_awsrequestsigner = __commonJS({
       }
     };
     exports2.AwsRequestSigner = AwsRequestSigner;
-    async function sign(crypto11, key, msg) {
-      return await crypto11.signWithHmacSha256(key, msg);
+    async function sign(crypto12, key, msg) {
+      return await crypto12.signWithHmacSha256(key, msg);
     }
-    async function getSigningKey(crypto11, key, dateStamp, region, serviceName) {
-      const kDate = await sign(crypto11, `AWS4${key}`, dateStamp);
-      const kRegion = await sign(crypto11, kDate, region);
-      const kService = await sign(crypto11, kRegion, serviceName);
-      const kSigning = await sign(crypto11, kService, "aws4_request");
+    async function getSigningKey(crypto12, key, dateStamp, region, serviceName) {
+      const kDate = await sign(crypto12, `AWS4${key}`, dateStamp);
+      const kRegion = await sign(crypto12, kDate, region);
+      const kService = await sign(crypto12, kRegion, serviceName);
+      const kSigning = await sign(crypto12, kService, "aws4_request");
       return kSigning;
     }
     async function generateAuthenticationHeaderMap(options) {
@@ -66511,7 +66511,7 @@ var require_gdchclient = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GdchClient = exports2.GDCH_SERVICE_ACCOUNT_TYPE = void 0;
-    var crypto11 = require("crypto");
+    var crypto12 = require("crypto");
     var fs26 = require("fs");
     var https3 = require("https");
     var oauth2client_1 = require_oauth2client();
@@ -66702,7 +66702,7 @@ var require_gdchclient = __commonJS({
         const encodedHeader = this.base64UrlEncode(JSON.stringify(header));
         const encodedPayload = this.base64UrlEncode(JSON.stringify(payload));
         const signingInput = `${encodedHeader}.${encodedPayload}`;
-        const signature = crypto11.sign("sha256", Buffer.from(signingInput), {
+        const signature = crypto12.sign("sha256", Buffer.from(signingInput), {
           key: this.privateKey,
           dsaEncoding: "ieee-p1363"
         });
@@ -67563,24 +67563,24 @@ var require_googleauth = __commonJS({
           const signed = await client.sign(data);
           return signed.signedBlob;
         }
-        const crypto11 = (0, crypto_1.createCrypto)();
+        const crypto12 = (0, crypto_1.createCrypto)();
         if (client instanceof jwtclient_1.JWT && client.key) {
-          const sign = await crypto11.sign(client.key, data);
+          const sign = await crypto12.sign(client.key, data);
           return sign;
         }
         const creds = await this.getCredentials();
         if (!creds.client_email) {
           throw new Error("Cannot sign data without `client_email`.");
         }
-        return this.signBlob(crypto11, creds.client_email, data, endpoint);
+        return this.signBlob(crypto12, creds.client_email, data, endpoint);
       }
-      async signBlob(crypto11, emailOrUniqueId, data, endpoint) {
+      async signBlob(crypto12, emailOrUniqueId, data, endpoint) {
         const url2 = new URL(endpoint + `${emailOrUniqueId}:signBlob`);
         const res = await this.request({
           method: "POST",
           url: url2.href,
           data: {
-            payload: crypto11.encodeBase64StringUtf8(data)
+            payload: crypto12.encodeBase64StringUtf8(data)
           },
           retry: true,
           retryConfig: {
@@ -72212,7 +72212,7 @@ var require_form_data = __commonJS({
     var parseUrl2 = require("url").parse;
     var fs26 = require("fs");
     var Stream4 = require("stream").Stream;
-    var crypto11 = require("crypto");
+    var crypto12 = require("crypto");
     var mime = require_mime_types();
     var asynckit = require_asynckit();
     var setToStringTag = require_es_set_tostringtag();
@@ -72421,7 +72421,7 @@ var require_form_data = __commonJS({
       return Buffer.concat([dataBuffer, Buffer.from(this._lastBoundary())]);
     };
     FormData5.prototype._generateBoundary = function() {
-      this._boundary = "--------------------------" + crypto11.randomBytes(12).toString("hex");
+      this._boundary = "--------------------------" + crypto12.randomBytes(12).toString("hex");
     };
     FormData5.prototype.getLengthSync = function() {
       var knownLength = this._overheadLength + this._valueLength;
@@ -74939,7 +74939,175 @@ function extractShopeeWebhookRawStatus(payload) {
 }
 
 // server.ts
-var import_express31 = __toESM(require_express2(), 1);
+var import_express32 = __toESM(require_express2(), 1);
+
+// routes/operationsRoutes.js
+var import_express = __toESM(require_express2(), 1);
+var import_node_crypto = __toESM(require("node:crypto"), 1);
+var import_mongoose = __toESM(require("mongoose"), 1);
+
+// modules/operations/metrics.js
+var ACTIVE_STATES = ["pending", "running", "failed"];
+function parseMetricsQuery(query = {}) {
+  const allowed = /* @__PURE__ */ new Set(["shopId", "windowMinutes"]);
+  if (Object.keys(query).some((key) => !allowed.has(key))) throw new Error("invalid_query");
+  const shopId = query.shopId;
+  const window2 = query.windowMinutes ?? "60";
+  if (shopId !== void 0 && (typeof shopId !== "string" || !/^\d{1,20}$/.test(shopId)) || typeof window2 !== "string" || !/^\d+$/.test(window2)) throw new Error("invalid_query");
+  const windowMinutes = Number(window2);
+  if (!Number.isInteger(windowMinutes) || windowMinutes < 1 || windowMinutes > 1440) throw new Error("invalid_query");
+  return { shopId, windowMinutes };
+}
+async function collectOperationsMetrics(db, { shopId, windowMinutes }, now = /* @__PURE__ */ new Date()) {
+  const since = new Date(now.getTime() - windowMinutes * 6e4);
+  const errorSince = new Date(Math.floor(since.getTime() / 6e4) * 6e4);
+  const shopFilter = shopId ? { shopId } : {};
+  const aggregate = (collection, pipeline2) => db.collection(collection).aggregate(pipeline2, { maxTimeMS: 5e3, allowDiskUse: false }).toArray();
+  const [queue, jobs, errors] = await Promise.all([
+    aggregate("webhook_jobs", [
+      { $match: { ...shopFilter, state: { $in: ACTIVE_STATES } } },
+      { $group: { _id: "$state", count: { $sum: 1 }, oldest: { $min: "$createdAt" } } }
+    ]),
+    aggregate("webhook_jobs", [
+      { $match: { ...shopFilter, createdAt: { $gte: since, $lte: now } } },
+      { $project: {
+        shopId: 1,
+        state: 1,
+        retry_count: 1,
+        retry_attempts: 1,
+        kind: 1,
+        latency: { $cond: [
+          { $and: [
+            { $eq: ["$kind", "webhook"] },
+            { $eq: [{ $type: "$received_at" }, "date"] },
+            { $eq: [{ $type: "$order_persisted_at" }, "date"] }
+          ] },
+          { $max: [0, { $subtract: ["$order_persisted_at", "$received_at"] }] },
+          null
+        ] }
+      } },
+      { $group: {
+        _id: { $ifNull: ["$shopId", "unattributed"] },
+        jobs: { $sum: 1 },
+        jobFailures: { $sum: { $ifNull: ["$retry_count", 0] } },
+        retryAttempts: { $sum: { $ifNull: ["$retry_attempts", 0] } },
+        legacyRetryJobs: { $sum: { $cond: [{ $eq: [{ $type: "$retry_attempts" }, "missing"] }, 1, 0] } },
+        deadLetterJobs: { $sum: { $cond: [{ $eq: ["$state", "dead-letter"] }, 1, 0] } },
+        latencySamples: { $sum: { $cond: [{ $ne: ["$latency", null] }, 1, 0] } },
+        latencyTotalMs: { $sum: "$latency" },
+        latencyMaxMs: { $max: "$latency" }
+      } },
+      { $sort: { _id: 1 } },
+      { $limit: 201 }
+    ]),
+    aggregate("ops_api_errors", [
+      { $match: { ...shopFilter, bucket_at: { $gte: errorSince, $lte: now } } },
+      { $group: { _id: { shopId: "$shopId", category: "$category" }, count: { $sum: "$count" } } },
+      { $sort: { "_id.shopId": 1, "_id.category": 1 } },
+      { $limit: 801 }
+    ])
+  ]);
+  const shops = /* @__PURE__ */ new Map();
+  const getShop = (id) => {
+    if (!shops.has(id)) shops.set(id, {
+      shopId: id,
+      jobs: 0,
+      jobFailures: 0,
+      retryAttempts: 0,
+      legacyRetryJobs: 0,
+      deadLetterJobs: 0,
+      latencySamples: 0,
+      latencyTotalMs: 0,
+      latencyMaxMs: null,
+      apiErrors: 0,
+      apiErrorsByCategory: {}
+    });
+    return shops.get(id);
+  };
+  for (const { _id, ...row } of jobs.slice(0, 200)) Object.assign(getShop(_id), row);
+  for (const row of errors.slice(0, 800)) {
+    const shop = getShop(row._id.shopId);
+    shop.apiErrors += row.count;
+    shop.apiErrorsByCategory[row._id.category] = row.count;
+  }
+  const byState = Object.fromEntries(ACTIVE_STATES.map((state) => [state, 0]));
+  for (const row of queue) byState[row._id] = row.count;
+  const oldest = queue.map((row) => row.oldest).filter((value) => value instanceof Date);
+  return {
+    generatedAt: now.toISOString(),
+    window: {
+      since: since.toISOString(),
+      windowMinutes,
+      apiErrorSince: errorSince.toISOString(),
+      jobBasis: "createdAt",
+      apiErrorResolutionSeconds: 60
+    },
+    queue: {
+      depth: Object.values(byState).reduce((sum, n) => sum + n, 0),
+      byState,
+      oldestAgeMs: oldest.length ? Math.max(0, now - Math.min(...oldest.map(Number))) : null
+    },
+    truncated: jobs.length > 200 || errors.length > 800,
+    shops: [...shops.values()].map(({ latencyTotalMs, ...shop }) => ({
+      ...shop,
+      webhookToOrderLatencyMs: {
+        samples: shop.latencySamples,
+        average: shop.latencySamples ? latencyTotalMs / shop.latencySamples : null,
+        max: shop.latencyMaxMs
+      }
+    }))
+  };
+}
+
+// routes/operationsRoutes.js
+function createOperationsRouter({
+  getDb = () => import_mongoose.default.connection.readyState === 1 ? import_mongoose.default.connection.db : null,
+  collect = collectOperationsMetrics
+} = {}) {
+  const router30 = (0, import_express.Router)();
+  const cache = /* @__PURE__ */ new Map();
+  router30.get("/metrics", async (req, res) => {
+    res.set("Cache-Control", "no-store");
+    const expected = process.env.OPS_METRICS_TOKEN || "";
+    if (expected.length < 32) return res.status(503).json({ error: "ops_metrics_not_configured" });
+    const supplied = req.get("authorization")?.replace(/^Bearer /, "") || "";
+    const digest = (value2) => import_node_crypto.default.createHash("sha256").update(value2).digest();
+    if (!req.get("authorization")?.startsWith("Bearer ") || !import_node_crypto.default.timingSafeEqual(digest(supplied), digest(expected))) {
+      return res.status(401).json({ error: "unauthorized" });
+    }
+    let options;
+    try {
+      options = parseMetricsQuery(req.query);
+    } catch {
+      return res.status(400).json({ error: "invalid_query", message: "shopId: 1\u201320 ch\u1EEF s\u1ED1; windowMinutes: 1\u20131440" });
+    }
+    const db = getDb();
+    if (!db) return res.status(503).json({ error: "mongodb_not_ready" });
+    const key = JSON.stringify(options);
+    const hit = cache.get(key);
+    if (hit && hit.until > Date.now()) {
+      try {
+        return res.json({ ...await hit.value, cached: true });
+      } catch {
+        return res.status(503).json({ error: "metrics_unavailable" });
+      }
+    }
+    if (cache.size >= 64) cache.delete(cache.keys().next().value);
+    const value = collect(db, options);
+    cache.set(key, { value, until: Date.now() + 15e3 });
+    try {
+      return res.json({ ...await value, cached: false });
+    } catch {
+      cache.delete(key);
+      console.warn("[Operations] metrics_query_failed");
+      return res.status(503).json({ error: "metrics_unavailable" });
+    }
+  });
+  return router30;
+}
+var operationsRoutes_default = createOperationsRouter();
+
+// server.ts
 var import_path25 = __toESM(require("path"), 1);
 var import_fs25 = __toESM(require("fs"), 1);
 var import_crypto6 = __toESM(require("crypto"), 1);
@@ -74950,8 +75118,81 @@ var import_pdf_lib = __toESM(require_cjs(), 1);
 var import_node_cron = __toESM(require("node-cron"), 1);
 
 // models/WebhookJob.js
-var import_mongoose = __toESM(require("mongoose"), 1);
-var WebhookJobSchema = new import_mongoose.default.Schema(
+var import_mongoose2 = __toESM(require("mongoose"), 1);
+
+// modules/operations/mongoIndexes.js
+function retentionSeconds(name, fallbackDays = 14) {
+  const value = Number(process.env[name] ?? fallbackDays * 86400);
+  if (!Number.isSafeInteger(value) || value < 86400 || value > 365 * 86400) {
+    throw new Error(`${name}: c\u1EA7n s\u1ED1 gi\xE2y nguy\xEAn t\u1EEB 86400 \u0111\u1EBFn 31536000`);
+  }
+  return value;
+}
+var ORDER_OPERATIONAL_INDEXES = [
+  [{ shopId: 1, orderSn: 1 }, { name: "orders_shop_order" }],
+  [{ shopId: 1, status: 1, last_shopee_update_at: -1 }, { name: "orders_shop_status_update" }]
+];
+var LISTING_OPERATIONAL_INDEXES = [
+  [{ platform: 1, status: 1, _id: 1 }, { name: "listings_platform_status" }],
+  [{ platform: 1, sku: 1 }, { name: "listings_platform_sku" }]
+];
+var WEBHOOK_OPERATIONAL_INDEXES = [
+  [{ state: 1, priority: -1, next_run_at: 1, _id: 1 }, { name: "webhook_jobs_claim" }],
+  [{ createdAt: 1 }, { name: "webhook_jobs_metrics_window" }],
+  [{ shopId: 1, createdAt: 1 }, { name: "webhook_jobs_shop_window" }],
+  [{ shopId: 1, state: 1 }, { name: "webhook_jobs_shop_state" }],
+  [{ state: 1, createdAt: 1, kind: 1 }, { name: "webhook_jobs_stale_sweep" }],
+  // Chỉ job kết thúc có finished_at; pending/running/failed không bị TTL xóa.
+  [{ finished_at: 1 }, { name: "webhook_jobs_ttl", expireAfterSeconds: 30 * 86400 }]
+];
+async function ensureMongoIndex(db, collection, key, options) {
+  const coll = db.collection(collection);
+  let existing = [];
+  try {
+    existing = await coll.indexes();
+  } catch (error) {
+    if (error?.code !== 26) throw error;
+  }
+  const hit = existing.find((index) => JSON.stringify(index.key) === JSON.stringify(key));
+  if (hit) {
+    if (options.expireAfterSeconds !== void 0 && hit.expireAfterSeconds !== options.expireAfterSeconds) {
+      await db.command({ collMod: collection, index: { name: hit.name, expireAfterSeconds: options.expireAfterSeconds } });
+    }
+    return hit.name;
+  }
+  return coll.createIndex(key, options);
+}
+function operationalIndexPlan() {
+  return [
+    ["orders", ORDER_OPERATIONAL_INDEXES],
+    ["channel_listings", LISTING_OPERATIONAL_INDEXES],
+    ["webhook_jobs", WEBHOOK_OPERATIONAL_INDEXES],
+    ["ops_api_errors", [
+      [{ bucket_at: 1 }, { name: "ops_api_errors_window" }],
+      [{ shopId: 1, bucket_at: 1 }, { name: "ops_api_errors_shop_window" }],
+      [{ expires_at: 1 }, { name: "ops_api_errors_ttl", expireAfterSeconds: 0 }]
+    ]],
+    ["order_events", [[{ occurred_at: 1 }, {
+      name: "order_events_ttl",
+      expireAfterSeconds: retentionSeconds("ORDER_EVENT_TTL_SECONDS")
+    }]]],
+    ["sync_jobs", [[{ finished_at: 1 }, {
+      name: "sync_jobs_ttl",
+      expireAfterSeconds: retentionSeconds("SYNC_JOB_TTL_SECONDS")
+    }]]]
+  ];
+}
+async function ensureOperationalIndexes(db) {
+  const groups = operationalIndexPlan();
+  const applied = [];
+  for (const [collection, indexes] of groups) {
+    for (const [key, options] of indexes) applied.push(await ensureMongoIndex(db, collection, key, options));
+  }
+  return applied;
+}
+
+// models/WebhookJob.js
+var WebhookJobSchema = new import_mongoose2.default.Schema(
   {
     jobId: {
       type: String,
@@ -74959,13 +75200,19 @@ var WebhookJobSchema = new import_mongoose.default.Schema(
       trim: true
     },
     payload: {
-      type: import_mongoose.default.Schema.Types.Mixed,
+      type: import_mongoose2.default.Schema.Types.Mixed,
       required: true
     },
     // Đồng bộ thủ công và cron dùng chung hàng đợi bền với webhook.
     kind: { type: String, enum: ["webhook", "sync"], default: "webhook" },
     priority: { type: Number, default: 0 },
     orderKey: { type: String, default: "" },
+    // Shop và mốc thời gian riêng để đọc chỉ số không phải bóc payload.
+    shopId: { type: String },
+    received_at: { type: Date },
+    order_persisted_at: { type: Date },
+    finished_at: { type: Date },
+    retry_attempts: { type: Number, default: 0, min: 0 },
     claim_token: { type: String, default: "" },
     // Chỉ một job cron cùng loại đang chờ/chạy/retry; không tạo backlog trùng.
     active_key: { type: String },
@@ -74999,11 +75246,46 @@ var WebhookJobSchema = new import_mongoose.default.Schema(
 WebhookJobSchema.index({ jobId: 1 }, { unique: true, name: "webhook_jobs_jobId_unique" });
 WebhookJobSchema.index({ active_key: 1 }, { unique: true, sparse: true, name: "webhook_jobs_active_key_unique" });
 WebhookJobSchema.index({ state: 1, next_run_at: 1 }, { name: "webhook_jobs_state_next_run" });
-var WebhookJob = import_mongoose.default.models.WebhookJob || import_mongoose.default.model("WebhookJob", WebhookJobSchema);
+for (const [key, options] of WEBHOOK_OPERATIONAL_INDEXES) WebhookJobSchema.index(key, options);
+var WebhookJob = import_mongoose2.default.models.WebhookJob || import_mongoose2.default.model("WebhookJob", WebhookJobSchema);
 var WebhookJob_default = WebhookJob;
 
 // modules/jobs/webhookJobQueue.js
-var import_node_crypto = __toESM(require("node:crypto"), 1);
+var import_node_crypto2 = __toESM(require("node:crypto"), 1);
+
+// modules/operations/telemetry.js
+var import_node_async_hooks = require("node:async_hooks");
+var import_mongoose3 = __toESM(require("mongoose"), 1);
+var webhookObservation = new import_node_async_hooks.AsyncLocalStorage();
+function markWebhookOrderPersisted() {
+  const observation = webhookObservation.getStore();
+  if (observation && !observation.orderPersistedAt) observation.orderPersistedAt = /* @__PURE__ */ new Date();
+}
+async function recordShopeeApiError(url2, category) {
+  try {
+    const parsed = new URL(url2);
+    if (!/(^|\.)(shopeemobile\.com|shopee\.(com|cn))$/.test(parsed.hostname)) return;
+    const shopId = parsed.searchParams.get("shop_id") || "unknown";
+    if (shopId !== "unknown" && !/^\d{1,20}$/.test(shopId)) return;
+    if (!["http", "network", "application", "parse"].includes(category)) return;
+    const db = import_mongoose3.default.connection.db;
+    if (import_mongoose3.default.connection.readyState !== 1 || !db) return;
+    const now = Date.now();
+    const bucket = Math.floor(now / 6e4) * 6e4;
+    await db.collection("ops_api_errors").updateOne(
+      { _id: `${shopId}:${bucket}:${category}` },
+      { $inc: { count: 1 }, $setOnInsert: {
+        shopId,
+        category,
+        bucket_at: new Date(bucket),
+        expires_at: new Date(bucket + 6e4 + retentionSeconds("OPS_API_ERROR_TTL_SECONDS") * 1e3)
+      } },
+      { upsert: true, maxTimeMS: 1500, timeoutMS: 1500 }
+    );
+  } catch {
+    console.warn("[Operations] api_error_metric_write_failed");
+  }
+}
 
 // utils/safeProductionLog.js
 function safeError(error) {
@@ -75022,7 +75304,7 @@ function safeTokenMetadata(record) {
 
 // modules/shopee-sync/syncOrchestrator.js
 var import_crypto = __toESM(require("crypto"), 1);
-var import_mongoose2 = __toESM(require("mongoose"), 1);
+var import_mongoose4 = __toESM(require("mongoose"), 1);
 var import_node_os = __toESM(require("node:os"), 1);
 function isOwnerProcessDead(lock) {
   if (lock?.hostname !== import_node_os.default.hostname() || !Number.isInteger(lock?.pid) || lock.pid <= 0) return false;
@@ -75061,8 +75343,8 @@ function overlapSec() {
   );
 }
 function database() {
-  if (import_mongoose2.default.connection.readyState !== 1 || !import_mongoose2.default.connection.db) return null;
-  return import_mongoose2.default.connection.db;
+  if (import_mongoose4.default.connection.readyState !== 1 || !import_mongoose4.default.connection.db) return null;
+  return import_mongoose4.default.connection.db;
 }
 async function ensureIndexes() {
   const db = database();
@@ -75199,8 +75481,8 @@ async function enqueueOrderSyncJob(payload = {}, priority = 0) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload) || !Number.isFinite(priority) || priority < 0 || priority > 10 || payload.mode && !["quick", "full", "task"].includes(payload.mode) || payload.shopIds && (!Array.isArray(payload.shopIds) || payload.shopIds.some((id) => !/^\d+$/.test(String(id)))) || payload.lookbackSec != null && (!Number.isFinite(Number(payload.lookbackSec)) || Number(payload.lookbackSec) < 60)) {
     throw new Error("sync_job_invalid");
   }
-  const jobId = `sync:${import_node_crypto.default.randomUUID()}`;
-  const activeKey = priority === 0 ? import_node_crypto.default.createHash("sha256").update(JSON.stringify({
+  const jobId = `sync:${import_node_crypto2.default.randomUUID()}`;
+  const activeKey = priority === 0 ? import_node_crypto2.default.createHash("sha256").update(JSON.stringify({
     mode: payload.mode || "incremental",
     task: payload.task || "",
     shopIds: [...payload.shopIds || []].sort(),
@@ -75214,6 +75496,7 @@ async function enqueueOrderSyncJob(payload = {}, priority = 0) {
       payload,
       state: "pending",
       next_run_at: /* @__PURE__ */ new Date(),
+      ...payload.shopIds?.length === 1 ? { shopId: String(payload.shopIds[0]) } : {},
       ...activeKey ? { active_key: activeKey } : {}
     });
   } catch (error) {
@@ -75259,11 +75542,18 @@ async function enqueueWebhookJob(input) {
   const orderSn = String(data.ordersn ?? data.order_sn ?? data.orderSn ?? payload.order_sn ?? "").trim();
   if (!/^\d+$/.test(shopId) || !/^[a-zA-Z0-9-]+$/.test(orderSn)) throw new Error("webhook_order_key_invalid");
   const stale = webhookEventTime(payload) != null && Date.now() - webhookEventTime(payload) > STALE_JOB_MAX_AGE_MS;
+  const receivedAt = input.receivedAt ?? /* @__PURE__ */ new Date();
+  if (!(receivedAt instanceof Date) || !Number.isFinite(receivedAt.getTime()) || receivedAt.getTime() > Date.now()) {
+    throw new Error("webhook_received_at_invalid");
+  }
   try {
     await WebhookJob_default.create({
       jobId,
       payload,
       kind: "webhook",
+      shopId,
+      received_at: receivedAt,
+      ...stale ? { finished_at: /* @__PURE__ */ new Date() } : {},
       orderKey: `${shopId}:${orderSn}`,
       state: stale ? "dead-letter" : "pending",
       retry_count: 0,
@@ -75293,11 +75583,13 @@ async function claimNextJob() {
     [
       {
         $set: {
+          // Chỉ tính retry thực sự được worker chạy, không nhầm với số lần lỗi.
+          retry_attempts: { $add: [{ $ifNull: ["$retry_attempts", 0] }, { $cond: [{ $eq: ["$state", "failed"] }, 1, 0] }] },
           retry_count: {
             $cond: [{ $eq: ["$state", "running"] }, { $add: ["$retry_count", 1] }, "$retry_count"]
           },
           state: "running",
-          claim_token: import_node_crypto.default.randomUUID(),
+          claim_token: import_node_crypto2.default.randomUUID(),
           next_run_at: leaseUntil
         }
       }
@@ -75314,7 +75606,7 @@ async function sweepStaleJobs() {
   const cutoff = new Date(now - STALE_JOB_MAX_AGE_MS);
   const result = await WebhookJob_default.updateMany(
     { kind: { $ne: "sync" }, state: { $in: ["pending", "failed"] }, createdAt: { $lt: cutoff } },
-    { $set: { state: "dead-letter", error_log: STALE_SKIP_LOG, next_run_at: new Date(now) } }
+    { $set: { state: "dead-letter", error_log: STALE_SKIP_LOG, next_run_at: new Date(now), finished_at: new Date(now) } }
   );
   if (result?.modifiedCount) {
     console.warn(
@@ -75331,7 +75623,13 @@ function isStaleJob(job) {
 async function markSucceeded(job, note = "") {
   await WebhookJob_default.updateOne(
     { _id: job._id, state: "running", claim_token: job.claim_token },
-    { $set: { state: "succeeded", error_log: note, next_run_at: /* @__PURE__ */ new Date() }, $unset: { active_key: "" } }
+    { $set: {
+      state: "succeeded",
+      error_log: note,
+      next_run_at: /* @__PURE__ */ new Date(),
+      finished_at: /* @__PURE__ */ new Date(),
+      ...job.order_persisted_at ? { order_persisted_at: job.order_persisted_at } : {}
+    }, $unset: { active_key: "" } }
   );
 }
 async function markFailed(job, err) {
@@ -75345,7 +75643,9 @@ async function markFailed(job, err) {
         state: retry2 >= MAX_RETRY ? "dead-letter" : "failed",
         retry_count: retry2,
         error_log: message,
-        next_run_at: nextRun
+        next_run_at: nextRun,
+        ...retry2 >= MAX_RETRY ? { finished_at: /* @__PURE__ */ new Date() } : {},
+        ...job.order_persisted_at ? { order_persisted_at: job.order_persisted_at } : {}
       },
       ...retry2 >= MAX_RETRY ? { $unset: { active_key: "" } } : {}
     }
@@ -75367,7 +75667,7 @@ async function runClaimedJob(job) {
   if (isStaleJob(job)) {
     await WebhookJob_default.updateOne(
       { _id: job._id, state: "running", claim_token: job.claim_token },
-      { $set: { state: "dead-letter", error_log: STALE_SKIP_LOG } }
+      { $set: { state: "dead-letter", error_log: STALE_SKIP_LOG, finished_at: /* @__PURE__ */ new Date() } }
     );
     console.warn("[WebhookJobQueue] stale_job_dead_letter");
     return false;
@@ -75385,7 +75685,12 @@ async function runClaimedJob(job) {
       const result = await syncProcessor(job.payload);
       if (result?.success === false || result?.skipped) throw new Error("sync_job_incomplete");
     } else {
-      await processor(job.payload);
+      const observation = { orderPersistedAt: job.order_persisted_at || null };
+      try {
+        await webhookObservation.run(observation, () => processor(job.payload));
+      } finally {
+        if (observation.orderPersistedAt) job.order_persisted_at = observation.orderPersistedAt;
+      }
     }
     await markSucceeded(job);
   } finally {
@@ -75410,7 +75715,7 @@ async function drainOnce(processPayload) {
     leaseOwner = lease.owner;
     const abandoned = await WebhookJob_default.updateMany(
       { state: "running" },
-      { $set: { state: "dead-letter", error_log: "abandoned_worker_requires_review" }, $unset: { active_key: "" } }
+      { $set: { state: "dead-letter", error_log: "abandoned_worker_requires_review", finished_at: /* @__PURE__ */ new Date() }, $unset: { active_key: "" } }
     );
     if (abandoned.modifiedCount) console.warn(`[WebhookJobQueue] abandoned_dead_letter count=${abandoned.modifiedCount}`);
     leaseHeartbeat = setInterval(() => {
@@ -76527,10 +76832,10 @@ function readRawWebhookBody(req) {
 }
 
 // modules/webhooks/shopeeWebhookHandler.ts
-var import_express = __toESM(require_express2(), 1);
+var import_express2 = __toESM(require_express2(), 1);
 
 // modules/webhooks/shopeeSignature.ts
-var import_node_crypto2 = __toESM(require("node:crypto"), 1);
+var import_node_crypto3 = __toESM(require("node:crypto"), 1);
 function normalizeSignature(value) {
   return value.trim().replace(/^(?:Bearer|HMAC)\s+/i, "").replace(/^sha256=/i, "").trim().toLowerCase();
 }
@@ -76538,7 +76843,7 @@ function timingSafeEqualHex(a, b) {
   try {
     const aBuf = Buffer.from(a, "hex");
     const bBuf = Buffer.from(b, "hex");
-    return aBuf.length === bBuf.length && import_node_crypto2.default.timingSafeEqual(aBuf, bBuf);
+    return aBuf.length === bBuf.length && import_node_crypto3.default.timingSafeEqual(aBuf, bBuf);
   } catch {
     return false;
   }
@@ -76592,7 +76897,7 @@ function verifyShopeeWebhookSignature(rawBody, authorization, requestUrls = []) 
   }
   for (const url2 of candidates) {
     const baseString = `${url2}|${bodyStr}`;
-    const expected = import_node_crypto2.default.createHmac("sha256", secret).update(baseString).digest("hex");
+    const expected = import_node_crypto3.default.createHmac("sha256", secret).update(baseString).digest("hex");
     if (timingSafeEqualHex(expected, supplied)) {
       console.log(`[Shopee Webhook] HMAC OK (url=${url2})`);
       return true;
@@ -76606,12 +76911,12 @@ function verifyShopeeWebhookSignature(rawBody, authorization, requestUrls = []) 
 }
 
 // models/Chat.js
-var import_mongoose3 = __toESM(require("mongoose"), 1);
-var ConversationSchema = new import_mongoose3.default.Schema(
+var import_mongoose5 = __toESM(require("mongoose"), 1);
+var ConversationSchema = new import_mongoose5.default.Schema(
   {
     shop_id: { type: Number, required: true, index: true },
     conversation_id: { type: String, required: true, trim: true },
-    customer_id: { type: import_mongoose3.default.Schema.Types.Mixed, required: true },
+    customer_id: { type: import_mongoose5.default.Schema.Types.Mixed, required: true },
     customer_name: { type: String, default: "", trim: true },
     customer_avatar: { type: String, default: "", trim: true },
     unread_count: { type: Number, default: 0, min: 0 },
@@ -76635,7 +76940,7 @@ ConversationSchema.index(
   { shop_id: 1, unread_count: 1, last_updated_at: -1 },
   { name: "chat_conv_shop_unread" }
 );
-var ChatMessageSchema = new import_mongoose3.default.Schema(
+var ChatMessageSchema = new import_mongoose5.default.Schema(
   {
     conversation_id: { type: String, required: true, trim: true, index: true },
     message_id: { type: String, required: true, trim: true },
@@ -76644,7 +76949,7 @@ var ChatMessageSchema = new import_mongoose3.default.Schema(
       required: true,
       enum: ["shop", "customer"]
     },
-    content: { type: import_mongoose3.default.Schema.Types.Mixed, default: () => ({}) },
+    content: { type: import_mongoose5.default.Schema.Types.Mixed, default: () => ({}) },
     created_at: { type: Date, default: Date.now }
   },
   {
@@ -76660,7 +76965,7 @@ ChatMessageSchema.index(
   { conversation_id: 1, created_at: 1 },
   { name: "chat_msg_conversation_created" }
 );
-var QuickReplySchema = new import_mongoose3.default.Schema(
+var QuickReplySchema = new import_mongoose5.default.Schema(
   {
     shortcut: { type: String, required: true, trim: true },
     content: { type: String, required: true, trim: true }
@@ -76671,9 +76976,9 @@ var QuickReplySchema = new import_mongoose3.default.Schema(
   }
 );
 QuickReplySchema.index({ shortcut: 1 }, { unique: true, name: "chat_quick_reply_shortcut" });
-var Conversation = import_mongoose3.default.models.Conversation || import_mongoose3.default.model("Conversation", ConversationSchema);
-var ChatMessage = import_mongoose3.default.models.ChatMessage || import_mongoose3.default.model("ChatMessage", ChatMessageSchema);
-var QuickReply = import_mongoose3.default.models.QuickReply || import_mongoose3.default.model("QuickReply", QuickReplySchema);
+var Conversation = import_mongoose5.default.models.Conversation || import_mongoose5.default.model("Conversation", ConversationSchema);
+var ChatMessage = import_mongoose5.default.models.ChatMessage || import_mongoose5.default.model("ChatMessage", ChatMessageSchema);
+var QuickReply = import_mongoose5.default.models.QuickReply || import_mongoose5.default.model("QuickReply", QuickReplySchema);
 
 // services/shopee/auth.js
 var import_fs3 = __toESM(require("fs"), 1);
@@ -76772,15 +77077,18 @@ async function fetchWithTimeout(url2, init = {}, timeoutMs = SHOPEE_HTTP_TIMEOUT
         reject(new Error(`Shopee API timeout sau ${timeoutMs / 1e3}s`));
       }, timeoutMs + 1e3);
     });
-    return await Promise.race([fetchPromise, hardTimeoutPromise]);
+    const response = await Promise.race([fetchPromise, hardTimeoutPromise]);
+    if (response.status >= 400) await recordShopeeApiError(url2, "http");
+    return response;
   } catch (error) {
+    await recordShopeeApiError(url2, "network");
     if (error?.name === "AbortError" || /timeout/i.test(String(error?.message || ""))) {
-      console.error(`[Shopee HTTP] TIMEOUT ${timeoutMs}ms \u2014 ${String(url2).slice(0, 180)}`);
+      console.error(`[Shopee HTTP] TIMEOUT ${timeoutMs}ms`);
       throw new Error(`Shopee API timeout sau ${timeoutMs / 1e3}s`);
     }
     console.error(
-      `[Shopee HTTP] FETCH L\u1ED6I \u2014 ${String(url2).slice(0, 120)}:`,
-      error?.message || error
+      "[Shopee HTTP] FETCH L\u1ED6I:",
+      safeError(error)
     );
     throw error;
   } finally {
@@ -76980,7 +77288,8 @@ async function shopeeFetchJsonWithRetry(url2, context, opts) {
       res = await fetchWithTimeout(url2);
       rawText = await res.text();
     } catch (err) {
-      console.error("\n--- [SHOPEE API FAILURE] ---", "\nURL:", url2, "\nPARAMS:", context, "\nRESPONSE:", err.response?.data || err.message);
+      if (res && res.status < 400) await recordShopeeApiError(url2, "network");
+      console.error("[Shopee API] request_failed:", safeError(err));
       const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
       if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
         shopeeRetryTelemetry.retries++;
@@ -76997,6 +77306,7 @@ async function shopeeFetchJsonWithRetry(url2, context, opts) {
       json2 = maybeNormalizeReturnJson(json2, context);
       warnShopeeUint64Sample(json2, context);
     } catch (parseErr) {
+      if (res.status < 400) await recordShopeeApiError(url2, "parse");
       const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
       return {
         httpStatus: res.status,
@@ -77006,6 +77316,7 @@ async function shopeeFetchJsonWithRetry(url2, context, opts) {
         }
       };
     }
+    if (res.status < 400 && json2?.error) await recordShopeeApiError(url2, "application");
     if ((isShopeeRateLimited(res.status, json2) || isShopeeRetryableHttpStatus(res.status)) && attempt < maxAttempts - 1) {
       shopeeRetryTelemetry.retries++;
       if (isShopeeRateLimited(res.status, json2)) shopeeRetryTelemetry.rateLimits++;
@@ -77021,7 +77332,7 @@ async function shopeeFetchJsonWithRetry(url2, context, opts) {
       json2.httpStatus = res.status;
     }
     if (res.status >= 400 || json2?.error) {
-      console.error("\n--- [SHOPEE API FAILURE] ---", "\nURL:", url2, "\nPARAMS:", context, "\nRESPONSE:", json2 || rawText);
+      console.error("[Shopee API] response_failed:", res.status);
     }
     return { json: json2, httpStatus: res.status };
   }
@@ -77051,7 +77362,8 @@ async function shopeePostJsonWithRetry(url2, body, context, opts) {
       });
       rawText = await res.text();
     } catch (err) {
-      console.error("\n--- [SHOPEE API FAILURE] ---", "\nURL:", url2, "\nPARAMS:", context, "\nRESPONSE:", err.response?.data || err.message);
+      if (res && res.status < 400) await recordShopeeApiError(url2, "network");
+      console.error("[Shopee API] request_failed:", safeError(err));
       const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
       if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
         shopeeRetryTelemetry.retries++;
@@ -77068,6 +77380,7 @@ async function shopeePostJsonWithRetry(url2, body, context, opts) {
       json2 = maybeNormalizeReturnJson(json2, context);
       warnShopeeUint64Sample(json2, context);
     } catch (parseErr) {
+      if (res.status < 400) await recordShopeeApiError(url2, "parse");
       const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
       return {
         httpStatus: res.status,
@@ -77077,6 +77390,7 @@ async function shopeePostJsonWithRetry(url2, body, context, opts) {
         }
       };
     }
+    if (res.status < 400 && json2?.error) await recordShopeeApiError(url2, "application");
     if ((isShopeeRateLimited(res.status, json2) || isShopeeRetryableHttpStatus(res.status)) && attempt < maxAttempts - 1) {
       shopeeRetryTelemetry.retries++;
       if (isShopeeRateLimited(res.status, json2)) shopeeRetryTelemetry.rateLimits++;
@@ -77091,7 +77405,7 @@ async function shopeePostJsonWithRetry(url2, body, context, opts) {
       json2.message = formatShopeeApiError(json2, res.status);
     }
     if (res.status >= 400 || json2?.error) {
-      console.error("\n--- [SHOPEE API FAILURE] ---", "\nURL:", url2, "\nPARAMS:", body, "\nRESPONSE:", json2 || rawText);
+      console.error("[Shopee API] response_failed:", res.status);
     }
     return { json: json2, httpStatus: res.status };
   }
@@ -78742,7 +79056,7 @@ async function processShopeeWebhookAsync(snapshot, rawBodyPromise, eagerStubOrde
       event_type: status === "UNPAID" || status === "READY_TO_SHIP" ? "new_order" : isOrderStatusPush ? "status_change" : "order_related"
     };
     try {
-      const queued = await enqueueWebhookJob({ jobId, payload });
+      const queued = await enqueueWebhookJob({ jobId, payload, receivedAt: snapshot.receivedAt });
       if (queued.duplicate) {
         console.log(
           "[WEBHOOK] idempotent skip \u2014 jobId \u0111\xE3 c\xF3, ACK th\xE0nh c\xF4ng:",
@@ -78778,7 +79092,7 @@ async function processShopeeWebhookAsync(snapshot, rawBodyPromise, eagerStubOrde
   }
 }
 function createShopeeWebhookRouter(_processPayload, routePath = "/shopee", options = {}) {
-  const router30 = import_express.default.Router();
+  const router30 = import_express2.default.Router();
   const paths = (Array.isArray(routePath) ? routePath : [routePath]).map(
     (path26) => path26.startsWith("/") ? path26 : `/${path26}`
   );
@@ -78789,6 +79103,7 @@ function createShopeeWebhookRouter(_processPayload, routePath = "/shopee", optio
     ackShopeeOk(res);
   });
   router30.post(paths, (req, res) => {
+    const receivedAt = /* @__PURE__ */ new Date();
     console.log("[WEBHOOK TRIGGERED]");
     console.log(
       "[WEBHOOK TRIGGERED] meta",
@@ -78809,6 +79124,8 @@ function createShopeeWebhookRouter(_processPayload, routePath = "/shopee", optio
     void rawBodyPromise.then(() => clearTimeout(rawBodyWatch), () => clearTimeout(rawBodyWatch));
     ackShopeeOk(res);
     const snapshot = {
+      // Đo từ HTTP tiếp nhận, bao gồm thời gian đọc body và chờ hàng đợi.
+      receivedAt,
       routeLabel: `POST ${req.originalUrl || req.url}`,
       authorization: readAuthorizationHeader(req),
       requestUrls: buildWebhookUrlCandidates(req),
@@ -79826,14 +80143,14 @@ async function setCachedShopeeAddressList(shopId, result) {
 }
 
 // routes/scanRoutes.js
-var import_express2 = __toESM(require_express2(), 1);
+var import_express3 = __toESM(require_express2(), 1);
 
 // controllers/scanController.js
 init_DonHoanHuy();
 
 // config/db.js
 var import_dotenv = __toESM(require_main(), 1);
-var import_mongoose5 = __toESM(require("mongoose"), 1);
+var import_mongoose7 = __toESM(require("mongoose"), 1);
 try {
   import_dotenv.default.config();
 } catch {
@@ -79864,20 +80181,20 @@ async function connectDB() {
   if (!uri) {
     throw new Error("Thi\u1EBFu MONGODB_URI / MONGO_URL trong bi\u1EBFn m\xF4i tr\u01B0\u1EDDng.");
   }
-  if (import_mongoose5.default.connection.readyState === 1) {
-    return import_mongoose5.default.connection;
+  if (import_mongoose7.default.connection.readyState === 1) {
+    return import_mongoose7.default.connection;
   }
   if (connectPromise) {
     return connectPromise;
   }
-  import_mongoose5.default.set("strictQuery", true);
+  import_mongoose7.default.set("strictQuery", true);
   connectPromise = (async () => {
     try {
-      if (import_mongoose5.default.connection.readyState !== 1) {
-        await import_mongoose5.default.connect(uri, MONGO_CONNECT_OPTIONS);
+      if (import_mongoose7.default.connection.readyState !== 1) {
+        await import_mongoose7.default.connect(uri, MONGO_CONNECT_OPTIONS);
       }
       console.log("[DB] MongoDB Connected Successfully");
-      return import_mongoose5.default.connection;
+      return import_mongoose7.default.connection;
     } catch (err) {
       connectPromise = null;
       const msg = err?.message || String(err);
@@ -79893,8 +80210,8 @@ async function connectDB() {
 async function reconnectDB() {
   connectPromise = null;
   try {
-    if (import_mongoose5.default.connection.readyState !== 0) {
-      await import_mongoose5.default.connection.close().catch(() => {
+    if (import_mongoose7.default.connection.readyState !== 0) {
+      await import_mongoose7.default.connection.close().catch(() => {
       });
     }
   } catch {
@@ -79902,7 +80219,7 @@ async function reconnectDB() {
   return connectDB();
 }
 function isDBReady() {
-  return import_mongoose5.default.connection.readyState === 1;
+  return import_mongoose7.default.connection.readyState === 1;
 }
 function isMongoTimeoutOrNetworkError(err) {
   const msg = String(err?.message || err || "");
@@ -79997,7 +80314,7 @@ async function resolveShopeeOrderIdentities(orders, db, OrderModel2) {
 }
 
 // src/db/mongoStore.ts
-var import_mongoose6 = __toESM(require("mongoose"), 1);
+var import_mongoose8 = __toESM(require("mongoose"), 1);
 var import_fs6 = __toESM(require("fs"), 1);
 var import_path7 = __toESM(require("path"), 1);
 init_DonHoanHuy();
@@ -80594,15 +80911,9 @@ function calculateProfitWithSystemFees(sellPrice, importPrice, systemFees) {
 }
 
 // src/db/mongoStore.ts
-var ORDER_EVENT_TTL_SECONDS = Math.max(
-  24 * 60 * 60,
-  Number(process.env.ORDER_EVENT_TTL_SECONDS || 14 * 24 * 60 * 60)
-);
-var SYNC_JOB_TTL_SECONDS = Math.max(
-  24 * 60 * 60,
-  Number(process.env.SYNC_JOB_TTL_SECONDS || 14 * 24 * 60 * 60)
-);
-var ProductSchema = new import_mongoose6.Schema(
+var ORDER_EVENT_TTL_SECONDS = retentionSeconds("ORDER_EVENT_TTL_SECONDS");
+var SYNC_JOB_TTL_SECONDS = retentionSeconds("SYNC_JOB_TTL_SECONDS");
+var ProductSchema = new import_mongoose8.Schema(
   {
     _id: { type: String, required: true },
     sku: { type: String, default: null, index: true },
@@ -80610,7 +80921,7 @@ var ProductSchema = new import_mongoose6.Schema(
     medicine_id: { type: String, default: null, index: true },
     // data.* giữ Mixed nhưng Shopee uint64 IDs (shopeeItemId/shopeeModelId/item_id/model_id/promotion_id/activity_id)
     // BẮT BUỘC là String — sanitize bằng stringifyShopeeIdsDeep trước khi ghi.
-    data: { type: import_mongoose6.Schema.Types.Mixed, required: true }
+    data: { type: import_mongoose8.Schema.Types.Mixed, required: true }
   },
   { collection: "products", versionKey: false }
 );
@@ -80643,7 +80954,7 @@ ProductSchema.index(
   }
 );
 ProductSchema.index({ "data.stock": 1 });
-var ChannelListingSchema = new import_mongoose6.Schema(
+var ChannelListingSchema = new import_mongoose8.Schema(
   {
     _id: { type: String, required: true },
     channelId: { type: String, default: null, index: true },
@@ -80651,18 +80962,19 @@ var ChannelListingSchema = new import_mongoose6.Schema(
     sku: { type: String, default: null, index: true },
     status: { type: String, default: null, index: true },
     linkedProductId: { type: String, default: null, index: true },
-    data: { type: import_mongoose6.Schema.Types.Mixed, required: true }
+    data: { type: import_mongoose8.Schema.Types.Mixed, required: true }
   },
   { collection: "channel_listings", versionKey: false }
 );
-var MetaSchema = new import_mongoose6.Schema(
+for (const [key, options] of LISTING_OPERATIONAL_INDEXES) ChannelListingSchema.index(key, options);
+var MetaSchema = new import_mongoose8.Schema(
   {
     _id: { type: String, required: true },
     value: { type: String, required: true }
   },
   { collection: "meta", versionKey: false }
 );
-var OrderSchema = new import_mongoose6.Schema(
+var OrderSchema = new import_mongoose8.Schema(
   {
     _id: { type: String, required: true },
     // Unique index khai báo riêng bên dưới (orderSn_unique) — KHÔNG dùng index: true để tránh trùng orderSn_1.
@@ -80721,10 +81033,10 @@ var OrderSchema = new import_mongoose6.Schema(
     customerPhone: { type: String, default: null },
     customerEmail: { type: String, default: null },
     customerAddress: { type: String, default: null },
-    billing: { type: import_mongoose6.Schema.Types.Mixed, default: null },
-    shipping: { type: import_mongoose6.Schema.Types.Mixed, default: null },
+    billing: { type: import_mongoose8.Schema.Types.Mixed, default: null },
+    shipping: { type: import_mongoose8.Schema.Types.Mixed, default: null },
     // data.items[].productId / modelId / item_id… = String (Shopee uint64)
-    data: { type: import_mongoose6.Schema.Types.Mixed, required: true }
+    data: { type: import_mongoose8.Schema.Types.Mixed, required: true }
   },
   { collection: "orders", versionKey: false }
 );
@@ -80736,6 +81048,7 @@ OrderSchema.index(
     name: "orderSn_unique"
   }
 );
+for (const [key, options] of ORDER_OPERATIONAL_INDEXES) OrderSchema.index(key, options);
 OrderSchema.index({ hasPdf: 1, isPrinted: 1 });
 OrderSchema.index({ last_shopee_update_at: -1 });
 OrderSchema.index({ shopId: 1, create_time: -1 }, { name: "shopId_1_create_time_-1" });
@@ -80783,7 +81096,7 @@ OrderSchema.index(
     partialFilterExpression: { is_rts: true }
   }
 );
-var OrderEventSchema = new import_mongoose6.Schema(
+var OrderEventSchema = new import_mongoose8.Schema(
   {
     _id: { type: String, required: true },
     orderSn: { type: String, required: true, index: true },
@@ -80795,7 +81108,7 @@ var OrderEventSchema = new import_mongoose6.Schema(
     next_shopee_status: { type: String, default: null },
     logistics_status: { type: String, default: null },
     occurred_at: { type: Date, required: true, index: true },
-    payload: { type: import_mongoose6.Schema.Types.Mixed, default: null }
+    payload: { type: import_mongoose8.Schema.Types.Mixed, default: null }
   },
   { collection: "order_events", versionKey: false }
 );
@@ -80804,14 +81117,14 @@ OrderEventSchema.index(
   { occurred_at: 1 },
   { expireAfterSeconds: ORDER_EVENT_TTL_SECONDS, name: "order_events_ttl" }
 );
-var SyncJobSchema = new import_mongoose6.Schema(
+var SyncJobSchema = new import_mongoose8.Schema(
   {
     _id: { type: String, required: true },
     type: { type: String, required: true, index: true },
     state: { type: String, required: true, index: true },
     started_at: { type: Date, default: null },
     finished_at: { type: Date, default: null },
-    metrics: { type: import_mongoose6.Schema.Types.Mixed, default: {} },
+    metrics: { type: import_mongoose8.Schema.Types.Mixed, default: {} },
     error: { type: String, default: null },
     requested_by: { type: String, default: null }
   },
@@ -80833,13 +81146,13 @@ var mongoReady = false;
 var appRootResolved3 = "";
 var writeChain3 = Promise.resolve();
 function ensureModels() {
-  ProductModel = import_mongoose6.default.models.Product || import_mongoose6.default.model("Product", ProductSchema);
-  ChannelListingModel = import_mongoose6.default.models.ChannelListing || import_mongoose6.default.model("ChannelListing", ChannelListingSchema);
-  MetaModel = import_mongoose6.default.models.AppMeta || import_mongoose6.default.model("AppMeta", MetaSchema);
-  OrderModel = import_mongoose6.default.models.Order || import_mongoose6.default.model("Order", OrderSchema);
-  OrderEventModel = import_mongoose6.default.models.OrderEvent || import_mongoose6.default.model("OrderEvent", OrderEventSchema);
-  SyncJobModel = import_mongoose6.default.models.SyncJob || import_mongoose6.default.model("SyncJob", SyncJobSchema);
-  DonHoanHuyModel = import_mongoose6.default.models.DonHoanHuy || DonHoanHuy_default;
+  ProductModel = import_mongoose8.default.models.Product || import_mongoose8.default.model("Product", ProductSchema);
+  ChannelListingModel = import_mongoose8.default.models.ChannelListing || import_mongoose8.default.model("ChannelListing", ChannelListingSchema);
+  MetaModel = import_mongoose8.default.models.AppMeta || import_mongoose8.default.model("AppMeta", MetaSchema);
+  OrderModel = import_mongoose8.default.models.Order || import_mongoose8.default.model("Order", OrderSchema);
+  OrderEventModel = import_mongoose8.default.models.OrderEvent || import_mongoose8.default.model("OrderEvent", OrderEventSchema);
+  SyncJobModel = import_mongoose8.default.models.SyncJob || import_mongoose8.default.model("SyncJob", SyncJobSchema);
+  DonHoanHuyModel = import_mongoose8.default.models.DonHoanHuy || DonHoanHuy_default;
 }
 function requireMongo() {
   if (!isMongoReady()) {
@@ -80947,14 +81260,14 @@ async function withPosDbRetry(label, run) {
   }
 }
 function isMongoReady() {
-  return mongoReady && import_mongoose6.default.connection.readyState === 1;
+  return mongoReady && import_mongoose8.default.connection.readyState === 1;
 }
 async function recoverMongoConnection(reason = "timeout") {
   console.warn(`[MongoDB] recoverMongoConnection (${reason}) \u2014 reconnecting...`);
   mongoReady = false;
   try {
     await reconnectDB();
-    mongoReady = import_mongoose6.default.connection.readyState === 1;
+    mongoReady = import_mongoose8.default.connection.readyState === 1;
     if (mongoReady) {
       console.log("[MongoDB] recoverMongoConnection OK");
       return true;
@@ -81004,11 +81317,11 @@ async function initMongo(appRoot) {
       );
     } catch {
     }
-    mongoReady = import_mongoose6.default.connection.readyState === 1;
+    mongoReady = import_mongoose8.default.connection.readyState === 1;
     if (!mongoReady) {
       console.error(
         "L\u1ED6I MONGODB STARTUP:",
-        `mongoose readyState=${import_mongoose6.default.connection.readyState} (expect 1)`
+        `mongoose readyState=${import_mongoose8.default.connection.readyState} (expect 1)`
       );
       return isProductsDiskMode();
     }
@@ -81055,14 +81368,19 @@ async function initMongo(appRoot) {
       console.warn("[MongoDB] ensureScannerIndexesInStore:", idxErr);
     }
     try {
+      await ensureOperationalIndexes(import_mongoose8.default.connection.db);
+    } catch {
+      console.warn("[MongoDB] operational_indexes_failed \u2014 ch\u1EA1y scripts/ensure-oms-indexes.mjs \u0111\u1EC3 ki\u1EC3m tra");
+    }
+    try {
       const ttl = await ensureRetentionTtlIndexes();
       console.log(
-        `[MongoDB] TTL ready order_events=${ttl.orderEventsTtlSeconds}s sync_jobs=${ttl.syncJobsTtlSeconds}s (recreated=${ttl.recreated.join(",") || "none"})`
+        `[MongoDB] TTL ready order_events=${ttl.orderEventsTtlSeconds}s sync_jobs=${ttl.syncJobsTtlSeconds}s (ensured=${ttl.recreated.join(",") || "none"})`
       );
     } catch (ttlErr) {
       console.warn("[MongoDB] ensureRetentionTtlIndexes:", ttlErr?.message || ttlErr);
     }
-    void purgeMongoTempCollections({ orderEventDays: 14, syncJobDays: 14 }).then((r2) => {
+    void purgeMongoTempCollections({ orderEventDays: ORDER_EVENT_TTL_SECONDS / 86400, syncJobDays: SYNC_JOB_TTL_SECONDS / 86400 }).then((r2) => {
       console.log(
         `[MongoDB] Temp cleanup boot: order_events_deleted=${r2.orderEventsDeleted} sync_jobs_deleted=${r2.syncJobsDeleted} before_events=${r2.orderEventsBefore}`
       );
@@ -81878,7 +82196,7 @@ async function applyImportStockAndPriceToMainWarehouse(productId, quantityDelta,
     };
   };
   try {
-    const session = await import_mongoose6.default.startSession();
+    const session = await import_mongoose8.default.startSession();
     try {
       let out;
       await session.withTransaction(async () => {
@@ -82063,7 +82381,7 @@ async function loadLogisticsSettingsFromStore() {
   }
   if (raw == null || raw === "") {
     try {
-      const native = await import_mongoose6.default.connection.db?.collection("meta").findOne({ _id: LOGISTICS_CONFIG_META_KEY });
+      const native = await import_mongoose8.default.connection.db?.collection("meta").findOne({ _id: LOGISTICS_CONFIG_META_KEY });
       if (native && typeof native === "object") {
         raw = native.value ?? native;
       }
@@ -82862,7 +83180,7 @@ async function bulkUpsertOrdersToStore(orders) {
   requireMongo();
   const list = Array.isArray(orders) ? orders.filter((o) => o != null && typeof o === "object") : [];
   if (list.length === 0) return 0;
-  const identityIds = await resolveShopeeOrderIdentities(list, import_mongoose6.default.connection.db, OrderModel);
+  const identityIds = await resolveShopeeOrderIdentities(list, import_mongoose8.default.connection.db, OrderModel);
   const pendingWrites = [];
   for (const order of list) {
     const id = String(order.id || "").trim();
@@ -83657,6 +83975,7 @@ async function bulkUpsertOrdersToStore(orders) {
         const ops = accepted.map((item) => item.op);
         if (ops.length === 0) return;
         const result = await OrderModel.bulkWrite(ops, { ordered: false });
+        if (result.upsertedCount || result.matchedCount) markWebhookOrderPersisted();
         await setMeta("orders_updated_at", (/* @__PURE__ */ new Date()).toISOString());
         console.log(
           `[DB UPDATED] bulkWrite orders \u2014 upserted=${result.upsertedCount || 0} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0} writeErrors=${result.hasWriteErrors?.() ? result.getWriteErrors?.()?.length || "?" : 0}`
@@ -89281,31 +89600,13 @@ async function ensureRetentionTtlIndexes() {
   requireMongo();
   const recreated = [];
   const ensureTtl = async (model, indexName, key, expireAfterSeconds) => {
-    const coll = model.collection;
-    const existing = await coll.indexes();
-    const hit = existing.find((idx) => idx?.name === indexName);
-    const currentTtl = hit?.expireAfterSeconds;
-    if (hit && Number(currentTtl) === Number(expireAfterSeconds)) {
-      return;
-    }
-    if (hit) {
-      try {
-        await coll.dropIndex(indexName);
-        console.log(
-          `[MongoDB] Dropped TTL index ${indexName} (old expireAfterSeconds=${currentTtl})`
-        );
-      } catch (dropErr) {
-        console.warn(`[MongoDB] dropIndex ${indexName}:`, dropErr?.message || dropErr);
-      }
-    }
-    await coll.createIndex(key, {
+    await ensureMongoIndex(import_mongoose8.default.connection.db, model.collection.collectionName, key, {
       name: indexName,
-      expireAfterSeconds,
-      background: true
+      expireAfterSeconds
     });
     recreated.push(indexName);
     console.log(
-      `[MongoDB] Created TTL index ${indexName} expireAfterSeconds=${expireAfterSeconds}`
+      `[MongoDB] Ensured TTL index ${indexName} expireAfterSeconds=${expireAfterSeconds}`
     );
   };
   await ensureTtl(
@@ -89325,6 +89626,29 @@ async function ensureRetentionTtlIndexes() {
     syncJobsTtlSeconds: SYNC_JOB_TTL_SECONDS,
     recreated
   };
+}
+async function purgeOrderEventsOlderThan(days = 14, opts) {
+  requireMongo();
+  const safeDays = Number.isFinite(days) && days > 0 ? days : 14;
+  const batchSize = Math.max(500, Math.min(1e4, Math.floor(opts?.batchSize || 5e3)));
+  const maxBatches = Math.max(1, Math.min(500, Math.floor(opts?.maxBatches || 200)));
+  const cutoff = new Date(Date.now() - safeDays * 24 * 60 * 60 * 1e3);
+  const before = await OrderEventModel.countDocuments().catch(() => 0);
+  let deleted = 0;
+  for (let i2 = 0; i2 < maxBatches; i2 += 1) {
+    const rows = await OrderEventModel.find({ occurred_at: { $lt: cutoff } }).select({ _id: 1 }).limit(batchSize).lean();
+    if (!rows.length) break;
+    const ids = rows.map((r2) => r2._id);
+    const result = await OrderEventModel.deleteMany({ _id: { $in: ids } });
+    const n = Number(result.deletedCount || 0);
+    deleted += n;
+    if (n < batchSize) break;
+  }
+  const after = await OrderEventModel.countDocuments().catch(() => Math.max(0, before - deleted));
+  console.log(
+    `[MongoDB] purgeOrderEventsOlderThan days=${safeDays} deleted=${deleted} before=${before} after=${after} cutoff=${cutoff.toISOString()}`
+  );
+  return { deleted, cutoffIso: cutoff.toISOString(), before, after };
 }
 async function purgeSyncJobsOlderThan(days = 14, opts) {
   requireMongo();
@@ -89354,7 +89678,7 @@ async function purgeSyncJobsOlderThan(days = 14, opts) {
 }
 async function purgeMongoTempCollections(opts) {
   requireMongo();
-  const syncJobDays = opts?.syncJobDays ?? 14;
+  const syncJobDays = opts?.syncJobDays ?? SYNC_JOB_TTL_SECONDS / 86400;
   let ttl;
   if (opts?.ensureTtl !== false) {
     try {
@@ -89363,29 +89687,10 @@ async function purgeMongoTempCollections(opts) {
       console.warn("[MongoDB] ensureRetentionTtlIndexes in purge:", err?.message || err);
     }
   }
-  const orderEventsBefore = await OrderEventModel.countDocuments().catch(() => 0);
-  let orderEventsDeleted = 0;
-  if (orderEventsBefore > 0) {
-    try {
-      await OrderEventModel.collection.drop();
-      orderEventsDeleted = orderEventsBefore;
-      console.log(
-        `[MongoDB] Dropped collection order_events entirely (was ${orderEventsBefore} docs)`
-      );
-    } catch (dropErr) {
-      const msg = String(dropErr?.message || dropErr || "");
-      if (!/ns not found|NamespaceNotFound/i.test(msg)) {
-        console.warn("[MongoDB] drop order_events failed, fallback deleteMany:", msg);
-        try {
-          const r2 = await OrderEventModel.deleteMany({});
-          orderEventsDeleted = Number(r2.deletedCount || 0);
-        } catch (delErr) {
-          console.warn("[MongoDB] deleteMany order_events failed:", delErr?.message || delErr);
-        }
-      }
-    }
-  }
-  const orderEventsAfter = await OrderEventModel.countDocuments().catch(() => 0);
+  const events = await purgeOrderEventsOlderThan(opts?.orderEventDays ?? ORDER_EVENT_TTL_SECONDS / 86400);
+  const orderEventsBefore = events.before;
+  const orderEventsDeleted = events.deleted;
+  const orderEventsAfter = events.after;
   const jobs = await purgeSyncJobsOlderThan(syncJobDays);
   return {
     orderEventsDeleted,
@@ -89395,7 +89700,7 @@ async function purgeMongoTempCollections(opts) {
     syncJobsBefore: jobs.before,
     syncJobsAfter: jobs.after,
     ttl,
-    note: "\u0110\xE3 x\xF3a order_events (ng\u1EEBng ghi log). sync_jobs TTL 14d. don_hoan_huy TTL 14d ri\xEAng."
+    note: "Ch\u1EC9 x\xF3a order_events v\xE0 sync_jobs \u0111\xE3 k\u1EBFt th\xFAc qu\xE1 th\u1EDDi h\u1EA1n l\u01B0u c\u1EA5u h\xECnh."
   };
 }
 async function getLowStockProductsFromStore(threshold, limit = 50) {
@@ -90093,13 +90398,13 @@ function asyncHandler(fn) {
 var errorHandler_default = errorHandler;
 
 // routes/scanRoutes.js
-var router = (0, import_express2.Router)();
+var router = (0, import_express3.Router)();
 router.post("/save", asyncHandler(saveScanOrders));
 router.get("/don-hoan-huy", asyncHandler(listDonHoanHuy));
 var scanRoutes_default = router;
 
 // routes/authRoutes.js
-var import_express3 = __toESM(require_express2(), 1);
+var import_express4 = __toESM(require_express2(), 1);
 
 // middlewares/auth.js
 var import_jsonwebtoken = __toESM(require_jsonwebtoken(), 1);
@@ -90166,13 +90471,13 @@ async function verifyAuth(req, res) {
 }
 
 // routes/authRoutes.js
-var router2 = (0, import_express3.Router)();
+var router2 = (0, import_express4.Router)();
 router2.post("/login", login);
 router2.get("/auth/verify", authMiddleware, verifyAuth);
 var authRoutes_default = router2;
 
 // routes/healthRoutes.js
-var import_express4 = __toESM(require_express2(), 1);
+var import_express5 = __toESM(require_express2(), 1);
 
 // controllers/healthController.js
 var import_fs7 = __toESM(require("fs"), 1);
@@ -90296,7 +90601,7 @@ function safeOrderSyncDiagnostics() {
 }
 
 // routes/healthRoutes.js
-var router3 = (0, import_express4.Router)();
+var router3 = (0, import_express5.Router)();
 router3.get("/health", getHealth);
 router3.get("/config/public", getPublicConfig);
 router3.post("/debug/client-log", authMiddleware, postClientLog);
@@ -90304,7 +90609,7 @@ router3.get("/debug/client-log", authMiddleware, getClientLog);
 var healthRoutes_default = router3;
 
 // routes/vietnamAddressRoutes.js
-var import_express5 = __toESM(require_express2(), 1);
+var import_express6 = __toESM(require_express2(), 1);
 
 // controllers/vietnamAddressController.js
 var VN_ADDRESS_API_V1 = "https://provinces.open-api.vn/api/v1";
@@ -90581,7 +90886,7 @@ async function getWardsByProvince(req, res) {
 }
 
 // routes/vietnamAddressRoutes.js
-var router4 = (0, import_express5.Router)();
+var router4 = (0, import_express6.Router)();
 router4.get("/provinces", asyncHandler(getProvinces));
 router4.get("/districts/:provinceCode", asyncHandler(getDistricts));
 router4.get("/wards-by-province/:provinceCode", asyncHandler(getWardsByProvince));
@@ -90589,7 +90894,7 @@ router4.get("/wards/:districtCode", asyncHandler(getWards));
 var vietnamAddressRoutes_default = router4;
 
 // routes/suppliersRoutes.js
-var import_express6 = __toESM(require_express2(), 1);
+var import_express7 = __toESM(require_express2(), 1);
 
 // controllers/suppliersController.js
 var import_fs8 = __toESM(require("fs"), 1);
@@ -90700,7 +91005,7 @@ async function clearAllSuppliers(_req, res) {
 }
 
 // routes/suppliersRoutes.js
-var router5 = (0, import_express6.Router)();
+var router5 = (0, import_express7.Router)();
 router5.get("/", listSuppliers);
 router5.post("/", createSupplier);
 router5.post("/clear-all", clearAllSuppliers);
@@ -90709,7 +91014,7 @@ router5.delete("/:id", deleteSupplier);
 var suppliersRoutes_default = router5;
 
 // routes/expensesRoutes.js
-var import_express7 = __toESM(require_express2(), 1);
+var import_express8 = __toESM(require_express2(), 1);
 
 // controllers/expensesController.js
 var import_fs9 = __toESM(require("fs"), 1);
@@ -90790,7 +91095,7 @@ async function clearAllExpenses(_req, res) {
 }
 
 // routes/expensesRoutes.js
-var router6 = (0, import_express7.Router)();
+var router6 = (0, import_express8.Router)();
 router6.get("/", listExpenses);
 router6.post("/", createExpense);
 router6.post("/clear-all", clearAllExpenses);
@@ -90798,16 +91103,16 @@ router6.delete("/:id", deleteExpense);
 var expensesRoutes_default = router6;
 
 // routes/financeRoutes.js
-var import_express8 = __toESM(require_express2(), 1);
+var import_express9 = __toESM(require_express2(), 1);
 
 // controllers/financeController.js
 var import_fs11 = __toESM(require("fs"), 1);
 var import_path11 = __toESM(require("path"), 1);
-var import_mongoose8 = __toESM(require("mongoose"), 1);
+var import_mongoose10 = __toESM(require("mongoose"), 1);
 
 // models/Escrow.js
-var import_mongoose7 = __toESM(require("mongoose"), 1);
-var EscrowSchema = new import_mongoose7.default.Schema(
+var import_mongoose9 = __toESM(require("mongoose"), 1);
+var EscrowSchema = new import_mongoose9.default.Schema(
   {
     ordersn: { type: String, required: true, trim: true },
     shop_id: { type: String, required: true, trim: true },
@@ -90844,7 +91149,7 @@ EscrowSchema.index({ shop_id: 1, order_date: -1 }, { name: "escrow_shop_date" })
 EscrowSchema.index({ is_disputed: 1, order_date: -1 }, { name: "escrow_disputed_date" });
 EscrowSchema.index({ status: 1, order_date: -1 }, { name: "escrow_status_date" });
 EscrowSchema.index({ order_date: -1 }, { name: "escrow_order_date" });
-var Escrow = import_mongoose7.default.models.Escrow || import_mongoose7.default.model("Escrow", EscrowSchema);
+var Escrow = import_mongoose9.default.models.Escrow || import_mongoose9.default.model("Escrow", EscrowSchema);
 var Escrow_default = Escrow;
 
 // controllers/financeController.js
@@ -90868,7 +91173,7 @@ function posVnd(raw) {
   return Math.max(0, roundVnd(raw));
 }
 function mongoReady2() {
-  return import_mongoose8.default.connection.readyState === 1 && Boolean(import_mongoose8.default.connection.db);
+  return import_mongoose10.default.connection.readyState === 1 && Boolean(import_mongoose10.default.connection.db);
 }
 function parseVnDayStart(ymd) {
   const s2 = String(ymd || "").trim();
@@ -91207,7 +91512,7 @@ async function syncEscrow(req, res) {
       }
       and.push({ $or: [{ create_time: dateRange }, { "data.date": strRange }] });
     }
-    const ordersCol = import_mongoose8.default.connection.db.collection("orders");
+    const ordersCol = import_mongoose10.default.connection.db.collection("orders");
     const candidates = await ordersCol.find({ $and: and }).project({
       orderSn: 1,
       shopId: 1,
@@ -91377,24 +91682,24 @@ async function syncEscrow(req, res) {
 }
 
 // routes/financeRoutes.js
-var router7 = (0, import_express8.Router)();
+var router7 = (0, import_express9.Router)();
 router7.get("/reconciliation", listReconciliation);
 router7.patch("/reconciliation/verify", verifyReconciliation);
 router7.post("/sync-escrow", syncEscrow);
 var financeRoutes_default = router7;
 
 // routes/addressBookRoutes.js
-var import_express9 = __toESM(require_express2(), 1);
+var import_express10 = __toESM(require_express2(), 1);
 
 // services/addressBook.js
 var import_fs12 = __toESM(require("fs"), 1);
 var import_path12 = __toESM(require("path"), 1);
-var import_mongoose10 = __toESM(require("mongoose"), 1);
+var import_mongoose12 = __toESM(require("mongoose"), 1);
 init_appPaths();
 
 // models/AddressBook.js
-var import_mongoose9 = __toESM(require("mongoose"), 1);
-var AddressBookSchema = new import_mongoose9.default.Schema(
+var import_mongoose11 = __toESM(require("mongoose"), 1);
+var AddressBookSchema = new import_mongoose11.default.Schema(
   {
     id: { type: String, trim: true, index: true },
     name: { type: String, default: "", trim: true },
@@ -91440,7 +91745,7 @@ AddressBookSchema.index({ phone: 1, street: 1, wardCode: 1 }, { name: "address_b
 AddressBookSchema.index({ savedAt: -1 }, { name: "address_book_savedAt" });
 AddressBookSchema.index({ total_spent: -1 }, { name: "address_book_total_spent" });
 AddressBookSchema.index({ last_purchase_date: -1 }, { name: "address_book_last_purchase" });
-var AddressBook = import_mongoose9.default.models.AddressBook || import_mongoose9.default.model("AddressBook", AddressBookSchema);
+var AddressBook = import_mongoose11.default.models.AddressBook || import_mongoose11.default.model("AddressBook", AddressBookSchema);
 var AddressBook_default = AddressBook;
 
 // utils/posSellingPrice.js
@@ -91545,7 +91850,7 @@ function writeBook(list) {
   import_fs12.default.writeFileSync(FILE_PATH, JSON.stringify(list, null, 2), "utf-8");
 }
 function mongoReady3() {
-  return import_mongoose10.default.connection?.readyState === 1;
+  return import_mongoose12.default.connection?.readyState === 1;
 }
 function normalizePhone(value) {
   return String(value || "").replace(/\D/g, "");
@@ -91734,8 +92039,8 @@ async function updateCustomerAddressByKey({
   let updated = null;
   if (cleanId) {
     const idOr = [{ id: cleanId }];
-    if (import_mongoose10.default.isValidObjectId(cleanId)) {
-      idOr.push({ _id: new import_mongoose10.default.Types.ObjectId(cleanId) });
+    if (import_mongoose12.default.isValidObjectId(cleanId)) {
+      idOr.push({ _id: new import_mongoose12.default.Types.ObjectId(cleanId) });
     }
     updated = await AddressBook_default.findOneAndUpdate(
       { $or: idOr },
@@ -91754,8 +92059,8 @@ async function updateCustomerAddressByKey({
     const custOr = [];
     if (cleanId) {
       custOr.push({ id: cleanId });
-      if (import_mongoose10.default.isValidObjectId(cleanId)) {
-        custOr.push({ _id: new import_mongoose10.default.Types.ObjectId(cleanId) });
+      if (import_mongoose12.default.isValidObjectId(cleanId)) {
+        custOr.push({ _id: new import_mongoose12.default.Types.ObjectId(cleanId) });
       }
     }
     if (cleanPhone) {
@@ -91763,7 +92068,7 @@ async function updateCustomerAddressByKey({
       custOr.push({ phone_number: cleanPhone });
     }
     if (custOr.length) {
-      await import_mongoose10.default.connection.collection("customers").updateMany(
+      await import_mongoose12.default.connection.collection("customers").updateMany(
         { $or: custOr },
         { $set: { ...patch, updatedAt: /* @__PURE__ */ new Date() } }
       );
@@ -91798,8 +92103,8 @@ async function deleteCustomerByKey({ id = "", phone = "" } = {}) {
   let deleted = 0;
   if (cleanId) {
     const idOr = [{ id: cleanId }];
-    if (import_mongoose10.default.isValidObjectId(cleanId)) {
-      idOr.push({ _id: new import_mongoose10.default.Types.ObjectId(cleanId) });
+    if (import_mongoose12.default.isValidObjectId(cleanId)) {
+      idOr.push({ _id: new import_mongoose12.default.Types.ObjectId(cleanId) });
     }
     const byId = await AddressBook_default.deleteOne({ $or: idOr });
     deleted += Number(byId?.deletedCount) || 0;
@@ -91812,8 +92117,8 @@ async function deleteCustomerByKey({ id = "", phone = "" } = {}) {
     const custOr = [];
     if (cleanId) {
       custOr.push({ id: cleanId });
-      if (import_mongoose10.default.isValidObjectId(cleanId)) {
-        custOr.push({ _id: new import_mongoose10.default.Types.ObjectId(cleanId) });
+      if (import_mongoose12.default.isValidObjectId(cleanId)) {
+        custOr.push({ _id: new import_mongoose12.default.Types.ObjectId(cleanId) });
       }
     }
     if (cleanPhone) {
@@ -91821,7 +92126,7 @@ async function deleteCustomerByKey({ id = "", phone = "" } = {}) {
       custOr.push({ phone_number: cleanPhone });
     }
     if (custOr.length) {
-      const cust = await import_mongoose10.default.connection.collection("customers").deleteMany({ $or: custOr });
+      const cust = await import_mongoose12.default.connection.collection("customers").deleteMany({ $or: custOr });
       deleted += Number(cust?.deletedCount) || 0;
     }
   } catch (err) {
@@ -92151,7 +92456,7 @@ async function createAddressBookEntry(req, res) {
 }
 
 // routes/addressBookRoutes.js
-var router8 = (0, import_express9.Router)();
+var router8 = (0, import_express10.Router)();
 var h = asyncHandler;
 router8.get("/ranking", h(rankingAddressBook));
 router8.get("/", h(listAddressBook));
@@ -92159,10 +92464,10 @@ router8.post("/", h(createAddressBookEntry));
 var addressBookRoutes_default = router8;
 
 // routes/customerRoutes.js
-var import_express10 = __toESM(require_express2(), 1);
+var import_express11 = __toESM(require_express2(), 1);
 
 // controllers/customerController.js
-var import_mongoose11 = __toESM(require("mongoose"), 1);
+var import_mongoose13 = __toESM(require("mongoose"), 1);
 var ORDER_LIMIT = 50;
 var PHONE_FIELDS = [
   "customerPhone",
@@ -92255,7 +92560,7 @@ async function updateCustomerAddress(req, res) {
 }
 async function getCustomerOrderHistory(req, res) {
   try {
-    if (import_mongoose11.default.connection?.readyState !== 1) {
+    if (import_mongoose13.default.connection?.readyState !== 1) {
       return res.status(503).json({
         success: false,
         error: "C\u01A1 s\u1EDF d\u1EEF li\u1EC7u ch\u01B0a s\u1EB5n s\xE0ng",
@@ -92278,7 +92583,7 @@ async function getCustomerOrderHistory(req, res) {
       or.push({ [field]: { $in: match2.exact } });
       or.push({ [field]: suffix });
     }
-    const rows = await import_mongoose11.default.connection.collection("orders").find(
+    const rows = await import_mongoose13.default.connection.collection("orders").find(
       { $or: or },
       {
         projection: {
@@ -92358,7 +92663,7 @@ async function deleteCustomer(req, res) {
 }
 
 // routes/customerRoutes.js
-var router9 = (0, import_express10.Router)();
+var router9 = (0, import_express11.Router)();
 var h2 = asyncHandler;
 router9.get("/:phone/orders", h2(getCustomerOrderHistory));
 router9.put("/:id", h2(updateCustomerAddress));
@@ -92366,7 +92671,7 @@ router9.delete("/:id", h2(deleteCustomer));
 var customerRoutes_default = router9;
 
 // routes/chatRoutes.js
-var import_express11 = __toESM(require_express2(), 1);
+var import_express12 = __toESM(require_express2(), 1);
 
 // controllers/chatController.js
 var LIST_LIMIT = 100;
@@ -92659,7 +92964,7 @@ async function createQuickReply(req, res) {
 }
 
 // routes/chatRoutes.js
-var router10 = (0, import_express11.Router)();
+var router10 = (0, import_express12.Router)();
 var h3 = asyncHandler;
 router10.get("/conversations", h3(getConversations));
 router10.post("/conversations/:id/read", h3(markConversationRead));
@@ -92670,7 +92975,7 @@ router10.post("/quick-replies", h3(createQuickReply));
 var chatRoutes_default = router10;
 
 // routes/importsRoutes.js
-var import_express12 = __toESM(require_express2(), 1);
+var import_express13 = __toESM(require_express2(), 1);
 
 // controllers/importsController.js
 var import_fs13 = __toESM(require("fs"), 1);
@@ -92965,7 +93270,7 @@ async function getSupplierReport(req, res) {
 }
 
 // routes/importsRoutes.js
-var router11 = (0, import_express12.Router)();
+var router11 = (0, import_express13.Router)();
 router11.get("/", listImports);
 router11.get("/supplier-report", getSupplierReport);
 router11.get("/history/:productId", getImportHistory);
@@ -92975,7 +93280,7 @@ router11.post("/clear-all", clearAllImports);
 var importsRoutes_default = router11;
 
 // routes/materialsRoutes.js
-var import_express13 = __toESM(require_express2(), 1);
+var import_express14 = __toESM(require_express2(), 1);
 
 // controllers/materialsController.js
 var import_fs14 = __toESM(require("fs"), 1);
@@ -93125,14 +93430,14 @@ function applyMaterialStockAndPrice(materialId, qtyDelta, unitPrice2, opts = {})
 }
 
 // routes/materialsRoutes.js
-var router12 = (0, import_express13.Router)();
+var router12 = (0, import_express14.Router)();
 router12.get("/", listMaterials);
 router12.post("/", createMaterial);
 router12.put("/:id", updateMaterial);
 var materialsRoutes_default = router12;
 
 // routes/materialImportsRoutes.js
-var import_express14 = __toESM(require_express2(), 1);
+var import_express15 = __toESM(require_express2(), 1);
 
 // controllers/materialImportsController.js
 var import_fs15 = __toESM(require("fs"), 1);
@@ -93294,14 +93599,14 @@ async function clearAllMaterialImports(_req, res) {
 }
 
 // routes/materialImportsRoutes.js
-var router13 = (0, import_express14.Router)();
+var router13 = (0, import_express15.Router)();
 router13.get("/", listMaterialImports);
 router13.post("/", createMaterialImport);
 router13.post("/clear-all", clearAllMaterialImports);
 var materialImportsRoutes_default = router13;
 
 // routes/settingsRoutes.js
-var import_express15 = __toESM(require_express2(), 1);
+var import_express16 = __toESM(require_express2(), 1);
 
 // node_modules/@google/genai/dist/node/index.mjs
 var import_p_retry = __toESM(require_p_retry(), 1);
@@ -121307,7 +121612,7 @@ async function testSpxSettings(req, res) {
 }
 
 // routes/settingsRoutes.js
-var router14 = (0, import_express15.Router)();
+var router14 = (0, import_express16.Router)();
 router14.get("/channels", getChannelSettings);
 router14.put("/channels", putChannelSettings);
 router14.get("/gemini-status", getGeminiStatus);
@@ -121321,7 +121626,7 @@ router14.post("/test-spx", testSpxSettings);
 var settingsRoutes_default = router14;
 
 // routes/aiRoutes.js
-var import_express16 = __toESM(require_express2(), 1);
+var import_express17 = __toESM(require_express2(), 1);
 
 // controllers/aiController.js
 function markdownToHtml(text) {
@@ -121566,14 +121871,14 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
 }
 
 // routes/aiRoutes.js
-var router15 = (0, import_express16.Router)();
+var router15 = (0, import_express17.Router)();
 router15.post("/gemini/optimize", authMiddleware, geminiOptimize);
 router15.post("/ai/parse-address", authMiddleware, parseAddress);
 router15.post("/ai/generate-description", authMiddleware, generateDescription);
 var aiRoutes_default = router15;
 
 // routes/dashboardRoutes.js
-var import_express17 = __toESM(require_express2(), 1);
+var import_express18 = __toESM(require_express2(), 1);
 
 // utils/dashboard.js
 function toDateKey(d) {
@@ -121813,7 +122118,7 @@ async function getDashboard(req, res) {
 }
 
 // routes/dashboardRoutes.js
-var router16 = (0, import_express17.Router)();
+var router16 = (0, import_express18.Router)();
 router16.get("/", getDashboard);
 var dashboardRoutes_default = router16;
 
@@ -121835,18 +122140,18 @@ function corsMiddleware(req, res, next) {
 var cors_default = corsMiddleware;
 
 // middlewares/dbReady.js
-var import_mongoose12 = __toESM(require("mongoose"), 1);
+var import_mongoose14 = __toESM(require("mongoose"), 1);
 function dbReadyMiddleware(req, res, next) {
   const pathName = String(req.path || req.originalUrl || "").split("?")[0];
   if (!pathName.startsWith("/api/")) return next();
   const allowWithoutDb = pathName === "/api/login" || pathName.startsWith("/api/health") || pathName.startsWith("/api/auth/") || pathName === "/api/shopee/callback" || pathName === "/api/shopee/oauth/complete" || pathName === "/api/shopee/webhook" || pathName === "/api/tiktok/callback" || pathName.startsWith("/api/public/") || pathName.startsWith("/api/shopee/ship-order") || pathName === "/api/shopee/print-document";
   if (allowWithoutDb) return next();
-  if (import_mongoose12.default.connection.readyState !== 1) {
+  if (import_mongoose14.default.connection.readyState !== 1) {
     return res.status(503).json({
       success: false,
       message: "Database \u0111ang k\u1EBFt n\u1ED1i, vui l\xF2ng th\u1EED l\u1EA1i sau",
       error: "database_connecting",
-      readyState: import_mongoose12.default.connection.readyState
+      readyState: import_mongoose14.default.connection.readyState
     });
   }
   return next();
@@ -123028,7 +123333,7 @@ try {
 }
 
 // routes/productsRoutes.js
-var import_express18 = __toESM(require_express2(), 1);
+var import_express19 = __toESM(require_express2(), 1);
 
 // services/stockSyncQueue.js
 init_concurrency();
@@ -125596,7 +125901,7 @@ async function previewItemVariants(req, res) {
 }
 
 // routes/productsRoutes.js
-var router17 = (0, import_express18.Router)();
+var router17 = (0, import_express19.Router)();
 router17.get("/search", searchProducts);
 router17.post("/sync-shopee", handleProductSyncShopee);
 router17.post("/update-price", updateProductPrice);
@@ -125621,7 +125926,7 @@ router17.delete("/:id", deleteProduct);
 var productsRoutes_default = router17;
 
 // routes/mappingRoutes.js
-var import_express19 = __toESM(require_express2(), 1);
+var import_express20 = __toESM(require_express2(), 1);
 
 // controllers/mappingController.js
 var deps13 = {
@@ -126076,7 +126381,7 @@ async function handleMappingPurgeBroken(_req, res) {
 }
 
 // routes/mappingRoutes.js
-var router18 = (0, import_express19.Router)();
+var router18 = (0, import_express20.Router)();
 router18.get("/sku-index", handleMappingSkuIndex);
 router18.post("/auto-link-single", handleSingleAutoLink);
 router18.post("/batch-auto-link", handleBatchAutoLink);
@@ -126090,12 +126395,12 @@ router18.post("/", handleMappingProductsUpsert);
 var mappingRoutes_default = router18;
 
 // routes/ordersRoutes.js
-var import_express20 = __toESM(require_express2(), 1);
+var import_express21 = __toESM(require_express2(), 1);
 
 // controllers/ordersController.js
 var import_fs23 = __toESM(require("fs"), 1);
 var import_path23 = __toESM(require("path"), 1);
-var import_mongoose13 = __toESM(require("mongoose"), 1);
+var import_mongoose15 = __toESM(require("mongoose"), 1);
 init_appPaths();
 
 // utils/orderPdfAvailability.js
@@ -128328,7 +128633,7 @@ function docHasValidTracking(doc) {
 var GHOST_ORDER_SNS = ["261001FRS927QE", "261001F7MD71RC", "261001F4MQ09N9"];
 async function deleteGhostOrders(_req, res) {
   try {
-    const Order2 = import_mongoose13.default.models.Order;
+    const Order2 = import_mongoose15.default.models.Order;
     if (!isMongoReady() || !Order2) {
       return res.status(503).json({
         success: false,
@@ -128366,14 +128671,14 @@ async function migrateTrackingFlag(_req, res) {
     batches: 0
   };
   try {
-    if (!isMongoReady() || import_mongoose13.default.connection.readyState !== 1 || !import_mongoose13.default.connection.db) {
+    if (!isMongoReady() || import_mongoose15.default.connection.readyState !== 1 || !import_mongoose15.default.connection.db) {
       return res.status(503).json({
         success: false,
         error: "mongodb_not_ready",
         message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng."
       });
     }
-    const col = import_mongoose13.default.connection.db.collection("orders");
+    const col = import_mongoose15.default.connection.db.collection("orders");
     while (stats.batches < MIGRATE_TRACKING_MAX_BATCHES) {
       const docs = await col.find({ has_tracking: { $exists: false } }).project({
         _id: 1,
@@ -128447,14 +128752,14 @@ function nestedStubIsUnpaid(nested) {
 async function healCorruptedFlags(_req, res) {
   let healedCount = 0;
   try {
-    if (!isMongoReady() || import_mongoose13.default.connection.readyState !== 1 || !import_mongoose13.default.connection.db) {
+    if (!isMongoReady() || import_mongoose15.default.connection.readyState !== 1 || !import_mongoose15.default.connection.db) {
       return res.status(503).json({
         success: false,
         error: "mongodb_not_ready",
         healedCount: 0
       });
     }
-    const col = import_mongoose13.default.connection.db.collection("orders");
+    const col = import_mongoose15.default.connection.db.collection("orders");
     let batches = 0;
     while (batches < HEAL_CORRUPT_MAX_BATCHES) {
       const docs = await col.find(HEAL_CORRUPT_FILTER).project({
@@ -132880,7 +133185,7 @@ async function parseOrderAddress(req, res) {
 }
 
 // routes/ordersRoutes.js
-var router19 = (0, import_express20.Router)();
+var router19 = (0, import_express21.Router)();
 var h5 = asyncHandler;
 router19.get("/system/heal-corrupted-flags", h5(healCorruptedFlags));
 router19.get("/system/delete-ghost-orders", h5(deleteGhostOrders));
@@ -132945,7 +133250,7 @@ router19.delete("/:id", h5(deleteOrder));
 var ordersRoutes_default = router19;
 
 // routes/shopeeAuthRoutes.js
-var import_express21 = __toESM(require_express2(), 1);
+var import_express22 = __toESM(require_express2(), 1);
 
 // controllers/shopeeAuthController.js
 init_appPaths();
@@ -133196,7 +133501,7 @@ async function getAuthUrl(req, res) {
 }
 
 // routes/shopeeAuthRoutes.js
-var router20 = (0, import_express21.Router)();
+var router20 = (0, import_express22.Router)();
 router20.get("/oauth/complete", oauthComplete);
 router20.get("/callback", oauthCallback);
 router20.get("/webhook", webhookProbe);
@@ -133205,7 +133510,7 @@ router20.get("/auth-url", authMiddleware, getAuthUrl);
 var shopeeAuthRoutes_default = router20;
 
 // routes/tiktokAuthRoutes.js
-var import_express22 = __toESM(require_express2(), 1);
+var import_express23 = __toESM(require_express2(), 1);
 
 // controllers/tiktokAuthController.js
 init_auth();
@@ -133744,7 +134049,7 @@ async function previewProducts(req, res) {
 }
 
 // routes/tiktokAuthRoutes.js
-var router21 = (0, import_express22.Router)();
+var router21 = (0, import_express23.Router)();
 router21.get("/callback", oauthCallback2);
 router21.post("/custom-app/credentials", authMiddleware, saveCustomAppCredentials);
 router21.get("/custom-app/status", authMiddleware, getCustomAppStatus);
@@ -133756,8 +134061,8 @@ router21.get("/products/:productId", authMiddleware, getProductDetail);
 var tiktokAuthRoutes_default = router21;
 
 // routes/shopeeOrdersRoutes.js
-var import_express23 = __toESM(require_express2(), 1);
-var router22 = (0, import_express23.Router)();
+var import_express24 = __toESM(require_express2(), 1);
+var router22 = (0, import_express24.Router)();
 router22.post("/orders/sync", syncOrders);
 router22.post("/orders/pull", pullOrders);
 router22.post("/orders/quick-sync", quickSyncOrders);
@@ -133766,8 +134071,8 @@ router22.get("/debug/return-by-order", debugReturnByOrder);
 var shopeeOrdersRoutes_default = router22;
 
 // routes/shopeeProductsRoutes.js
-var import_express24 = __toESM(require_express2(), 1);
-var router23 = (0, import_express24.Router)();
+var import_express25 = __toESM(require_express2(), 1);
+var router23 = (0, import_express25.Router)();
 router23.post("/products/sync", syncProducts);
 router23.post("/products/sync-item-variants", syncItemVariants);
 router23.post("/products/item-preview", previewItemVariants);
@@ -133775,8 +134080,8 @@ router23.get("/products/item-preview", previewItemVariants);
 var shopeeProductsRoutes_default = router23;
 
 // routes/shopeeShipRoutes.js
-var import_express25 = __toESM(require_express2(), 1);
-var router24 = (0, import_express25.Router)();
+var import_express26 = __toESM(require_express2(), 1);
+var router24 = (0, import_express26.Router)();
 router24.post("/ship-order", shipOrder);
 router24.post("/ship-order/bulk", shipOrderBulk);
 router24.post("/ship-order/bulk-async", shipOrderBulkAsync);
@@ -133785,7 +134090,7 @@ router24.post("/orders/fast-process", fastProcessOrders);
 var shopeeShipRoutes_default = router24;
 
 // routes/shopeePrintRoutes.js
-var import_express26 = __toESM(require_express2(), 1);
+var import_express27 = __toESM(require_express2(), 1);
 
 // controllers/shopeePrintController.js
 var deps19 = {
@@ -133872,15 +134177,15 @@ async function getPrintDocumentJob(req, res) {
 }
 
 // routes/shopeePrintRoutes.js
-var router25 = (0, import_express26.Router)();
+var router25 = (0, import_express27.Router)();
 router25.post("/print-document", printDocument);
 router25.post("/print-document/async", printDocumentAsync);
 router25.get("/print-document/job/:jobId", getPrintDocumentJob);
 var shopeePrintRoutes_default = router25;
 
 // routes/inventoryRoutes.js
-var import_express27 = __toESM(require_express2(), 1);
-var router26 = (0, import_express27.Router)();
+var import_express28 = __toESM(require_express2(), 1);
+var router26 = (0, import_express28.Router)();
 router26.get("/local-inventory", authMiddleware, getLocalInventory);
 router26.post("/local-inventory/refresh", authMiddleware, refreshLocalInventory);
 router26.post("/sync-stock", authMiddleware, syncStock);
@@ -133889,8 +134194,8 @@ router26.post("/inventory/clear-all", authMiddleware, handleInventoryClearAll);
 var inventoryRoutes_default = router26;
 
 // routes/autoLinkRoutes.js
-var import_express28 = __toESM(require_express2(), 1);
-var router27 = (0, import_express28.Router)();
+var import_express29 = __toESM(require_express2(), 1);
+var router27 = (0, import_express29.Router)();
 router27.post("/mapping/bulk-update", authMiddleware, handleBulkAutoLinkByIds);
 router27.post("/shopee/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
 router27.post("/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
@@ -133898,8 +134203,8 @@ router27.post("/auto-link", authMiddleware, handleBatchAutoLink);
 var autoLinkRoutes_default = router27;
 
 // routes/apiSystemRoutes.js
-var import_express29 = __toESM(require_express2(), 1);
-var router28 = (0, import_express29.Router)();
+var import_express30 = __toESM(require_express2(), 1);
+var router28 = (0, import_express30.Router)();
 router28.get("/sync-jobs/:jobId", authMiddleware, getSyncJobById);
 router28.get("/order-counts", authMiddleware, getOrderCounts);
 router28.post("/sync-shopee", authMiddleware, syncShopee);
@@ -133910,12 +134215,12 @@ router28.post("/sync-from-shop", authMiddleware, syncFromShop);
 var apiSystemRoutes_default = router28;
 
 // routes/labelsRoutes.js
-var import_express30 = __toESM(require_express2(), 1);
+var import_express31 = __toESM(require_express2(), 1);
 var serveHandler = null;
 function initLabelsRoutes(handler) {
   serveHandler = handler;
 }
-var router29 = (0, import_express30.Router)();
+var router29 = (0, import_express31.Router)();
 function handlePublicLabelGet(req, res) {
   if (typeof serveHandler !== "function") {
     return res.status(503).type("text/plain").send("Label service ch\u01B0a s\u1EB5n s\xE0ng.");
@@ -134560,19 +134865,19 @@ async function updateWooCommerceOrderStatus(req, res) {
 init_wooCommerce();
 
 // modules/orders/orderWorkLock.js
-var import_node_crypto3 = __toESM(require("node:crypto"), 1);
-var import_mongoose14 = __toESM(require("mongoose"), 1);
+var import_node_crypto4 = __toESM(require("node:crypto"), 1);
+var import_mongoose16 = __toESM(require("mongoose"), 1);
 var import_node_os2 = __toESM(require("node:os"), 1);
 var completedOwners = /* @__PURE__ */ new Map();
 async function withOrderWorkLock(shopId, orderSn, work) {
   if (!/^\d+$/.test(String(shopId)) || !/^[a-zA-Z0-9-]+$/.test(String(orderSn))) {
     throw new Error("webhook_order_key_invalid");
   }
-  const db = import_mongoose14.default.connection.db;
-  if (import_mongoose14.default.connection.readyState !== 1 || !db) throw new Error("mongodb_not_ready");
+  const db = import_mongoose16.default.connection.db;
+  if (import_mongoose16.default.connection.readyState !== 1 || !db) throw new Error("mongodb_not_ready");
   const locks = db.collection("shopee_order_work_locks");
   const key = `${shopId}:${orderSn}`;
-  const owner = import_node_crypto3.default.randomUUID();
+  const owner = import_node_crypto4.default.randomUUID();
   if (completedOwners.has(key)) {
     await locks.deleteOne({ _id: key, owner: completedOwners.get(key) });
     completedOwners.delete(key);
@@ -135343,7 +135648,7 @@ async function processShopeeWebhookPayload(body) {
 init_appPaths();
 
 // services/orderChangeStream.js
-var import_mongoose15 = __toESM(require("mongoose"), 1);
+var import_mongoose17 = __toESM(require("mongoose"), 1);
 var NEW_ORDER_FLUSH_MS = 300;
 var UPDATED_FLUSH_MS = 3e3;
 var STATUS_FLUSH_MS = 300;
@@ -135565,8 +135870,8 @@ function closeCurrentStream() {
 }
 function openStream() {
   if (stopped || unsupported) return;
-  const db = import_mongoose15.default.connection?.db;
-  if (import_mongoose15.default.connection?.readyState !== 1 || !db) {
+  const db = import_mongoose17.default.connection?.db;
+  if (import_mongoose17.default.connection?.readyState !== 1 || !db) {
     scheduleReconnect("mongo ch\u01B0a s\u1EB5n s\xE0ng");
     return;
   }
@@ -139200,8 +139505,8 @@ async function debugForceSyncHandedOverOrders(opts) {
     }));
     if (candidates.length === 0) {
       try {
-        const { default: mongoose16 } = await import("mongoose");
-        const col = mongoose16.connection?.db?.collection("orders");
+        const { default: mongoose18 } = await import("mongoose");
+        const col = mongoose18.connection?.db?.collection("orders");
         if (col) {
           const rawHanded = await col.countDocuments({
             $or: [
@@ -151862,7 +152167,7 @@ async function upsertShopeeWebhookShallow(body, orders) {
   return String(merged.orderSn);
 }
 async function startServer() {
-  const app = (0, import_express31.default)();
+  const app = (0, import_express32.default)();
   const PORT = process.env.PORT || 3e3;
   const appWithRouteMethods = app;
   for (const method of ["get", "post", "put", "patch", "delete"]) {
@@ -151919,13 +152224,14 @@ async function startServer() {
       eagerStubOrder: eagerUpsertWebhookStub
     })
   );
-  app.use(import_express31.default.json({ limit: "50mb" }));
-  app.use(import_express31.default.urlencoded({ limit: "50mb", extended: true }));
+  app.use(import_express32.default.json({ limit: "50mb" }));
+  app.use(import_express32.default.urlencoded({ limit: "50mb", extended: true }));
   try {
     ensureLabelsDir();
   } catch (err) {
     console.error("[Labels] ensureLabelsDir l\xFAc boot Express:", err);
   }
+  app.use("/api/internal/ops", operationsRoutes_default);
   app.use(dbReady_default);
   app.get("/api/orders/system/heal-corrupted-flags", healCorruptedFlags);
   app.get("/api/orders/system/migrate-tracking-flag", migrateTrackingFlag);
@@ -156688,14 +156994,14 @@ async function startServer() {
       console.warn("[Boot] Passenger/cPanel detected without NODE_ENV=production; forcing static production runtime.");
     }
     const publicPdfDir = import_path25.default.join(APP_ROOT14, "public", "pdfs");
-    app.use("/pdfs", import_express31.default.static(publicPdfDir, {
+    app.use("/pdfs", import_express32.default.static(publicPdfDir, {
       setHeaders(res) {
         res.setHeader("Content-Type", "application/pdf");
         res.setHeader("Cache-Control", "public, max-age=300");
       }
     }));
     const distPath = import_path25.default.join(APP_ROOT14, "dist");
-    app.use(import_express31.default.static(distPath, {
+    app.use(import_express32.default.static(distPath, {
       setHeaders(res, filePath) {
         if (filePath.endsWith("index.html")) {
           res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");

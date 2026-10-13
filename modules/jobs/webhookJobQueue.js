@@ -6,6 +6,7 @@
  */
 import WebhookJob from "../../models/WebhookJob.js";
 import crypto from "node:crypto";
+import { webhookObservation } from "../operations/telemetry.js";
 import { safeError } from "../../utils/safeProductionLog.js";
 import { acquireShopeeSyncLease, releaseShopeeSyncLease, renewShopeeSyncLease } from "../shopee-sync/syncOrchestrator.js";
 
@@ -45,6 +46,7 @@ export async function enqueueOrderSyncJob(payload = {}, priority = 0) {
   })).digest("hex") : null;
   try {
     await WebhookJob.create({ jobId, kind: "sync", priority, payload, state: "pending", next_run_at: new Date(),
+      ...(payload.shopIds?.length === 1 ? { shopId: String(payload.shopIds[0]) } : {}),
       ...(activeKey ? { active_key: activeKey } : {}) });
   } catch (error) {
     if (!activeKey || !isDuplicateKeyError(error)) throw error;
@@ -87,7 +89,7 @@ function backoffMs(retryCount) {
 }
 
 /**
- * @param {{ jobId: string, payload: Record<string, unknown> }} input
+ * @param {{ jobId: string, payload: Record<string, unknown>, receivedAt?: Date }} input
  * @returns {Promise<{ ok: boolean, duplicate: boolean, jobId: string }>}
  */
 export async function enqueueWebhookJob(input) {
@@ -101,11 +103,18 @@ export async function enqueueWebhookJob(input) {
   const orderSn = String(data.ordersn ?? data.order_sn ?? data.orderSn ?? payload.order_sn ?? "").trim();
   if (!/^\d+$/.test(shopId) || !/^[a-zA-Z0-9-]+$/.test(orderSn)) throw new Error("webhook_order_key_invalid");
   const stale = webhookEventTime(payload) != null && Date.now() - webhookEventTime(payload) > STALE_JOB_MAX_AGE_MS;
+  const receivedAt = input.receivedAt ?? new Date();
+  if (!(receivedAt instanceof Date) || !Number.isFinite(receivedAt.getTime()) || receivedAt.getTime() > Date.now()) {
+    throw new Error("webhook_received_at_invalid");
+  }
   try {
     await WebhookJob.create({
       jobId,
       payload,
       kind: "webhook",
+      shopId,
+      received_at: receivedAt,
+      ...(stale ? { finished_at: new Date() } : {}),
       orderKey: `${shopId}:${orderSn}`,
       state: stale ? "dead-letter" : "pending",
       retry_count: 0,
@@ -136,6 +145,8 @@ async function claimNextJob() {
     [
       {
         $set: {
+          // Chỉ tính retry thực sự được worker chạy, không nhầm với số lần lỗi.
+          retry_attempts: { $add: [{ $ifNull: ["$retry_attempts", 0] }, { $cond: [{ $eq: ["$state", "failed"] }, 1, 0] }] },
           retry_count: {
             $cond: [{ $eq: ["$state", "running"] }, { $add: ["$retry_count", 1] }, "$retry_count"],
           },
@@ -160,7 +171,7 @@ async function sweepStaleJobs() {
   const cutoff = new Date(now - STALE_JOB_MAX_AGE_MS);
   const result = await WebhookJob.updateMany(
     { kind: { $ne: "sync" }, state: { $in: ["pending", "failed"] }, createdAt: { $lt: cutoff } },
-    { $set: { state: "dead-letter", error_log: STALE_SKIP_LOG, next_run_at: new Date(now) } },
+    { $set: { state: "dead-letter", error_log: STALE_SKIP_LOG, next_run_at: new Date(now), finished_at: new Date(now) } },
   );
   if (result?.modifiedCount) {
     console.warn(
@@ -180,7 +191,8 @@ function isStaleJob(job) {
 async function markSucceeded(job, note = "") {
   await WebhookJob.updateOne(
     { _id: job._id, state: "running", claim_token: job.claim_token },
-    { $set: { state: "succeeded", error_log: note, next_run_at: new Date() }, $unset: { active_key: "" } },
+    { $set: { state: "succeeded", error_log: note, next_run_at: new Date(), finished_at: new Date(),
+      ...(job.order_persisted_at ? { order_persisted_at: job.order_persisted_at } : {}) }, $unset: { active_key: "" } },
   );
 }
 
@@ -196,6 +208,8 @@ async function markFailed(job, err) {
         retry_count: retry,
         error_log: message,
         next_run_at: nextRun,
+        ...(retry >= MAX_RETRY ? { finished_at: new Date() } : {}),
+        ...(job.order_persisted_at ? { order_persisted_at: job.order_persisted_at } : {}),
       },
       ...(retry >= MAX_RETRY ? { $unset: { active_key: "" } } : {}),
     },
@@ -218,7 +232,7 @@ async function runClaimedJob(job) {
   if (isStaleJob(job)) {
     await WebhookJob.updateOne(
       { _id: job._id, state: "running", claim_token: job.claim_token },
-      { $set: { state: "dead-letter", error_log: STALE_SKIP_LOG } },
+      { $set: { state: "dead-letter", error_log: STALE_SKIP_LOG, finished_at: new Date() } },
     );
     console.warn("[WebhookJobQueue] stale_job_dead_letter");
     return false;
@@ -237,7 +251,13 @@ async function runClaimedJob(job) {
       const result = await syncProcessor(job.payload);
       if (result?.success === false || result?.skipped) throw new Error("sync_job_incomplete");
     } else {
-      await processor(job.payload);
+      const observation = { orderPersistedAt: job.order_persisted_at || null };
+      try {
+        await webhookObservation.run(observation, () => processor(job.payload));
+      } finally {
+        // Giữ mốc lưu đơn dù bước xử lý tiếp theo ném lỗi và cần retry.
+        if (observation.orderPersistedAt) job.order_persisted_at = observation.orderPersistedAt;
+      }
     }
     await markSucceeded(job);
   } finally {
@@ -268,7 +288,7 @@ export async function drainOnce(processPayload) {
     // Job running tồn dư được cách ly, không phát lại payload có thể đã ghi một phần.
     const abandoned = await WebhookJob.updateMany(
       { state: "running" },
-      { $set: { state: "dead-letter", error_log: "abandoned_worker_requires_review" }, $unset: { active_key: "" } },
+      { $set: { state: "dead-letter", error_log: "abandoned_worker_requires_review", finished_at: new Date() }, $unset: { active_key: "" } },
     );
     if (abandoned.modifiedCount) console.warn(`[WebhookJobQueue] abandoned_dead_letter count=${abandoned.modifiedCount}`);
     leaseHeartbeat = setInterval(() => {
