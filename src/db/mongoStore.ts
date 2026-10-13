@@ -1,3 +1,7 @@
+import { coerceShopeeWatermarkDate, isValidTrackingNo } from "../../modules/orders/repositoryValues.ts";
+export { isValidTrackingNo } from "../../modules/orders/repositoryValues.ts";
+import { normalizeScannedCode, stripScannedSeparators } from "../../modules/orders/scanCode.ts";
+export { normalizeScannedCode } from "../../modules/orders/scanCode.ts";
 /**
  * MongoDB Atlas — Single Source of Truth.
  * Mọi đọc: find có filter + limit (CẤM find({}) không giới hạn).
@@ -2807,41 +2811,6 @@ function readExistingWarehouseLock(doc: any): {
     resolvedLocal = st === "cancelled" ? "CANCELLED_STORED" : "RETURN_RECEIVED";
   }
   return { locked: flag, local: resolvedLocal };
-}
-
-/** Parse Shopee unix (giây/ms) hoặc ISO/Date → Date hợp lệ. */
-function coerceShopeeWatermarkDate(value: unknown): Date | null {
-  if (value == null || value === "") return null;
-  if (value instanceof Date) {
-    return Number.isNaN(value.getTime()) ? null : value;
-  }
-  if (typeof value === "number" && Number.isFinite(value)) {
-    const ms = value > 0 && value < 1e12 ? value * 1000 : value;
-    const d = new Date(ms);
-    return Number.isNaN(d.getTime()) ? null : d;
-  }
-  const raw = String(value).trim();
-  if (!raw) return null;
-  if (/^\d+(\.\d+)?$/.test(raw)) {
-    const n = Number(raw);
-    if (!Number.isFinite(n)) return null;
-    const ms = n > 0 && n < 1e12 ? n * 1000 : n;
-    const d = new Date(ms);
-    return Number.isNaN(d.getTime()) ? null : d;
-  }
-  const d = new Date(raw);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
-/**
- * Mã vận đơn hợp lệ: khác undefined, null và chuỗi rỗng (sau trim).
- * Mã nội bộ Shopee 0FG không phải vận đơn — không tính là đã có mã.
- */
-export function isValidTrackingNo(value: unknown): boolean {
-  if (value === undefined || value === null) return false;
-  const s = String(value).trim();
-  if (!s || /^0FG/i.test(s)) return false;
-  return true;
 }
 
 /** Payload có mã / sàn trả "" (thu hồi) / field không được gửi. */
@@ -6619,17 +6588,6 @@ export async function hydrateTrackingBulkInStore(): Promise<{
     scanned: docs.length,
     samples,
   };
-}
-
-/** Chuẩn hóa mã súng quét: trim + UPPER — exact $eq, không regex. */
-export function normalizeScannedCode(raw: unknown): string {
-  return String(raw || "")
-    .trim()
-    .toUpperCase();
-}
-
-function stripScannedSeparators(code: string): string {
-  return String(code || "").replace(/[\s\-_#./\\|:;,]+/g, "");
 }
 
 function pushScanFieldVariants(

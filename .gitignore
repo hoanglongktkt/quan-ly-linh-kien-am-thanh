@@ -3,6 +3,7 @@ build/
 dist/
 .next/
 coverage/
+tmp/test-backend-modules.mjs
 cpanel-deploy/
 cpanel-deploy-staging/
 cpanel-deploy.zip

@@ -32,6 +32,1766 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
+// node_modules/bignumber.js/bignumber.js
+var require_bignumber = __commonJS({
+  "node_modules/bignumber.js/bignumber.js"(exports2, module2) {
+    (function(globalObject) {
+      "use strict";
+      var BigNumber, isNumeric = /^-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i, mathceil = Math.ceil, mathfloor = Math.floor, bignumberError = "[BigNumber Error] ", tooManyDigits = bignumberError + "Number primitive has more than 15 significant digits: ", BASE = 1e14, LOG_BASE = 14, MAX_SAFE_INTEGER = 9007199254740991, POWS_TEN = [1, 10, 100, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13], SQRT_BASE = 1e7, MAX = 1e9;
+      function clone2(configObject) {
+        var div, convertBase, parseNumeric, P = BigNumber2.prototype = { constructor: BigNumber2, toString: null, valueOf: null }, ONE = new BigNumber2(1), DECIMAL_PLACES = 20, ROUNDING_MODE = 4, TO_EXP_NEG = -7, TO_EXP_POS = 21, MIN_EXP = -1e7, MAX_EXP = 1e7, CRYPTO = false, MODULO_MODE = 1, POW_PRECISION = 0, FORMAT = {
+          prefix: "",
+          groupSize: 3,
+          secondaryGroupSize: 0,
+          groupSeparator: ",",
+          decimalSeparator: ".",
+          fractionGroupSize: 0,
+          fractionGroupSeparator: "\xA0",
+          // non-breaking space
+          suffix: ""
+        }, ALPHABET2 = "0123456789abcdefghijklmnopqrstuvwxyz", alphabetHasNormalDecimalDigits = true;
+        function BigNumber2(v, b) {
+          var alphabet, c, caseChanged, e2, i2, isNum, len, str, x2 = this;
+          if (!(x2 instanceof BigNumber2)) return new BigNumber2(v, b);
+          if (b == null) {
+            if (v && v._isBigNumber === true) {
+              x2.s = v.s;
+              if (!v.c || v.e > MAX_EXP) {
+                x2.c = x2.e = null;
+              } else if (v.e < MIN_EXP) {
+                x2.c = [x2.e = 0];
+              } else {
+                x2.e = v.e;
+                x2.c = v.c.slice();
+              }
+              return;
+            }
+            if ((isNum = typeof v == "number") && v * 0 == 0) {
+              x2.s = 1 / v < 0 ? (v = -v, -1) : 1;
+              if (v === ~~v) {
+                for (e2 = 0, i2 = v; i2 >= 10; i2 /= 10, e2++) ;
+                if (e2 > MAX_EXP) {
+                  x2.c = x2.e = null;
+                } else {
+                  x2.e = e2;
+                  x2.c = [v];
+                }
+                return;
+              }
+              str = String(v);
+            } else {
+              if (!isNumeric.test(str = String(v))) return parseNumeric(x2, str, isNum);
+              x2.s = str.charCodeAt(0) == 45 ? (str = str.slice(1), -1) : 1;
+            }
+            if ((e2 = str.indexOf(".")) > -1) str = str.replace(".", "");
+            if ((i2 = str.search(/e/i)) > 0) {
+              if (e2 < 0) e2 = i2;
+              e2 += +str.slice(i2 + 1);
+              str = str.substring(0, i2);
+            } else if (e2 < 0) {
+              e2 = str.length;
+            }
+          } else {
+            intCheck(b, 2, ALPHABET2.length, "Base");
+            if (b == 10 && alphabetHasNormalDecimalDigits) {
+              x2 = new BigNumber2(v);
+              return round(x2, DECIMAL_PLACES + x2.e + 1, ROUNDING_MODE);
+            }
+            str = String(v);
+            if (isNum = typeof v == "number") {
+              if (v * 0 != 0) return parseNumeric(x2, str, isNum, b);
+              x2.s = 1 / v < 0 ? (str = str.slice(1), -1) : 1;
+              if (BigNumber2.DEBUG && str.replace(/^0\.0*|\./, "").length > 15) {
+                throw Error(tooManyDigits + v);
+              }
+            } else {
+              x2.s = str.charCodeAt(0) === 45 ? (str = str.slice(1), -1) : 1;
+            }
+            alphabet = ALPHABET2.slice(0, b);
+            e2 = i2 = 0;
+            for (len = str.length; i2 < len; i2++) {
+              if (alphabet.indexOf(c = str.charAt(i2)) < 0) {
+                if (c == ".") {
+                  if (i2 > e2) {
+                    e2 = len;
+                    continue;
+                  }
+                } else if (!caseChanged) {
+                  if (str == str.toUpperCase() && (str = str.toLowerCase()) || str == str.toLowerCase() && (str = str.toUpperCase())) {
+                    caseChanged = true;
+                    i2 = -1;
+                    e2 = 0;
+                    continue;
+                  }
+                }
+                return parseNumeric(x2, String(v), isNum, b);
+              }
+            }
+            isNum = false;
+            str = convertBase(str, b, 10, x2.s);
+            if ((e2 = str.indexOf(".")) > -1) str = str.replace(".", "");
+            else e2 = str.length;
+          }
+          for (i2 = 0; str.charCodeAt(i2) === 48; i2++) ;
+          for (len = str.length; str.charCodeAt(--len) === 48; ) ;
+          if (str = str.slice(i2, ++len)) {
+            len -= i2;
+            if (isNum && BigNumber2.DEBUG && len > 15 && (v > MAX_SAFE_INTEGER || v !== mathfloor(v))) {
+              throw Error(tooManyDigits + x2.s * v);
+            }
+            if ((e2 = e2 - i2 - 1) > MAX_EXP) {
+              x2.c = x2.e = null;
+            } else if (e2 < MIN_EXP) {
+              x2.c = [x2.e = 0];
+            } else {
+              x2.e = e2;
+              x2.c = [];
+              i2 = (e2 + 1) % LOG_BASE;
+              if (e2 < 0) i2 += LOG_BASE;
+              if (i2 < len) {
+                if (i2) x2.c.push(+str.slice(0, i2));
+                for (len -= LOG_BASE; i2 < len; ) {
+                  x2.c.push(+str.slice(i2, i2 += LOG_BASE));
+                }
+                i2 = LOG_BASE - (str = str.slice(i2)).length;
+              } else {
+                i2 -= len;
+              }
+              for (; i2--; str += "0") ;
+              x2.c.push(+str);
+            }
+          } else {
+            x2.c = [x2.e = 0];
+          }
+        }
+        BigNumber2.clone = clone2;
+        BigNumber2.ROUND_UP = 0;
+        BigNumber2.ROUND_DOWN = 1;
+        BigNumber2.ROUND_CEIL = 2;
+        BigNumber2.ROUND_FLOOR = 3;
+        BigNumber2.ROUND_HALF_UP = 4;
+        BigNumber2.ROUND_HALF_DOWN = 5;
+        BigNumber2.ROUND_HALF_EVEN = 6;
+        BigNumber2.ROUND_HALF_CEIL = 7;
+        BigNumber2.ROUND_HALF_FLOOR = 8;
+        BigNumber2.EUCLID = 9;
+        BigNumber2.config = BigNumber2.set = function(obj) {
+          var p, v;
+          if (obj != null) {
+            if (typeof obj == "object") {
+              if (obj.hasOwnProperty(p = "DECIMAL_PLACES")) {
+                v = obj[p];
+                intCheck(v, 0, MAX, p);
+                DECIMAL_PLACES = v;
+              }
+              if (obj.hasOwnProperty(p = "ROUNDING_MODE")) {
+                v = obj[p];
+                intCheck(v, 0, 8, p);
+                ROUNDING_MODE = v;
+              }
+              if (obj.hasOwnProperty(p = "EXPONENTIAL_AT")) {
+                v = obj[p];
+                if (v && v.pop) {
+                  intCheck(v[0], -MAX, 0, p);
+                  intCheck(v[1], 0, MAX, p);
+                  TO_EXP_NEG = v[0];
+                  TO_EXP_POS = v[1];
+                } else {
+                  intCheck(v, -MAX, MAX, p);
+                  TO_EXP_NEG = -(TO_EXP_POS = v < 0 ? -v : v);
+                }
+              }
+              if (obj.hasOwnProperty(p = "RANGE")) {
+                v = obj[p];
+                if (v && v.pop) {
+                  intCheck(v[0], -MAX, -1, p);
+                  intCheck(v[1], 1, MAX, p);
+                  MIN_EXP = v[0];
+                  MAX_EXP = v[1];
+                } else {
+                  intCheck(v, -MAX, MAX, p);
+                  if (v) {
+                    MIN_EXP = -(MAX_EXP = v < 0 ? -v : v);
+                  } else {
+                    throw Error(bignumberError + p + " cannot be zero: " + v);
+                  }
+                }
+              }
+              if (obj.hasOwnProperty(p = "CRYPTO")) {
+                v = obj[p];
+                if (v === !!v) {
+                  if (v) {
+                    if (typeof crypto != "undefined" && crypto && (crypto.getRandomValues || crypto.randomBytes)) {
+                      CRYPTO = v;
+                    } else {
+                      CRYPTO = !v;
+                      throw Error(bignumberError + "crypto unavailable");
+                    }
+                  } else {
+                    CRYPTO = v;
+                  }
+                } else {
+                  throw Error(bignumberError + p + " not true or false: " + v);
+                }
+              }
+              if (obj.hasOwnProperty(p = "MODULO_MODE")) {
+                v = obj[p];
+                intCheck(v, 0, 9, p);
+                MODULO_MODE = v;
+              }
+              if (obj.hasOwnProperty(p = "POW_PRECISION")) {
+                v = obj[p];
+                intCheck(v, 0, MAX, p);
+                POW_PRECISION = v;
+              }
+              if (obj.hasOwnProperty(p = "FORMAT")) {
+                v = obj[p];
+                if (typeof v == "object") FORMAT = v;
+                else throw Error(bignumberError + p + " not an object: " + v);
+              }
+              if (obj.hasOwnProperty(p = "ALPHABET")) {
+                v = obj[p];
+                if (typeof v == "string" && !/^.?$|[+\-.\s]|(.).*\1/.test(v)) {
+                  alphabetHasNormalDecimalDigits = v.slice(0, 10) == "0123456789";
+                  ALPHABET2 = v;
+                } else {
+                  throw Error(bignumberError + p + " invalid: " + v);
+                }
+              }
+            } else {
+              throw Error(bignumberError + "Object expected: " + obj);
+            }
+          }
+          return {
+            DECIMAL_PLACES,
+            ROUNDING_MODE,
+            EXPONENTIAL_AT: [TO_EXP_NEG, TO_EXP_POS],
+            RANGE: [MIN_EXP, MAX_EXP],
+            CRYPTO,
+            MODULO_MODE,
+            POW_PRECISION,
+            FORMAT,
+            ALPHABET: ALPHABET2
+          };
+        };
+        BigNumber2.isBigNumber = function(v) {
+          if (!v || v._isBigNumber !== true) return false;
+          if (!BigNumber2.DEBUG) return true;
+          var i2, n, c = v.c, e2 = v.e, s2 = v.s;
+          out: if ({}.toString.call(c) == "[object Array]") {
+            if ((s2 === 1 || s2 === -1) && e2 >= -MAX && e2 <= MAX && e2 === mathfloor(e2)) {
+              if (c[0] === 0) {
+                if (e2 === 0 && c.length === 1) return true;
+                break out;
+              }
+              i2 = (e2 + 1) % LOG_BASE;
+              if (i2 < 1) i2 += LOG_BASE;
+              if (String(c[0]).length == i2) {
+                for (i2 = 0; i2 < c.length; i2++) {
+                  n = c[i2];
+                  if (n < 0 || n >= BASE || n !== mathfloor(n)) break out;
+                }
+                if (n !== 0) return true;
+              }
+            }
+          } else if (c === null && e2 === null && (s2 === null || s2 === 1 || s2 === -1)) {
+            return true;
+          }
+          throw Error(bignumberError + "Invalid BigNumber: " + v);
+        };
+        BigNumber2.maximum = BigNumber2.max = function() {
+          return maxOrMin(arguments, -1);
+        };
+        BigNumber2.minimum = BigNumber2.min = function() {
+          return maxOrMin(arguments, 1);
+        };
+        BigNumber2.random = (function() {
+          var pow2_53 = 9007199254740992;
+          var random53bitInt = Math.random() * pow2_53 & 2097151 ? function() {
+            return mathfloor(Math.random() * pow2_53);
+          } : function() {
+            return (Math.random() * 1073741824 | 0) * 8388608 + (Math.random() * 8388608 | 0);
+          };
+          return function(dp) {
+            var a, b, e2, k, v, i2 = 0, c = [], rand = new BigNumber2(ONE);
+            if (dp == null) dp = DECIMAL_PLACES;
+            else intCheck(dp, 0, MAX);
+            k = mathceil(dp / LOG_BASE);
+            if (CRYPTO) {
+              if (crypto.getRandomValues) {
+                a = crypto.getRandomValues(new Uint32Array(k *= 2));
+                for (; i2 < k; ) {
+                  v = a[i2] * 131072 + (a[i2 + 1] >>> 11);
+                  if (v >= 9e15) {
+                    b = crypto.getRandomValues(new Uint32Array(2));
+                    a[i2] = b[0];
+                    a[i2 + 1] = b[1];
+                  } else {
+                    c.push(v % 1e14);
+                    i2 += 2;
+                  }
+                }
+                i2 = k / 2;
+              } else if (crypto.randomBytes) {
+                a = crypto.randomBytes(k *= 7);
+                for (; i2 < k; ) {
+                  v = (a[i2] & 31) * 281474976710656 + a[i2 + 1] * 1099511627776 + a[i2 + 2] * 4294967296 + a[i2 + 3] * 16777216 + (a[i2 + 4] << 16) + (a[i2 + 5] << 8) + a[i2 + 6];
+                  if (v >= 9e15) {
+                    crypto.randomBytes(7).copy(a, i2);
+                  } else {
+                    c.push(v % 1e14);
+                    i2 += 7;
+                  }
+                }
+                i2 = k / 7;
+              } else {
+                CRYPTO = false;
+                throw Error(bignumberError + "crypto unavailable");
+              }
+            }
+            if (!CRYPTO) {
+              for (; i2 < k; ) {
+                v = random53bitInt();
+                if (v < 9e15) c[i2++] = v % 1e14;
+              }
+            }
+            k = c[--i2];
+            dp %= LOG_BASE;
+            if (k && dp) {
+              v = POWS_TEN[LOG_BASE - dp];
+              c[i2] = mathfloor(k / v) * v;
+            }
+            for (; c[i2] === 0; c.pop(), i2--) ;
+            if (i2 < 0) {
+              c = [e2 = 0];
+            } else {
+              for (e2 = -1; c[0] === 0; c.splice(0, 1), e2 -= LOG_BASE) ;
+              for (i2 = 1, v = c[0]; v >= 10; v /= 10, i2++) ;
+              if (i2 < LOG_BASE) e2 -= LOG_BASE - i2;
+            }
+            rand.e = e2;
+            rand.c = c;
+            return rand;
+          };
+        })();
+        BigNumber2.sum = function() {
+          var i2 = 1, args = arguments, sum = new BigNumber2(args[0]);
+          for (; i2 < args.length; ) sum = sum.plus(args[i2++]);
+          return sum;
+        };
+        convertBase = /* @__PURE__ */ (function() {
+          var decimal = "0123456789";
+          function toBaseOut(str, baseIn, baseOut, alphabet) {
+            var j, arr = [0], arrL, i2 = 0, len = str.length;
+            for (; i2 < len; ) {
+              for (arrL = arr.length; arrL--; arr[arrL] *= baseIn) ;
+              arr[0] += alphabet.indexOf(str.charAt(i2++));
+              for (j = 0; j < arr.length; j++) {
+                if (arr[j] > baseOut - 1) {
+                  if (arr[j + 1] == null) arr[j + 1] = 0;
+                  arr[j + 1] += arr[j] / baseOut | 0;
+                  arr[j] %= baseOut;
+                }
+              }
+            }
+            return arr.reverse();
+          }
+          return function(str, baseIn, baseOut, sign, callerIsToString) {
+            var alphabet, d, e2, k, r2, x2, xc, y, i2 = str.indexOf("."), dp = DECIMAL_PLACES, rm = ROUNDING_MODE;
+            if (i2 >= 0) {
+              k = POW_PRECISION;
+              POW_PRECISION = 0;
+              str = str.replace(".", "");
+              y = new BigNumber2(baseIn);
+              x2 = y.pow(str.length - i2);
+              POW_PRECISION = k;
+              y.c = toBaseOut(
+                toFixedPoint(coeffToString(x2.c), x2.e, "0"),
+                10,
+                baseOut,
+                decimal
+              );
+              y.e = y.c.length;
+            }
+            xc = toBaseOut(str, baseIn, baseOut, callerIsToString ? (alphabet = ALPHABET2, decimal) : (alphabet = decimal, ALPHABET2));
+            e2 = k = xc.length;
+            for (; xc[--k] == 0; xc.pop()) ;
+            if (!xc[0]) return alphabet.charAt(0);
+            if (i2 < 0) {
+              --e2;
+            } else {
+              x2.c = xc;
+              x2.e = e2;
+              x2.s = sign;
+              x2 = div(x2, y, dp, rm, baseOut);
+              xc = x2.c;
+              r2 = x2.r;
+              e2 = x2.e;
+            }
+            d = e2 + dp + 1;
+            i2 = xc[d];
+            k = baseOut / 2;
+            r2 = r2 || d < 0 || xc[d + 1] != null;
+            r2 = rm < 4 ? (i2 != null || r2) && (rm == 0 || rm == (x2.s < 0 ? 3 : 2)) : i2 > k || i2 == k && (rm == 4 || r2 || rm == 6 && xc[d - 1] & 1 || rm == (x2.s < 0 ? 8 : 7));
+            if (d < 1 || !xc[0]) {
+              str = r2 ? toFixedPoint(alphabet.charAt(1), -dp, alphabet.charAt(0)) : alphabet.charAt(0);
+            } else {
+              xc.length = d;
+              if (r2) {
+                for (--baseOut; ++xc[--d] > baseOut; ) {
+                  xc[d] = 0;
+                  if (!d) {
+                    ++e2;
+                    xc = [1].concat(xc);
+                  }
+                }
+              }
+              for (k = xc.length; !xc[--k]; ) ;
+              for (i2 = 0, str = ""; i2 <= k; str += alphabet.charAt(xc[i2++])) ;
+              str = toFixedPoint(str, e2, alphabet.charAt(0));
+            }
+            return str;
+          };
+        })();
+        div = /* @__PURE__ */ (function() {
+          function multiply(x2, k, base) {
+            var m2, temp, xlo, xhi, carry = 0, i2 = x2.length, klo = k % SQRT_BASE, khi = k / SQRT_BASE | 0;
+            for (x2 = x2.slice(); i2--; ) {
+              xlo = x2[i2] % SQRT_BASE;
+              xhi = x2[i2] / SQRT_BASE | 0;
+              m2 = khi * xlo + xhi * klo;
+              temp = klo * xlo + m2 % SQRT_BASE * SQRT_BASE + carry;
+              carry = (temp / base | 0) + (m2 / SQRT_BASE | 0) + khi * xhi;
+              x2[i2] = temp % base;
+            }
+            if (carry) x2 = [carry].concat(x2);
+            return x2;
+          }
+          function compare2(a, b, aL, bL) {
+            var i2, cmp;
+            if (aL != bL) {
+              cmp = aL > bL ? 1 : -1;
+            } else {
+              for (i2 = cmp = 0; i2 < aL; i2++) {
+                if (a[i2] != b[i2]) {
+                  cmp = a[i2] > b[i2] ? 1 : -1;
+                  break;
+                }
+              }
+            }
+            return cmp;
+          }
+          function subtract(a, b, aL, base) {
+            var i2 = 0;
+            for (; aL--; ) {
+              a[aL] -= i2;
+              i2 = a[aL] < b[aL] ? 1 : 0;
+              a[aL] = i2 * base + a[aL] - b[aL];
+            }
+            for (; !a[0] && a.length > 1; a.splice(0, 1)) ;
+          }
+          return function(x2, y, dp, rm, base) {
+            var cmp, e2, i2, more, n, prod, prodL, q, qc, rem, remL, rem0, xi, xL, yc0, yL, yz, s2 = x2.s == y.s ? 1 : -1, xc = x2.c, yc = y.c;
+            if (!xc || !xc[0] || !yc || !yc[0]) {
+              return new BigNumber2(
+                // Return NaN if either NaN, or both Infinity or 0.
+                !x2.s || !y.s || (xc ? yc && xc[0] == yc[0] : !yc) ? NaN : (
+                  // Return ±0 if x is ±0 or y is ±Infinity, or return ±Infinity as y is ±0.
+                  xc && xc[0] == 0 || !yc ? s2 * 0 : s2 / 0
+                )
+              );
+            }
+            q = new BigNumber2(s2);
+            qc = q.c = [];
+            e2 = x2.e - y.e;
+            s2 = dp + e2 + 1;
+            if (!base) {
+              base = BASE;
+              e2 = bitFloor(x2.e / LOG_BASE) - bitFloor(y.e / LOG_BASE);
+              s2 = s2 / LOG_BASE | 0;
+            }
+            for (i2 = 0; yc[i2] == (xc[i2] || 0); i2++) ;
+            if (yc[i2] > (xc[i2] || 0)) e2--;
+            if (s2 < 0) {
+              qc.push(1);
+              more = true;
+            } else {
+              xL = xc.length;
+              yL = yc.length;
+              i2 = 0;
+              s2 += 2;
+              n = mathfloor(base / (yc[0] + 1));
+              if (n > 1) {
+                yc = multiply(yc, n, base);
+                xc = multiply(xc, n, base);
+                yL = yc.length;
+                xL = xc.length;
+              }
+              xi = yL;
+              rem = xc.slice(0, yL);
+              remL = rem.length;
+              for (; remL < yL; rem[remL++] = 0) ;
+              yz = yc.slice();
+              yz = [0].concat(yz);
+              yc0 = yc[0];
+              if (yc[1] >= base / 2) yc0++;
+              do {
+                n = 0;
+                cmp = compare2(yc, rem, yL, remL);
+                if (cmp < 0) {
+                  rem0 = rem[0];
+                  if (yL != remL) rem0 = rem0 * base + (rem[1] || 0);
+                  n = mathfloor(rem0 / yc0);
+                  if (n > 1) {
+                    if (n >= base) n = base - 1;
+                    prod = multiply(yc, n, base);
+                    prodL = prod.length;
+                    remL = rem.length;
+                    while (compare2(prod, rem, prodL, remL) == 1) {
+                      n--;
+                      subtract(prod, yL < prodL ? yz : yc, prodL, base);
+                      prodL = prod.length;
+                      cmp = 1;
+                    }
+                  } else {
+                    if (n == 0) {
+                      cmp = n = 1;
+                    }
+                    prod = yc.slice();
+                    prodL = prod.length;
+                  }
+                  if (prodL < remL) prod = [0].concat(prod);
+                  subtract(rem, prod, remL, base);
+                  remL = rem.length;
+                  if (cmp == -1) {
+                    while (compare2(yc, rem, yL, remL) < 1) {
+                      n++;
+                      subtract(rem, yL < remL ? yz : yc, remL, base);
+                      remL = rem.length;
+                    }
+                  }
+                } else if (cmp === 0) {
+                  n++;
+                  rem = [0];
+                }
+                qc[i2++] = n;
+                if (rem[0]) {
+                  rem[remL++] = xc[xi] || 0;
+                } else {
+                  rem = [xc[xi]];
+                  remL = 1;
+                }
+              } while ((xi++ < xL || rem[0] != null) && s2--);
+              more = rem[0] != null;
+              if (!qc[0]) qc.splice(0, 1);
+            }
+            if (base == BASE) {
+              for (i2 = 1, s2 = qc[0]; s2 >= 10; s2 /= 10, i2++) ;
+              round(q, dp + (q.e = i2 + e2 * LOG_BASE - 1) + 1, rm, more);
+            } else {
+              q.e = e2;
+              q.r = +more;
+            }
+            return q;
+          };
+        })();
+        function format(n, i2, rm, id) {
+          var c0, e2, ne, len, str;
+          if (rm == null) rm = ROUNDING_MODE;
+          else intCheck(rm, 0, 8);
+          if (!n.c) return n.toString();
+          c0 = n.c[0];
+          ne = n.e;
+          if (i2 == null) {
+            str = coeffToString(n.c);
+            str = id == 1 || id == 2 && (ne <= TO_EXP_NEG || ne >= TO_EXP_POS) ? toExponential(str, ne) : toFixedPoint(str, ne, "0");
+          } else {
+            n = round(new BigNumber2(n), i2, rm);
+            e2 = n.e;
+            str = coeffToString(n.c);
+            len = str.length;
+            if (id == 1 || id == 2 && (i2 <= e2 || e2 <= TO_EXP_NEG)) {
+              for (; len < i2; str += "0", len++) ;
+              str = toExponential(str, e2);
+            } else {
+              i2 -= ne + (id === 2 && e2 > ne);
+              str = toFixedPoint(str, e2, "0");
+              if (e2 + 1 > len) {
+                if (--i2 > 0) for (str += "."; i2--; str += "0") ;
+              } else {
+                i2 += e2 - len;
+                if (i2 > 0) {
+                  if (e2 + 1 == len) str += ".";
+                  for (; i2--; str += "0") ;
+                }
+              }
+            }
+          }
+          return n.s < 0 && c0 ? "-" + str : str;
+        }
+        function maxOrMin(args, n) {
+          var k, y, i2 = 1, x2 = new BigNumber2(args[0]);
+          for (; i2 < args.length; i2++) {
+            y = new BigNumber2(args[i2]);
+            if (!y.s || (k = compare(x2, y)) === n || k === 0 && x2.s === n) {
+              x2 = y;
+            }
+          }
+          return x2;
+        }
+        function normalise(n, c, e2) {
+          var i2 = 1, j = c.length;
+          for (; !c[--j]; c.pop()) ;
+          for (j = c[0]; j >= 10; j /= 10, i2++) ;
+          if ((e2 = i2 + e2 * LOG_BASE - 1) > MAX_EXP) {
+            n.c = n.e = null;
+          } else if (e2 < MIN_EXP) {
+            n.c = [n.e = 0];
+          } else {
+            n.e = e2;
+            n.c = c;
+          }
+          return n;
+        }
+        parseNumeric = /* @__PURE__ */ (function() {
+          var basePrefix = /^(-?)0([xbo])(?=\w[\w.]*$)/i, dotAfter = /^([^.]+)\.$/, dotBefore = /^\.([^.]+)$/, isInfinityOrNaN = /^-?(Infinity|NaN)$/, whitespaceOrPlus = /^\s*\+(?=[\w.])|^\s+|\s+$/g;
+          return function(x2, str, isNum, b) {
+            var base, s2 = isNum ? str : str.replace(whitespaceOrPlus, "");
+            if (isInfinityOrNaN.test(s2)) {
+              x2.s = isNaN(s2) ? null : s2 < 0 ? -1 : 1;
+            } else {
+              if (!isNum) {
+                s2 = s2.replace(basePrefix, function(m2, p1, p2) {
+                  base = (p2 = p2.toLowerCase()) == "x" ? 16 : p2 == "b" ? 2 : 8;
+                  return !b || b == base ? p1 : m2;
+                });
+                if (b) {
+                  base = b;
+                  s2 = s2.replace(dotAfter, "$1").replace(dotBefore, "0.$1");
+                }
+                if (str != s2) return new BigNumber2(s2, base);
+              }
+              if (BigNumber2.DEBUG) {
+                throw Error(bignumberError + "Not a" + (b ? " base " + b : "") + " number: " + str);
+              }
+              x2.s = null;
+            }
+            x2.c = x2.e = null;
+          };
+        })();
+        function round(x2, sd, rm, r2) {
+          var d, i2, j, k, n, ni, rd, xc = x2.c, pows10 = POWS_TEN;
+          if (xc) {
+            out: {
+              for (d = 1, k = xc[0]; k >= 10; k /= 10, d++) ;
+              i2 = sd - d;
+              if (i2 < 0) {
+                i2 += LOG_BASE;
+                j = sd;
+                n = xc[ni = 0];
+                rd = mathfloor(n / pows10[d - j - 1] % 10);
+              } else {
+                ni = mathceil((i2 + 1) / LOG_BASE);
+                if (ni >= xc.length) {
+                  if (r2) {
+                    for (; xc.length <= ni; xc.push(0)) ;
+                    n = rd = 0;
+                    d = 1;
+                    i2 %= LOG_BASE;
+                    j = i2 - LOG_BASE + 1;
+                  } else {
+                    break out;
+                  }
+                } else {
+                  n = k = xc[ni];
+                  for (d = 1; k >= 10; k /= 10, d++) ;
+                  i2 %= LOG_BASE;
+                  j = i2 - LOG_BASE + d;
+                  rd = j < 0 ? 0 : mathfloor(n / pows10[d - j - 1] % 10);
+                }
+              }
+              r2 = r2 || sd < 0 || // Are there any non-zero digits after the rounding digit?
+              // The expression  n % pows10[d - j - 1]  returns all digits of n to the right
+              // of the digit at j, e.g. if n is 908714 and j is 2, the expression gives 714.
+              xc[ni + 1] != null || (j < 0 ? n : n % pows10[d - j - 1]);
+              r2 = rm < 4 ? (rd || r2) && (rm == 0 || rm == (x2.s < 0 ? 3 : 2)) : rd > 5 || rd == 5 && (rm == 4 || r2 || rm == 6 && // Check whether the digit to the left of the rounding digit is odd.
+              (i2 > 0 ? j > 0 ? n / pows10[d - j] : 0 : xc[ni - 1]) % 10 & 1 || rm == (x2.s < 0 ? 8 : 7));
+              if (sd < 1 || !xc[0]) {
+                xc.length = 0;
+                if (r2) {
+                  sd -= x2.e + 1;
+                  xc[0] = pows10[(LOG_BASE - sd % LOG_BASE) % LOG_BASE];
+                  x2.e = -sd || 0;
+                } else {
+                  xc[0] = x2.e = 0;
+                }
+                return x2;
+              }
+              if (i2 == 0) {
+                xc.length = ni;
+                k = 1;
+                ni--;
+              } else {
+                xc.length = ni + 1;
+                k = pows10[LOG_BASE - i2];
+                xc[ni] = j > 0 ? mathfloor(n / pows10[d - j] % pows10[j]) * k : 0;
+              }
+              if (r2) {
+                for (; ; ) {
+                  if (ni == 0) {
+                    for (i2 = 1, j = xc[0]; j >= 10; j /= 10, i2++) ;
+                    j = xc[0] += k;
+                    for (k = 1; j >= 10; j /= 10, k++) ;
+                    if (i2 != k) {
+                      x2.e++;
+                      if (xc[0] == BASE) xc[0] = 1;
+                    }
+                    break;
+                  } else {
+                    xc[ni] += k;
+                    if (xc[ni] != BASE) break;
+                    xc[ni--] = 0;
+                    k = 1;
+                  }
+                }
+              }
+              for (i2 = xc.length; xc[--i2] === 0; xc.pop()) ;
+            }
+            if (x2.e > MAX_EXP) {
+              x2.c = x2.e = null;
+            } else if (x2.e < MIN_EXP) {
+              x2.c = [x2.e = 0];
+            }
+          }
+          return x2;
+        }
+        function valueOf(n) {
+          var str, e2 = n.e;
+          if (e2 === null) return n.toString();
+          str = coeffToString(n.c);
+          str = e2 <= TO_EXP_NEG || e2 >= TO_EXP_POS ? toExponential(str, e2) : toFixedPoint(str, e2, "0");
+          return n.s < 0 ? "-" + str : str;
+        }
+        P.absoluteValue = P.abs = function() {
+          var x2 = new BigNumber2(this);
+          if (x2.s < 0) x2.s = 1;
+          return x2;
+        };
+        P.comparedTo = function(y, b) {
+          return compare(this, new BigNumber2(y, b));
+        };
+        P.decimalPlaces = P.dp = function(dp, rm) {
+          var c, n, v, x2 = this;
+          if (dp != null) {
+            intCheck(dp, 0, MAX);
+            if (rm == null) rm = ROUNDING_MODE;
+            else intCheck(rm, 0, 8);
+            return round(new BigNumber2(x2), dp + x2.e + 1, rm);
+          }
+          if (!(c = x2.c)) return null;
+          n = ((v = c.length - 1) - bitFloor(this.e / LOG_BASE)) * LOG_BASE;
+          if (v = c[v]) for (; v % 10 == 0; v /= 10, n--) ;
+          if (n < 0) n = 0;
+          return n;
+        };
+        P.dividedBy = P.div = function(y, b) {
+          return div(this, new BigNumber2(y, b), DECIMAL_PLACES, ROUNDING_MODE);
+        };
+        P.dividedToIntegerBy = P.idiv = function(y, b) {
+          return div(this, new BigNumber2(y, b), 0, 1);
+        };
+        P.exponentiatedBy = P.pow = function(n, m2) {
+          var half, isModExp, i2, k, more, nIsBig, nIsNeg, nIsOdd, y, x2 = this;
+          n = new BigNumber2(n);
+          if (n.c && !n.isInteger()) {
+            throw Error(bignumberError + "Exponent not an integer: " + valueOf(n));
+          }
+          if (m2 != null) m2 = new BigNumber2(m2);
+          nIsBig = n.e > 14;
+          if (!x2.c || !x2.c[0] || x2.c[0] == 1 && !x2.e && x2.c.length == 1 || !n.c || !n.c[0]) {
+            y = new BigNumber2(Math.pow(+valueOf(x2), nIsBig ? n.s * (2 - isOdd(n)) : +valueOf(n)));
+            return m2 ? y.mod(m2) : y;
+          }
+          nIsNeg = n.s < 0;
+          if (m2) {
+            if (m2.c ? !m2.c[0] : !m2.s) return new BigNumber2(NaN);
+            isModExp = !nIsNeg && x2.isInteger() && m2.isInteger();
+            if (isModExp) x2 = x2.mod(m2);
+          } else if (n.e > 9 && (x2.e > 0 || x2.e < -1 || (x2.e == 0 ? x2.c[0] > 1 || nIsBig && x2.c[1] >= 24e7 : x2.c[0] < 8e13 || nIsBig && x2.c[0] <= 9999975e7))) {
+            k = x2.s < 0 && isOdd(n) ? -0 : 0;
+            if (x2.e > -1) k = 1 / k;
+            return new BigNumber2(nIsNeg ? 1 / k : k);
+          } else if (POW_PRECISION) {
+            k = mathceil(POW_PRECISION / LOG_BASE + 2);
+          }
+          if (nIsBig) {
+            half = new BigNumber2(0.5);
+            if (nIsNeg) n.s = 1;
+            nIsOdd = isOdd(n);
+          } else {
+            i2 = Math.abs(+valueOf(n));
+            nIsOdd = i2 % 2;
+          }
+          y = new BigNumber2(ONE);
+          for (; ; ) {
+            if (nIsOdd) {
+              y = y.times(x2);
+              if (!y.c) break;
+              if (k) {
+                if (y.c.length > k) y.c.length = k;
+              } else if (isModExp) {
+                y = y.mod(m2);
+              }
+            }
+            if (i2) {
+              i2 = mathfloor(i2 / 2);
+              if (i2 === 0) break;
+              nIsOdd = i2 % 2;
+            } else {
+              n = n.times(half);
+              round(n, n.e + 1, 1);
+              if (n.e > 14) {
+                nIsOdd = isOdd(n);
+              } else {
+                i2 = +valueOf(n);
+                if (i2 === 0) break;
+                nIsOdd = i2 % 2;
+              }
+            }
+            x2 = x2.times(x2);
+            if (k) {
+              if (x2.c && x2.c.length > k) x2.c.length = k;
+            } else if (isModExp) {
+              x2 = x2.mod(m2);
+            }
+          }
+          if (isModExp) return y;
+          if (nIsNeg) y = ONE.div(y);
+          return m2 ? y.mod(m2) : k ? round(y, POW_PRECISION, ROUNDING_MODE, more) : y;
+        };
+        P.integerValue = function(rm) {
+          var n = new BigNumber2(this);
+          if (rm == null) rm = ROUNDING_MODE;
+          else intCheck(rm, 0, 8);
+          return round(n, n.e + 1, rm);
+        };
+        P.isEqualTo = P.eq = function(y, b) {
+          return compare(this, new BigNumber2(y, b)) === 0;
+        };
+        P.isFinite = function() {
+          return !!this.c;
+        };
+        P.isGreaterThan = P.gt = function(y, b) {
+          return compare(this, new BigNumber2(y, b)) > 0;
+        };
+        P.isGreaterThanOrEqualTo = P.gte = function(y, b) {
+          return (b = compare(this, new BigNumber2(y, b))) === 1 || b === 0;
+        };
+        P.isInteger = function() {
+          return !!this.c && bitFloor(this.e / LOG_BASE) > this.c.length - 2;
+        };
+        P.isLessThan = P.lt = function(y, b) {
+          return compare(this, new BigNumber2(y, b)) < 0;
+        };
+        P.isLessThanOrEqualTo = P.lte = function(y, b) {
+          return (b = compare(this, new BigNumber2(y, b))) === -1 || b === 0;
+        };
+        P.isNaN = function() {
+          return !this.s;
+        };
+        P.isNegative = function() {
+          return this.s < 0;
+        };
+        P.isPositive = function() {
+          return this.s > 0;
+        };
+        P.isZero = function() {
+          return !!this.c && this.c[0] == 0;
+        };
+        P.minus = function(y, b) {
+          var i2, j, t2, xLTy, x2 = this, a = x2.s;
+          y = new BigNumber2(y, b);
+          b = y.s;
+          if (!a || !b) return new BigNumber2(NaN);
+          if (a != b) {
+            y.s = -b;
+            return x2.plus(y);
+          }
+          var xe = x2.e / LOG_BASE, ye = y.e / LOG_BASE, xc = x2.c, yc = y.c;
+          if (!xe || !ye) {
+            if (!xc || !yc) return xc ? (y.s = -b, y) : new BigNumber2(yc ? x2 : NaN);
+            if (!xc[0] || !yc[0]) {
+              return yc[0] ? (y.s = -b, y) : new BigNumber2(xc[0] ? x2 : (
+                // IEEE 754 (2008) 6.3: n - n = -0 when rounding to -Infinity
+                ROUNDING_MODE == 3 ? -0 : 0
+              ));
+            }
+          }
+          xe = bitFloor(xe);
+          ye = bitFloor(ye);
+          xc = xc.slice();
+          if (a = xe - ye) {
+            if (xLTy = a < 0) {
+              a = -a;
+              t2 = xc;
+            } else {
+              ye = xe;
+              t2 = yc;
+            }
+            t2.reverse();
+            for (b = a; b--; t2.push(0)) ;
+            t2.reverse();
+          } else {
+            j = (xLTy = (a = xc.length) < (b = yc.length)) ? a : b;
+            for (a = b = 0; b < j; b++) {
+              if (xc[b] != yc[b]) {
+                xLTy = xc[b] < yc[b];
+                break;
+              }
+            }
+          }
+          if (xLTy) {
+            t2 = xc;
+            xc = yc;
+            yc = t2;
+            y.s = -y.s;
+          }
+          b = (j = yc.length) - (i2 = xc.length);
+          if (b > 0) for (; b--; xc[i2++] = 0) ;
+          b = BASE - 1;
+          for (; j > a; ) {
+            if (xc[--j] < yc[j]) {
+              for (i2 = j; i2 && !xc[--i2]; xc[i2] = b) ;
+              --xc[i2];
+              xc[j] += BASE;
+            }
+            xc[j] -= yc[j];
+          }
+          for (; xc[0] == 0; xc.splice(0, 1), --ye) ;
+          if (!xc[0]) {
+            y.s = ROUNDING_MODE == 3 ? -1 : 1;
+            y.c = [y.e = 0];
+            return y;
+          }
+          return normalise(y, xc, ye);
+        };
+        P.modulo = P.mod = function(y, b) {
+          var q, s2, x2 = this;
+          y = new BigNumber2(y, b);
+          if (!x2.c || !y.s || y.c && !y.c[0]) {
+            return new BigNumber2(NaN);
+          } else if (!y.c || x2.c && !x2.c[0]) {
+            return new BigNumber2(x2);
+          }
+          if (MODULO_MODE == 9) {
+            s2 = y.s;
+            y.s = 1;
+            q = div(x2, y, 0, 3);
+            y.s = s2;
+            q.s *= s2;
+          } else {
+            q = div(x2, y, 0, MODULO_MODE);
+          }
+          y = x2.minus(q.times(y));
+          if (!y.c[0] && MODULO_MODE == 1) y.s = x2.s;
+          return y;
+        };
+        P.multipliedBy = P.times = function(y, b) {
+          var c, e2, i2, j, k, m2, xcL, xlo, xhi, ycL, ylo, yhi, zc, base, sqrtBase, x2 = this, xc = x2.c, yc = (y = new BigNumber2(y, b)).c;
+          if (!xc || !yc || !xc[0] || !yc[0]) {
+            if (!x2.s || !y.s || xc && !xc[0] && !yc || yc && !yc[0] && !xc) {
+              y.c = y.e = y.s = null;
+            } else {
+              y.s *= x2.s;
+              if (!xc || !yc) {
+                y.c = y.e = null;
+              } else {
+                y.c = [0];
+                y.e = 0;
+              }
+            }
+            return y;
+          }
+          e2 = bitFloor(x2.e / LOG_BASE) + bitFloor(y.e / LOG_BASE);
+          y.s *= x2.s;
+          xcL = xc.length;
+          ycL = yc.length;
+          if (xcL < ycL) {
+            zc = xc;
+            xc = yc;
+            yc = zc;
+            i2 = xcL;
+            xcL = ycL;
+            ycL = i2;
+          }
+          for (i2 = xcL + ycL, zc = []; i2--; zc.push(0)) ;
+          base = BASE;
+          sqrtBase = SQRT_BASE;
+          for (i2 = ycL; --i2 >= 0; ) {
+            c = 0;
+            ylo = yc[i2] % sqrtBase;
+            yhi = yc[i2] / sqrtBase | 0;
+            for (k = xcL, j = i2 + k; j > i2; ) {
+              xlo = xc[--k] % sqrtBase;
+              xhi = xc[k] / sqrtBase | 0;
+              m2 = yhi * xlo + xhi * ylo;
+              xlo = ylo * xlo + m2 % sqrtBase * sqrtBase + zc[j] + c;
+              c = (xlo / base | 0) + (m2 / sqrtBase | 0) + yhi * xhi;
+              zc[j--] = xlo % base;
+            }
+            zc[j] = c;
+          }
+          if (c) {
+            ++e2;
+          } else {
+            zc.splice(0, 1);
+          }
+          return normalise(y, zc, e2);
+        };
+        P.negated = function() {
+          var x2 = new BigNumber2(this);
+          x2.s = -x2.s || null;
+          return x2;
+        };
+        P.plus = function(y, b) {
+          var t2, x2 = this, a = x2.s;
+          y = new BigNumber2(y, b);
+          b = y.s;
+          if (!a || !b) return new BigNumber2(NaN);
+          if (a != b) {
+            y.s = -b;
+            return x2.minus(y);
+          }
+          var xe = x2.e / LOG_BASE, ye = y.e / LOG_BASE, xc = x2.c, yc = y.c;
+          if (!xe || !ye) {
+            if (!xc || !yc) return new BigNumber2(a / 0);
+            if (!xc[0] || !yc[0]) return yc[0] ? y : new BigNumber2(xc[0] ? x2 : a * 0);
+          }
+          xe = bitFloor(xe);
+          ye = bitFloor(ye);
+          xc = xc.slice();
+          if (a = xe - ye) {
+            if (a > 0) {
+              ye = xe;
+              t2 = yc;
+            } else {
+              a = -a;
+              t2 = xc;
+            }
+            t2.reverse();
+            for (; a--; t2.push(0)) ;
+            t2.reverse();
+          }
+          a = xc.length;
+          b = yc.length;
+          if (a - b < 0) {
+            t2 = yc;
+            yc = xc;
+            xc = t2;
+            b = a;
+          }
+          for (a = 0; b; ) {
+            a = (xc[--b] = xc[b] + yc[b] + a) / BASE | 0;
+            xc[b] = BASE === xc[b] ? 0 : xc[b] % BASE;
+          }
+          if (a) {
+            xc = [a].concat(xc);
+            ++ye;
+          }
+          return normalise(y, xc, ye);
+        };
+        P.precision = P.sd = function(sd, rm) {
+          var c, n, v, x2 = this;
+          if (sd != null && sd !== !!sd) {
+            intCheck(sd, 1, MAX);
+            if (rm == null) rm = ROUNDING_MODE;
+            else intCheck(rm, 0, 8);
+            return round(new BigNumber2(x2), sd, rm);
+          }
+          if (!(c = x2.c)) return null;
+          v = c.length - 1;
+          n = v * LOG_BASE + 1;
+          if (v = c[v]) {
+            for (; v % 10 == 0; v /= 10, n--) ;
+            for (v = c[0]; v >= 10; v /= 10, n++) ;
+          }
+          if (sd && x2.e + 1 > n) n = x2.e + 1;
+          return n;
+        };
+        P.shiftedBy = function(k) {
+          intCheck(k, -MAX_SAFE_INTEGER, MAX_SAFE_INTEGER);
+          return this.times("1e" + k);
+        };
+        P.squareRoot = P.sqrt = function() {
+          var m2, n, r2, rep, t2, x2 = this, c = x2.c, s2 = x2.s, e2 = x2.e, dp = DECIMAL_PLACES + 4, half = new BigNumber2("0.5");
+          if (s2 !== 1 || !c || !c[0]) {
+            return new BigNumber2(!s2 || s2 < 0 && (!c || c[0]) ? NaN : c ? x2 : 1 / 0);
+          }
+          s2 = Math.sqrt(+valueOf(x2));
+          if (s2 == 0 || s2 == 1 / 0) {
+            n = coeffToString(c);
+            if ((n.length + e2) % 2 == 0) n += "0";
+            s2 = Math.sqrt(+n);
+            e2 = bitFloor((e2 + 1) / 2) - (e2 < 0 || e2 % 2);
+            if (s2 == 1 / 0) {
+              n = "5e" + e2;
+            } else {
+              n = s2.toExponential();
+              n = n.slice(0, n.indexOf("e") + 1) + e2;
+            }
+            r2 = new BigNumber2(n);
+          } else {
+            r2 = new BigNumber2(s2 + "");
+          }
+          if (r2.c[0]) {
+            e2 = r2.e;
+            s2 = e2 + dp;
+            if (s2 < 3) s2 = 0;
+            for (; ; ) {
+              t2 = r2;
+              r2 = half.times(t2.plus(div(x2, t2, dp, 1)));
+              if (coeffToString(t2.c).slice(0, s2) === (n = coeffToString(r2.c)).slice(0, s2)) {
+                if (r2.e < e2) --s2;
+                n = n.slice(s2 - 3, s2 + 1);
+                if (n == "9999" || !rep && n == "4999") {
+                  if (!rep) {
+                    round(t2, t2.e + DECIMAL_PLACES + 2, 0);
+                    if (t2.times(t2).eq(x2)) {
+                      r2 = t2;
+                      break;
+                    }
+                  }
+                  dp += 4;
+                  s2 += 4;
+                  rep = 1;
+                } else {
+                  if (!+n || !+n.slice(1) && n.charAt(0) == "5") {
+                    round(r2, r2.e + DECIMAL_PLACES + 2, 1);
+                    m2 = !r2.times(r2).eq(x2);
+                  }
+                  break;
+                }
+              }
+            }
+          }
+          return round(r2, r2.e + DECIMAL_PLACES + 1, ROUNDING_MODE, m2);
+        };
+        P.toExponential = function(dp, rm) {
+          if (dp != null) {
+            intCheck(dp, 0, MAX);
+            dp++;
+          }
+          return format(this, dp, rm, 1);
+        };
+        P.toFixed = function(dp, rm) {
+          if (dp != null) {
+            intCheck(dp, 0, MAX);
+            dp = dp + this.e + 1;
+          }
+          return format(this, dp, rm);
+        };
+        P.toFormat = function(dp, rm, format2) {
+          var str, x2 = this;
+          if (format2 == null) {
+            if (dp != null && rm && typeof rm == "object") {
+              format2 = rm;
+              rm = null;
+            } else if (dp && typeof dp == "object") {
+              format2 = dp;
+              dp = rm = null;
+            } else {
+              format2 = FORMAT;
+            }
+          } else if (typeof format2 != "object") {
+            throw Error(bignumberError + "Argument not an object: " + format2);
+          }
+          str = x2.toFixed(dp, rm);
+          if (x2.c) {
+            var i2, arr = str.split("."), g1 = +format2.groupSize, g2 = +format2.secondaryGroupSize, groupSeparator = format2.groupSeparator || "", intPart = arr[0], fractionPart = arr[1], isNeg = x2.s < 0, intDigits = isNeg ? intPart.slice(1) : intPart, len = intDigits.length;
+            if (g2) {
+              i2 = g1;
+              g1 = g2;
+              g2 = i2;
+              len -= i2;
+            }
+            if (g1 > 0 && len > 0) {
+              i2 = len % g1 || g1;
+              intPart = intDigits.substr(0, i2);
+              for (; i2 < len; i2 += g1) intPart += groupSeparator + intDigits.substr(i2, g1);
+              if (g2 > 0) intPart += groupSeparator + intDigits.slice(i2);
+              if (isNeg) intPart = "-" + intPart;
+            }
+            str = fractionPart ? intPart + (format2.decimalSeparator || "") + ((g2 = +format2.fractionGroupSize) ? fractionPart.replace(
+              new RegExp("\\d{" + g2 + "}\\B", "g"),
+              "$&" + (format2.fractionGroupSeparator || "")
+            ) : fractionPart) : intPart;
+          }
+          return (format2.prefix || "") + str + (format2.suffix || "");
+        };
+        P.toFraction = function(md) {
+          var d, d0, d1, d2, e2, exp, n, n0, n1, q, r2, s2, x2 = this, xc = x2.c;
+          if (md != null) {
+            n = new BigNumber2(md);
+            if (!n.isInteger() && (n.c || n.s !== 1) || n.lt(ONE)) {
+              throw Error(bignumberError + "Argument " + (n.isInteger() ? "out of range: " : "not an integer: ") + valueOf(n));
+            }
+          }
+          if (!xc) return new BigNumber2(x2);
+          d = new BigNumber2(ONE);
+          n1 = d0 = new BigNumber2(ONE);
+          d1 = n0 = new BigNumber2(ONE);
+          s2 = coeffToString(xc);
+          e2 = d.e = s2.length - x2.e - 1;
+          d.c[0] = POWS_TEN[(exp = e2 % LOG_BASE) < 0 ? LOG_BASE + exp : exp];
+          md = !md || n.comparedTo(d) > 0 ? e2 > 0 ? d : n1 : n;
+          exp = MAX_EXP;
+          MAX_EXP = 1 / 0;
+          n = new BigNumber2(s2);
+          n0.c[0] = 0;
+          for (; ; ) {
+            q = div(n, d, 0, 1);
+            d2 = d0.plus(q.times(d1));
+            if (d2.comparedTo(md) == 1) break;
+            d0 = d1;
+            d1 = d2;
+            n1 = n0.plus(q.times(d2 = n1));
+            n0 = d2;
+            d = n.minus(q.times(d2 = d));
+            n = d2;
+          }
+          d2 = div(md.minus(d0), d1, 0, 1);
+          n0 = n0.plus(d2.times(n1));
+          d0 = d0.plus(d2.times(d1));
+          n0.s = n1.s = x2.s;
+          e2 = e2 * 2;
+          r2 = div(n1, d1, e2, ROUNDING_MODE).minus(x2).abs().comparedTo(
+            div(n0, d0, e2, ROUNDING_MODE).minus(x2).abs()
+          ) < 1 ? [n1, d1] : [n0, d0];
+          MAX_EXP = exp;
+          return r2;
+        };
+        P.toNumber = function() {
+          return +valueOf(this);
+        };
+        P.toPrecision = function(sd, rm) {
+          if (sd != null) intCheck(sd, 1, MAX);
+          return format(this, sd, rm, 2);
+        };
+        P.toString = function(b) {
+          var str, n = this, s2 = n.s, e2 = n.e;
+          if (e2 === null) {
+            if (s2) {
+              str = "Infinity";
+              if (s2 < 0) str = "-" + str;
+            } else {
+              str = "NaN";
+            }
+          } else {
+            if (b == null) {
+              str = e2 <= TO_EXP_NEG || e2 >= TO_EXP_POS ? toExponential(coeffToString(n.c), e2) : toFixedPoint(coeffToString(n.c), e2, "0");
+            } else if (b === 10 && alphabetHasNormalDecimalDigits) {
+              n = round(new BigNumber2(n), DECIMAL_PLACES + e2 + 1, ROUNDING_MODE);
+              str = toFixedPoint(coeffToString(n.c), n.e, "0");
+            } else {
+              intCheck(b, 2, ALPHABET2.length, "Base");
+              str = convertBase(toFixedPoint(coeffToString(n.c), e2, "0"), 10, b, s2, true);
+            }
+            if (s2 < 0 && n.c[0]) str = "-" + str;
+          }
+          return str;
+        };
+        P.valueOf = P.toJSON = function() {
+          return valueOf(this);
+        };
+        P._isBigNumber = true;
+        if (configObject != null) BigNumber2.set(configObject);
+        return BigNumber2;
+      }
+      function bitFloor(n) {
+        var i2 = n | 0;
+        return n > 0 || n === i2 ? i2 : i2 - 1;
+      }
+      function coeffToString(a) {
+        var s2, z, i2 = 1, j = a.length, r2 = a[0] + "";
+        for (; i2 < j; ) {
+          s2 = a[i2++] + "";
+          z = LOG_BASE - s2.length;
+          for (; z--; s2 = "0" + s2) ;
+          r2 += s2;
+        }
+        for (j = r2.length; r2.charCodeAt(--j) === 48; ) ;
+        return r2.slice(0, j + 1 || 1);
+      }
+      function compare(x2, y) {
+        var a, b, xc = x2.c, yc = y.c, i2 = x2.s, j = y.s, k = x2.e, l = y.e;
+        if (!i2 || !j) return null;
+        a = xc && !xc[0];
+        b = yc && !yc[0];
+        if (a || b) return a ? b ? 0 : -j : i2;
+        if (i2 != j) return i2;
+        a = i2 < 0;
+        b = k == l;
+        if (!xc || !yc) return b ? 0 : !xc ^ a ? 1 : -1;
+        if (!b) return k > l ^ a ? 1 : -1;
+        j = (k = xc.length) < (l = yc.length) ? k : l;
+        for (i2 = 0; i2 < j; i2++) if (xc[i2] != yc[i2]) return xc[i2] > yc[i2] ^ a ? 1 : -1;
+        return k == l ? 0 : k > l ^ a ? 1 : -1;
+      }
+      function intCheck(n, min, max, name) {
+        if (n < min || n > max || n !== mathfloor(n)) {
+          throw Error(bignumberError + (name || "Argument") + (typeof n == "number" ? n < min || n > max ? " out of range: " : " not an integer: " : " not a primitive number: ") + String(n));
+        }
+      }
+      function isOdd(n) {
+        var k = n.c.length - 1;
+        return bitFloor(n.e / LOG_BASE) == k && n.c[k] % 2 != 0;
+      }
+      function toExponential(str, e2) {
+        return (str.length > 1 ? str.charAt(0) + "." + str.slice(1) : str) + (e2 < 0 ? "e" : "e+") + e2;
+      }
+      function toFixedPoint(str, e2, z) {
+        var len, zs;
+        if (e2 < 0) {
+          for (zs = z + "."; ++e2; zs += z) ;
+          str = zs + str;
+        } else {
+          len = str.length;
+          if (++e2 > len) {
+            for (zs = z, e2 -= len; --e2; zs += z) ;
+            str += zs;
+          } else if (e2 < len) {
+            str = str.slice(0, e2) + "." + str.slice(e2);
+          }
+        }
+        return str;
+      }
+      BigNumber = clone2();
+      BigNumber["default"] = BigNumber.BigNumber = BigNumber;
+      if (typeof define == "function" && define.amd) {
+        define(function() {
+          return BigNumber;
+        });
+      } else if (typeof module2 != "undefined" && module2.exports) {
+        module2.exports = BigNumber;
+      } else {
+        if (!globalObject) {
+          globalObject = typeof self != "undefined" && self ? self : window;
+        }
+        globalObject.BigNumber = BigNumber;
+      }
+    })(exports2);
+  }
+});
+
+// node_modules/json-bigint/lib/stringify.js
+var require_stringify = __commonJS({
+  "node_modules/json-bigint/lib/stringify.js"(exports2, module2) {
+    var BigNumber = require_bignumber();
+    var JSON2 = module2.exports;
+    (function() {
+      "use strict";
+      function f3(n) {
+        return n < 10 ? "0" + n : n;
+      }
+      var cx = /[\u0000\u00ad\u0600-\u0604\u070f\u17b4\u17b5\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufeff\ufff0-\uffff]/g, escapable = /[\\\"\x00-\x1f\x7f-\x9f\u00ad\u0600-\u0604\u070f\u17b4\u17b5\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufeff\ufff0-\uffff]/g, gap, indent, meta = {
+        // table of character substitutions
+        "\b": "\\b",
+        "	": "\\t",
+        "\n": "\\n",
+        "\f": "\\f",
+        "\r": "\\r",
+        '"': '\\"',
+        "\\": "\\\\"
+      }, rep;
+      function quote(string) {
+        escapable.lastIndex = 0;
+        return escapable.test(string) ? '"' + string.replace(escapable, function(a) {
+          var c = meta[a];
+          return typeof c === "string" ? c : "\\u" + ("0000" + a.charCodeAt(0).toString(16)).slice(-4);
+        }) + '"' : '"' + string + '"';
+      }
+      function str(key, holder) {
+        var i2, k, v, length, mind = gap, partial, value = holder[key], isBigNumber = value != null && (value instanceof BigNumber || BigNumber.isBigNumber(value));
+        if (value && typeof value === "object" && typeof value.toJSON === "function") {
+          value = value.toJSON(key);
+        }
+        if (typeof rep === "function") {
+          value = rep.call(holder, key, value);
+        }
+        switch (typeof value) {
+          case "string":
+            if (isBigNumber) {
+              return value;
+            } else {
+              return quote(value);
+            }
+          case "number":
+            return isFinite(value) ? String(value) : "null";
+          case "boolean":
+          case "null":
+          case "bigint":
+            return String(value);
+          // If the type is 'object', we might be dealing with an object or an array or
+          // null.
+          case "object":
+            if (!value) {
+              return "null";
+            }
+            gap += indent;
+            partial = [];
+            if (Object.prototype.toString.apply(value) === "[object Array]") {
+              length = value.length;
+              for (i2 = 0; i2 < length; i2 += 1) {
+                partial[i2] = str(i2, value) || "null";
+              }
+              v = partial.length === 0 ? "[]" : gap ? "[\n" + gap + partial.join(",\n" + gap) + "\n" + mind + "]" : "[" + partial.join(",") + "]";
+              gap = mind;
+              return v;
+            }
+            if (rep && typeof rep === "object") {
+              length = rep.length;
+              for (i2 = 0; i2 < length; i2 += 1) {
+                if (typeof rep[i2] === "string") {
+                  k = rep[i2];
+                  v = str(k, value);
+                  if (v) {
+                    partial.push(quote(k) + (gap ? ": " : ":") + v);
+                  }
+                }
+              }
+            } else {
+              Object.keys(value).forEach(function(k2) {
+                var v2 = str(k2, value);
+                if (v2) {
+                  partial.push(quote(k2) + (gap ? ": " : ":") + v2);
+                }
+              });
+            }
+            v = partial.length === 0 ? "{}" : gap ? "{\n" + gap + partial.join(",\n" + gap) + "\n" + mind + "}" : "{" + partial.join(",") + "}";
+            gap = mind;
+            return v;
+        }
+      }
+      if (typeof JSON2.stringify !== "function") {
+        JSON2.stringify = function(value, replacer, space) {
+          var i2;
+          gap = "";
+          indent = "";
+          if (typeof space === "number") {
+            for (i2 = 0; i2 < space; i2 += 1) {
+              indent += " ";
+            }
+          } else if (typeof space === "string") {
+            indent = space;
+          }
+          rep = replacer;
+          if (replacer && typeof replacer !== "function" && (typeof replacer !== "object" || typeof replacer.length !== "number")) {
+            throw new Error("JSON.stringify");
+          }
+          return str("", { "": value });
+        };
+      }
+    })();
+  }
+});
+
+// node_modules/json-bigint/lib/parse.js
+var require_parse = __commonJS({
+  "node_modules/json-bigint/lib/parse.js"(exports2, module2) {
+    var BigNumber = null;
+    var suspectProtoRx = /(?:_|\\u005[Ff])(?:_|\\u005[Ff])(?:p|\\u0070)(?:r|\\u0072)(?:o|\\u006[Ff])(?:t|\\u0074)(?:o|\\u006[Ff])(?:_|\\u005[Ff])(?:_|\\u005[Ff])/;
+    var suspectConstructorRx = /(?:c|\\u0063)(?:o|\\u006[Ff])(?:n|\\u006[Ee])(?:s|\\u0073)(?:t|\\u0074)(?:r|\\u0072)(?:u|\\u0075)(?:c|\\u0063)(?:t|\\u0074)(?:o|\\u006[Ff])(?:r|\\u0072)/;
+    var json_parse = function(options) {
+      "use strict";
+      var _options = {
+        strict: false,
+        // not being strict means do not generate syntax errors for "duplicate key"
+        storeAsString: false,
+        // toggles whether the values should be stored as BigNumber (default) or a string
+        alwaysParseAsBig: false,
+        // toggles whether all numbers should be Big
+        useNativeBigInt: false,
+        // toggles whether to use native BigInt instead of bignumber.js
+        protoAction: "error",
+        constructorAction: "error"
+      };
+      if (options !== void 0 && options !== null) {
+        if (options.strict === true) {
+          _options.strict = true;
+        }
+        if (options.storeAsString === true) {
+          _options.storeAsString = true;
+        }
+        _options.alwaysParseAsBig = options.alwaysParseAsBig === true ? options.alwaysParseAsBig : false;
+        _options.useNativeBigInt = options.useNativeBigInt === true ? options.useNativeBigInt : false;
+        if (typeof options.constructorAction !== "undefined") {
+          if (options.constructorAction === "error" || options.constructorAction === "ignore" || options.constructorAction === "preserve") {
+            _options.constructorAction = options.constructorAction;
+          } else {
+            throw new Error(
+              `Incorrect value for constructorAction option, must be "error", "ignore" or undefined but passed ${options.constructorAction}`
+            );
+          }
+        }
+        if (typeof options.protoAction !== "undefined") {
+          if (options.protoAction === "error" || options.protoAction === "ignore" || options.protoAction === "preserve") {
+            _options.protoAction = options.protoAction;
+          } else {
+            throw new Error(
+              `Incorrect value for protoAction option, must be "error", "ignore" or undefined but passed ${options.protoAction}`
+            );
+          }
+        }
+      }
+      var at, ch, escapee = {
+        '"': '"',
+        "\\": "\\",
+        "/": "/",
+        b: "\b",
+        f: "\f",
+        n: "\n",
+        r: "\r",
+        t: "	"
+      }, text, error = function(m2) {
+        throw {
+          name: "SyntaxError",
+          message: m2,
+          at,
+          text
+        };
+      }, next = function(c) {
+        if (c && c !== ch) {
+          error("Expected '" + c + "' instead of '" + ch + "'");
+        }
+        ch = text.charAt(at);
+        at += 1;
+        return ch;
+      }, number = function() {
+        var number2, string2 = "";
+        if (ch === "-") {
+          string2 = "-";
+          next("-");
+        }
+        while (ch >= "0" && ch <= "9") {
+          string2 += ch;
+          next();
+        }
+        if (ch === ".") {
+          string2 += ".";
+          while (next() && ch >= "0" && ch <= "9") {
+            string2 += ch;
+          }
+        }
+        if (ch === "e" || ch === "E") {
+          string2 += ch;
+          next();
+          if (ch === "-" || ch === "+") {
+            string2 += ch;
+            next();
+          }
+          while (ch >= "0" && ch <= "9") {
+            string2 += ch;
+            next();
+          }
+        }
+        number2 = +string2;
+        if (!isFinite(number2)) {
+          error("Bad number");
+        } else {
+          if (BigNumber == null) BigNumber = require_bignumber();
+          if (string2.length > 15)
+            return _options.storeAsString ? string2 : _options.useNativeBigInt ? BigInt(string2) : new BigNumber(string2);
+          else
+            return !_options.alwaysParseAsBig ? number2 : _options.useNativeBigInt ? BigInt(number2) : new BigNumber(number2);
+        }
+      }, string = function() {
+        var hex, i2, string2 = "", uffff;
+        if (ch === '"') {
+          var startAt = at;
+          while (next()) {
+            if (ch === '"') {
+              if (at - 1 > startAt) string2 += text.substring(startAt, at - 1);
+              next();
+              return string2;
+            }
+            if (ch === "\\") {
+              if (at - 1 > startAt) string2 += text.substring(startAt, at - 1);
+              next();
+              if (ch === "u") {
+                uffff = 0;
+                for (i2 = 0; i2 < 4; i2 += 1) {
+                  hex = parseInt(next(), 16);
+                  if (!isFinite(hex)) {
+                    break;
+                  }
+                  uffff = uffff * 16 + hex;
+                }
+                string2 += String.fromCharCode(uffff);
+              } else if (typeof escapee[ch] === "string") {
+                string2 += escapee[ch];
+              } else {
+                break;
+              }
+              startAt = at;
+            }
+          }
+        }
+        error("Bad string");
+      }, white = function() {
+        while (ch && ch <= " ") {
+          next();
+        }
+      }, word = function() {
+        switch (ch) {
+          case "t":
+            next("t");
+            next("r");
+            next("u");
+            next("e");
+            return true;
+          case "f":
+            next("f");
+            next("a");
+            next("l");
+            next("s");
+            next("e");
+            return false;
+          case "n":
+            next("n");
+            next("u");
+            next("l");
+            next("l");
+            return null;
+        }
+        error("Unexpected '" + ch + "'");
+      }, value, array = function() {
+        var array2 = [];
+        if (ch === "[") {
+          next("[");
+          white();
+          if (ch === "]") {
+            next("]");
+            return array2;
+          }
+          while (ch) {
+            array2.push(value());
+            white();
+            if (ch === "]") {
+              next("]");
+              return array2;
+            }
+            next(",");
+            white();
+          }
+        }
+        error("Bad array");
+      }, object = function() {
+        var key, object2 = /* @__PURE__ */ Object.create(null);
+        if (ch === "{") {
+          next("{");
+          white();
+          if (ch === "}") {
+            next("}");
+            return object2;
+          }
+          while (ch) {
+            key = string();
+            white();
+            next(":");
+            if (_options.strict === true && Object.hasOwnProperty.call(object2, key)) {
+              error('Duplicate key "' + key + '"');
+            }
+            if (suspectProtoRx.test(key) === true) {
+              if (_options.protoAction === "error") {
+                error("Object contains forbidden prototype property");
+              } else if (_options.protoAction === "ignore") {
+                value();
+              } else {
+                object2[key] = value();
+              }
+            } else if (suspectConstructorRx.test(key) === true) {
+              if (_options.constructorAction === "error") {
+                error("Object contains forbidden constructor property");
+              } else if (_options.constructorAction === "ignore") {
+                value();
+              } else {
+                object2[key] = value();
+              }
+            } else {
+              object2[key] = value();
+            }
+            white();
+            if (ch === "}") {
+              next("}");
+              return object2;
+            }
+            next(",");
+            white();
+          }
+        }
+        error("Bad object");
+      };
+      value = function() {
+        white();
+        switch (ch) {
+          case "{":
+            return object();
+          case "[":
+            return array();
+          case '"':
+            return string();
+          case "-":
+            return number();
+          default:
+            return ch >= "0" && ch <= "9" ? number() : word();
+        }
+      };
+      return function(source, reviver) {
+        var result;
+        text = source + "";
+        at = 0;
+        ch = " ";
+        result = value();
+        white();
+        if (ch) {
+          error("Syntax error");
+        }
+        return typeof reviver === "function" ? (function walk(holder, key) {
+          var k, v, value2 = holder[key];
+          if (value2 && typeof value2 === "object") {
+            Object.keys(value2).forEach(function(k2) {
+              v = walk(value2, k2);
+              if (v !== void 0) {
+                value2[k2] = v;
+              } else {
+                delete value2[k2];
+              }
+            });
+          }
+          return reviver.call(holder, key, value2);
+        })({ "": result }, "") : result;
+      };
+    };
+    module2.exports = json_parse;
+  }
+});
+
+// node_modules/json-bigint/index.js
+var require_json_bigint = __commonJS({
+  "node_modules/json-bigint/index.js"(exports2, module2) {
+    var json_stringify = require_stringify().stringify;
+    var json_parse = require_parse();
+    module2.exports = function(options) {
+      return {
+        parse: json_parse(options),
+        stringify: json_stringify
+      };
+    };
+    module2.exports.parse = json_parse();
+    module2.exports.stringify = json_stringify;
+  }
+});
+
 // node_modules/depd/index.js
 var require_depd = __commonJS({
   "node_modules/depd/index.js"(exports2, module2) {
@@ -16428,7 +18188,7 @@ var require_utils = __commonJS({
 });
 
 // node_modules/qs/lib/stringify.js
-var require_stringify = __commonJS({
+var require_stringify2 = __commonJS({
   "node_modules/qs/lib/stringify.js"(exports2, module2) {
     "use strict";
     var getSideChannel = require_side_channel();
@@ -16716,7 +18476,7 @@ var require_stringify = __commonJS({
 });
 
 // node_modules/qs/lib/parse.js
-var require_parse = __commonJS({
+var require_parse2 = __commonJS({
   "node_modules/qs/lib/parse.js"(exports2, module2) {
     "use strict";
     var utils = require_utils();
@@ -17048,8 +18808,8 @@ var require_parse = __commonJS({
 var require_lib2 = __commonJS({
   "node_modules/qs/lib/index.js"(exports2, module2) {
     "use strict";
-    var stringify = require_stringify();
-    var parse = require_parse();
+    var stringify = require_stringify2();
+    var parse = require_parse2();
     var formats = require_formats();
     module2.exports = {
       formats,
@@ -46263,1766 +48023,6 @@ var init_appPaths = __esm({
   }
 });
 
-// node_modules/bignumber.js/bignumber.js
-var require_bignumber = __commonJS({
-  "node_modules/bignumber.js/bignumber.js"(exports2, module2) {
-    (function(globalObject) {
-      "use strict";
-      var BigNumber, isNumeric = /^-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i, mathceil = Math.ceil, mathfloor = Math.floor, bignumberError = "[BigNumber Error] ", tooManyDigits = bignumberError + "Number primitive has more than 15 significant digits: ", BASE = 1e14, LOG_BASE = 14, MAX_SAFE_INTEGER = 9007199254740991, POWS_TEN = [1, 10, 100, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13], SQRT_BASE = 1e7, MAX = 1e9;
-      function clone2(configObject) {
-        var div, convertBase, parseNumeric, P = BigNumber2.prototype = { constructor: BigNumber2, toString: null, valueOf: null }, ONE = new BigNumber2(1), DECIMAL_PLACES = 20, ROUNDING_MODE = 4, TO_EXP_NEG = -7, TO_EXP_POS = 21, MIN_EXP = -1e7, MAX_EXP = 1e7, CRYPTO = false, MODULO_MODE = 1, POW_PRECISION = 0, FORMAT = {
-          prefix: "",
-          groupSize: 3,
-          secondaryGroupSize: 0,
-          groupSeparator: ",",
-          decimalSeparator: ".",
-          fractionGroupSize: 0,
-          fractionGroupSeparator: "\xA0",
-          // non-breaking space
-          suffix: ""
-        }, ALPHABET2 = "0123456789abcdefghijklmnopqrstuvwxyz", alphabetHasNormalDecimalDigits = true;
-        function BigNumber2(v, b) {
-          var alphabet, c, caseChanged, e2, i2, isNum, len, str, x2 = this;
-          if (!(x2 instanceof BigNumber2)) return new BigNumber2(v, b);
-          if (b == null) {
-            if (v && v._isBigNumber === true) {
-              x2.s = v.s;
-              if (!v.c || v.e > MAX_EXP) {
-                x2.c = x2.e = null;
-              } else if (v.e < MIN_EXP) {
-                x2.c = [x2.e = 0];
-              } else {
-                x2.e = v.e;
-                x2.c = v.c.slice();
-              }
-              return;
-            }
-            if ((isNum = typeof v == "number") && v * 0 == 0) {
-              x2.s = 1 / v < 0 ? (v = -v, -1) : 1;
-              if (v === ~~v) {
-                for (e2 = 0, i2 = v; i2 >= 10; i2 /= 10, e2++) ;
-                if (e2 > MAX_EXP) {
-                  x2.c = x2.e = null;
-                } else {
-                  x2.e = e2;
-                  x2.c = [v];
-                }
-                return;
-              }
-              str = String(v);
-            } else {
-              if (!isNumeric.test(str = String(v))) return parseNumeric(x2, str, isNum);
-              x2.s = str.charCodeAt(0) == 45 ? (str = str.slice(1), -1) : 1;
-            }
-            if ((e2 = str.indexOf(".")) > -1) str = str.replace(".", "");
-            if ((i2 = str.search(/e/i)) > 0) {
-              if (e2 < 0) e2 = i2;
-              e2 += +str.slice(i2 + 1);
-              str = str.substring(0, i2);
-            } else if (e2 < 0) {
-              e2 = str.length;
-            }
-          } else {
-            intCheck(b, 2, ALPHABET2.length, "Base");
-            if (b == 10 && alphabetHasNormalDecimalDigits) {
-              x2 = new BigNumber2(v);
-              return round(x2, DECIMAL_PLACES + x2.e + 1, ROUNDING_MODE);
-            }
-            str = String(v);
-            if (isNum = typeof v == "number") {
-              if (v * 0 != 0) return parseNumeric(x2, str, isNum, b);
-              x2.s = 1 / v < 0 ? (str = str.slice(1), -1) : 1;
-              if (BigNumber2.DEBUG && str.replace(/^0\.0*|\./, "").length > 15) {
-                throw Error(tooManyDigits + v);
-              }
-            } else {
-              x2.s = str.charCodeAt(0) === 45 ? (str = str.slice(1), -1) : 1;
-            }
-            alphabet = ALPHABET2.slice(0, b);
-            e2 = i2 = 0;
-            for (len = str.length; i2 < len; i2++) {
-              if (alphabet.indexOf(c = str.charAt(i2)) < 0) {
-                if (c == ".") {
-                  if (i2 > e2) {
-                    e2 = len;
-                    continue;
-                  }
-                } else if (!caseChanged) {
-                  if (str == str.toUpperCase() && (str = str.toLowerCase()) || str == str.toLowerCase() && (str = str.toUpperCase())) {
-                    caseChanged = true;
-                    i2 = -1;
-                    e2 = 0;
-                    continue;
-                  }
-                }
-                return parseNumeric(x2, String(v), isNum, b);
-              }
-            }
-            isNum = false;
-            str = convertBase(str, b, 10, x2.s);
-            if ((e2 = str.indexOf(".")) > -1) str = str.replace(".", "");
-            else e2 = str.length;
-          }
-          for (i2 = 0; str.charCodeAt(i2) === 48; i2++) ;
-          for (len = str.length; str.charCodeAt(--len) === 48; ) ;
-          if (str = str.slice(i2, ++len)) {
-            len -= i2;
-            if (isNum && BigNumber2.DEBUG && len > 15 && (v > MAX_SAFE_INTEGER || v !== mathfloor(v))) {
-              throw Error(tooManyDigits + x2.s * v);
-            }
-            if ((e2 = e2 - i2 - 1) > MAX_EXP) {
-              x2.c = x2.e = null;
-            } else if (e2 < MIN_EXP) {
-              x2.c = [x2.e = 0];
-            } else {
-              x2.e = e2;
-              x2.c = [];
-              i2 = (e2 + 1) % LOG_BASE;
-              if (e2 < 0) i2 += LOG_BASE;
-              if (i2 < len) {
-                if (i2) x2.c.push(+str.slice(0, i2));
-                for (len -= LOG_BASE; i2 < len; ) {
-                  x2.c.push(+str.slice(i2, i2 += LOG_BASE));
-                }
-                i2 = LOG_BASE - (str = str.slice(i2)).length;
-              } else {
-                i2 -= len;
-              }
-              for (; i2--; str += "0") ;
-              x2.c.push(+str);
-            }
-          } else {
-            x2.c = [x2.e = 0];
-          }
-        }
-        BigNumber2.clone = clone2;
-        BigNumber2.ROUND_UP = 0;
-        BigNumber2.ROUND_DOWN = 1;
-        BigNumber2.ROUND_CEIL = 2;
-        BigNumber2.ROUND_FLOOR = 3;
-        BigNumber2.ROUND_HALF_UP = 4;
-        BigNumber2.ROUND_HALF_DOWN = 5;
-        BigNumber2.ROUND_HALF_EVEN = 6;
-        BigNumber2.ROUND_HALF_CEIL = 7;
-        BigNumber2.ROUND_HALF_FLOOR = 8;
-        BigNumber2.EUCLID = 9;
-        BigNumber2.config = BigNumber2.set = function(obj) {
-          var p, v;
-          if (obj != null) {
-            if (typeof obj == "object") {
-              if (obj.hasOwnProperty(p = "DECIMAL_PLACES")) {
-                v = obj[p];
-                intCheck(v, 0, MAX, p);
-                DECIMAL_PLACES = v;
-              }
-              if (obj.hasOwnProperty(p = "ROUNDING_MODE")) {
-                v = obj[p];
-                intCheck(v, 0, 8, p);
-                ROUNDING_MODE = v;
-              }
-              if (obj.hasOwnProperty(p = "EXPONENTIAL_AT")) {
-                v = obj[p];
-                if (v && v.pop) {
-                  intCheck(v[0], -MAX, 0, p);
-                  intCheck(v[1], 0, MAX, p);
-                  TO_EXP_NEG = v[0];
-                  TO_EXP_POS = v[1];
-                } else {
-                  intCheck(v, -MAX, MAX, p);
-                  TO_EXP_NEG = -(TO_EXP_POS = v < 0 ? -v : v);
-                }
-              }
-              if (obj.hasOwnProperty(p = "RANGE")) {
-                v = obj[p];
-                if (v && v.pop) {
-                  intCheck(v[0], -MAX, -1, p);
-                  intCheck(v[1], 1, MAX, p);
-                  MIN_EXP = v[0];
-                  MAX_EXP = v[1];
-                } else {
-                  intCheck(v, -MAX, MAX, p);
-                  if (v) {
-                    MIN_EXP = -(MAX_EXP = v < 0 ? -v : v);
-                  } else {
-                    throw Error(bignumberError + p + " cannot be zero: " + v);
-                  }
-                }
-              }
-              if (obj.hasOwnProperty(p = "CRYPTO")) {
-                v = obj[p];
-                if (v === !!v) {
-                  if (v) {
-                    if (typeof crypto != "undefined" && crypto && (crypto.getRandomValues || crypto.randomBytes)) {
-                      CRYPTO = v;
-                    } else {
-                      CRYPTO = !v;
-                      throw Error(bignumberError + "crypto unavailable");
-                    }
-                  } else {
-                    CRYPTO = v;
-                  }
-                } else {
-                  throw Error(bignumberError + p + " not true or false: " + v);
-                }
-              }
-              if (obj.hasOwnProperty(p = "MODULO_MODE")) {
-                v = obj[p];
-                intCheck(v, 0, 9, p);
-                MODULO_MODE = v;
-              }
-              if (obj.hasOwnProperty(p = "POW_PRECISION")) {
-                v = obj[p];
-                intCheck(v, 0, MAX, p);
-                POW_PRECISION = v;
-              }
-              if (obj.hasOwnProperty(p = "FORMAT")) {
-                v = obj[p];
-                if (typeof v == "object") FORMAT = v;
-                else throw Error(bignumberError + p + " not an object: " + v);
-              }
-              if (obj.hasOwnProperty(p = "ALPHABET")) {
-                v = obj[p];
-                if (typeof v == "string" && !/^.?$|[+\-.\s]|(.).*\1/.test(v)) {
-                  alphabetHasNormalDecimalDigits = v.slice(0, 10) == "0123456789";
-                  ALPHABET2 = v;
-                } else {
-                  throw Error(bignumberError + p + " invalid: " + v);
-                }
-              }
-            } else {
-              throw Error(bignumberError + "Object expected: " + obj);
-            }
-          }
-          return {
-            DECIMAL_PLACES,
-            ROUNDING_MODE,
-            EXPONENTIAL_AT: [TO_EXP_NEG, TO_EXP_POS],
-            RANGE: [MIN_EXP, MAX_EXP],
-            CRYPTO,
-            MODULO_MODE,
-            POW_PRECISION,
-            FORMAT,
-            ALPHABET: ALPHABET2
-          };
-        };
-        BigNumber2.isBigNumber = function(v) {
-          if (!v || v._isBigNumber !== true) return false;
-          if (!BigNumber2.DEBUG) return true;
-          var i2, n, c = v.c, e2 = v.e, s2 = v.s;
-          out: if ({}.toString.call(c) == "[object Array]") {
-            if ((s2 === 1 || s2 === -1) && e2 >= -MAX && e2 <= MAX && e2 === mathfloor(e2)) {
-              if (c[0] === 0) {
-                if (e2 === 0 && c.length === 1) return true;
-                break out;
-              }
-              i2 = (e2 + 1) % LOG_BASE;
-              if (i2 < 1) i2 += LOG_BASE;
-              if (String(c[0]).length == i2) {
-                for (i2 = 0; i2 < c.length; i2++) {
-                  n = c[i2];
-                  if (n < 0 || n >= BASE || n !== mathfloor(n)) break out;
-                }
-                if (n !== 0) return true;
-              }
-            }
-          } else if (c === null && e2 === null && (s2 === null || s2 === 1 || s2 === -1)) {
-            return true;
-          }
-          throw Error(bignumberError + "Invalid BigNumber: " + v);
-        };
-        BigNumber2.maximum = BigNumber2.max = function() {
-          return maxOrMin(arguments, -1);
-        };
-        BigNumber2.minimum = BigNumber2.min = function() {
-          return maxOrMin(arguments, 1);
-        };
-        BigNumber2.random = (function() {
-          var pow2_53 = 9007199254740992;
-          var random53bitInt = Math.random() * pow2_53 & 2097151 ? function() {
-            return mathfloor(Math.random() * pow2_53);
-          } : function() {
-            return (Math.random() * 1073741824 | 0) * 8388608 + (Math.random() * 8388608 | 0);
-          };
-          return function(dp) {
-            var a, b, e2, k, v, i2 = 0, c = [], rand = new BigNumber2(ONE);
-            if (dp == null) dp = DECIMAL_PLACES;
-            else intCheck(dp, 0, MAX);
-            k = mathceil(dp / LOG_BASE);
-            if (CRYPTO) {
-              if (crypto.getRandomValues) {
-                a = crypto.getRandomValues(new Uint32Array(k *= 2));
-                for (; i2 < k; ) {
-                  v = a[i2] * 131072 + (a[i2 + 1] >>> 11);
-                  if (v >= 9e15) {
-                    b = crypto.getRandomValues(new Uint32Array(2));
-                    a[i2] = b[0];
-                    a[i2 + 1] = b[1];
-                  } else {
-                    c.push(v % 1e14);
-                    i2 += 2;
-                  }
-                }
-                i2 = k / 2;
-              } else if (crypto.randomBytes) {
-                a = crypto.randomBytes(k *= 7);
-                for (; i2 < k; ) {
-                  v = (a[i2] & 31) * 281474976710656 + a[i2 + 1] * 1099511627776 + a[i2 + 2] * 4294967296 + a[i2 + 3] * 16777216 + (a[i2 + 4] << 16) + (a[i2 + 5] << 8) + a[i2 + 6];
-                  if (v >= 9e15) {
-                    crypto.randomBytes(7).copy(a, i2);
-                  } else {
-                    c.push(v % 1e14);
-                    i2 += 7;
-                  }
-                }
-                i2 = k / 7;
-              } else {
-                CRYPTO = false;
-                throw Error(bignumberError + "crypto unavailable");
-              }
-            }
-            if (!CRYPTO) {
-              for (; i2 < k; ) {
-                v = random53bitInt();
-                if (v < 9e15) c[i2++] = v % 1e14;
-              }
-            }
-            k = c[--i2];
-            dp %= LOG_BASE;
-            if (k && dp) {
-              v = POWS_TEN[LOG_BASE - dp];
-              c[i2] = mathfloor(k / v) * v;
-            }
-            for (; c[i2] === 0; c.pop(), i2--) ;
-            if (i2 < 0) {
-              c = [e2 = 0];
-            } else {
-              for (e2 = -1; c[0] === 0; c.splice(0, 1), e2 -= LOG_BASE) ;
-              for (i2 = 1, v = c[0]; v >= 10; v /= 10, i2++) ;
-              if (i2 < LOG_BASE) e2 -= LOG_BASE - i2;
-            }
-            rand.e = e2;
-            rand.c = c;
-            return rand;
-          };
-        })();
-        BigNumber2.sum = function() {
-          var i2 = 1, args = arguments, sum = new BigNumber2(args[0]);
-          for (; i2 < args.length; ) sum = sum.plus(args[i2++]);
-          return sum;
-        };
-        convertBase = /* @__PURE__ */ (function() {
-          var decimal = "0123456789";
-          function toBaseOut(str, baseIn, baseOut, alphabet) {
-            var j, arr = [0], arrL, i2 = 0, len = str.length;
-            for (; i2 < len; ) {
-              for (arrL = arr.length; arrL--; arr[arrL] *= baseIn) ;
-              arr[0] += alphabet.indexOf(str.charAt(i2++));
-              for (j = 0; j < arr.length; j++) {
-                if (arr[j] > baseOut - 1) {
-                  if (arr[j + 1] == null) arr[j + 1] = 0;
-                  arr[j + 1] += arr[j] / baseOut | 0;
-                  arr[j] %= baseOut;
-                }
-              }
-            }
-            return arr.reverse();
-          }
-          return function(str, baseIn, baseOut, sign, callerIsToString) {
-            var alphabet, d, e2, k, r2, x2, xc, y, i2 = str.indexOf("."), dp = DECIMAL_PLACES, rm = ROUNDING_MODE;
-            if (i2 >= 0) {
-              k = POW_PRECISION;
-              POW_PRECISION = 0;
-              str = str.replace(".", "");
-              y = new BigNumber2(baseIn);
-              x2 = y.pow(str.length - i2);
-              POW_PRECISION = k;
-              y.c = toBaseOut(
-                toFixedPoint(coeffToString(x2.c), x2.e, "0"),
-                10,
-                baseOut,
-                decimal
-              );
-              y.e = y.c.length;
-            }
-            xc = toBaseOut(str, baseIn, baseOut, callerIsToString ? (alphabet = ALPHABET2, decimal) : (alphabet = decimal, ALPHABET2));
-            e2 = k = xc.length;
-            for (; xc[--k] == 0; xc.pop()) ;
-            if (!xc[0]) return alphabet.charAt(0);
-            if (i2 < 0) {
-              --e2;
-            } else {
-              x2.c = xc;
-              x2.e = e2;
-              x2.s = sign;
-              x2 = div(x2, y, dp, rm, baseOut);
-              xc = x2.c;
-              r2 = x2.r;
-              e2 = x2.e;
-            }
-            d = e2 + dp + 1;
-            i2 = xc[d];
-            k = baseOut / 2;
-            r2 = r2 || d < 0 || xc[d + 1] != null;
-            r2 = rm < 4 ? (i2 != null || r2) && (rm == 0 || rm == (x2.s < 0 ? 3 : 2)) : i2 > k || i2 == k && (rm == 4 || r2 || rm == 6 && xc[d - 1] & 1 || rm == (x2.s < 0 ? 8 : 7));
-            if (d < 1 || !xc[0]) {
-              str = r2 ? toFixedPoint(alphabet.charAt(1), -dp, alphabet.charAt(0)) : alphabet.charAt(0);
-            } else {
-              xc.length = d;
-              if (r2) {
-                for (--baseOut; ++xc[--d] > baseOut; ) {
-                  xc[d] = 0;
-                  if (!d) {
-                    ++e2;
-                    xc = [1].concat(xc);
-                  }
-                }
-              }
-              for (k = xc.length; !xc[--k]; ) ;
-              for (i2 = 0, str = ""; i2 <= k; str += alphabet.charAt(xc[i2++])) ;
-              str = toFixedPoint(str, e2, alphabet.charAt(0));
-            }
-            return str;
-          };
-        })();
-        div = /* @__PURE__ */ (function() {
-          function multiply(x2, k, base) {
-            var m2, temp, xlo, xhi, carry = 0, i2 = x2.length, klo = k % SQRT_BASE, khi = k / SQRT_BASE | 0;
-            for (x2 = x2.slice(); i2--; ) {
-              xlo = x2[i2] % SQRT_BASE;
-              xhi = x2[i2] / SQRT_BASE | 0;
-              m2 = khi * xlo + xhi * klo;
-              temp = klo * xlo + m2 % SQRT_BASE * SQRT_BASE + carry;
-              carry = (temp / base | 0) + (m2 / SQRT_BASE | 0) + khi * xhi;
-              x2[i2] = temp % base;
-            }
-            if (carry) x2 = [carry].concat(x2);
-            return x2;
-          }
-          function compare2(a, b, aL, bL) {
-            var i2, cmp;
-            if (aL != bL) {
-              cmp = aL > bL ? 1 : -1;
-            } else {
-              for (i2 = cmp = 0; i2 < aL; i2++) {
-                if (a[i2] != b[i2]) {
-                  cmp = a[i2] > b[i2] ? 1 : -1;
-                  break;
-                }
-              }
-            }
-            return cmp;
-          }
-          function subtract(a, b, aL, base) {
-            var i2 = 0;
-            for (; aL--; ) {
-              a[aL] -= i2;
-              i2 = a[aL] < b[aL] ? 1 : 0;
-              a[aL] = i2 * base + a[aL] - b[aL];
-            }
-            for (; !a[0] && a.length > 1; a.splice(0, 1)) ;
-          }
-          return function(x2, y, dp, rm, base) {
-            var cmp, e2, i2, more, n, prod, prodL, q, qc, rem, remL, rem0, xi, xL, yc0, yL, yz, s2 = x2.s == y.s ? 1 : -1, xc = x2.c, yc = y.c;
-            if (!xc || !xc[0] || !yc || !yc[0]) {
-              return new BigNumber2(
-                // Return NaN if either NaN, or both Infinity or 0.
-                !x2.s || !y.s || (xc ? yc && xc[0] == yc[0] : !yc) ? NaN : (
-                  // Return ±0 if x is ±0 or y is ±Infinity, or return ±Infinity as y is ±0.
-                  xc && xc[0] == 0 || !yc ? s2 * 0 : s2 / 0
-                )
-              );
-            }
-            q = new BigNumber2(s2);
-            qc = q.c = [];
-            e2 = x2.e - y.e;
-            s2 = dp + e2 + 1;
-            if (!base) {
-              base = BASE;
-              e2 = bitFloor(x2.e / LOG_BASE) - bitFloor(y.e / LOG_BASE);
-              s2 = s2 / LOG_BASE | 0;
-            }
-            for (i2 = 0; yc[i2] == (xc[i2] || 0); i2++) ;
-            if (yc[i2] > (xc[i2] || 0)) e2--;
-            if (s2 < 0) {
-              qc.push(1);
-              more = true;
-            } else {
-              xL = xc.length;
-              yL = yc.length;
-              i2 = 0;
-              s2 += 2;
-              n = mathfloor(base / (yc[0] + 1));
-              if (n > 1) {
-                yc = multiply(yc, n, base);
-                xc = multiply(xc, n, base);
-                yL = yc.length;
-                xL = xc.length;
-              }
-              xi = yL;
-              rem = xc.slice(0, yL);
-              remL = rem.length;
-              for (; remL < yL; rem[remL++] = 0) ;
-              yz = yc.slice();
-              yz = [0].concat(yz);
-              yc0 = yc[0];
-              if (yc[1] >= base / 2) yc0++;
-              do {
-                n = 0;
-                cmp = compare2(yc, rem, yL, remL);
-                if (cmp < 0) {
-                  rem0 = rem[0];
-                  if (yL != remL) rem0 = rem0 * base + (rem[1] || 0);
-                  n = mathfloor(rem0 / yc0);
-                  if (n > 1) {
-                    if (n >= base) n = base - 1;
-                    prod = multiply(yc, n, base);
-                    prodL = prod.length;
-                    remL = rem.length;
-                    while (compare2(prod, rem, prodL, remL) == 1) {
-                      n--;
-                      subtract(prod, yL < prodL ? yz : yc, prodL, base);
-                      prodL = prod.length;
-                      cmp = 1;
-                    }
-                  } else {
-                    if (n == 0) {
-                      cmp = n = 1;
-                    }
-                    prod = yc.slice();
-                    prodL = prod.length;
-                  }
-                  if (prodL < remL) prod = [0].concat(prod);
-                  subtract(rem, prod, remL, base);
-                  remL = rem.length;
-                  if (cmp == -1) {
-                    while (compare2(yc, rem, yL, remL) < 1) {
-                      n++;
-                      subtract(rem, yL < remL ? yz : yc, remL, base);
-                      remL = rem.length;
-                    }
-                  }
-                } else if (cmp === 0) {
-                  n++;
-                  rem = [0];
-                }
-                qc[i2++] = n;
-                if (rem[0]) {
-                  rem[remL++] = xc[xi] || 0;
-                } else {
-                  rem = [xc[xi]];
-                  remL = 1;
-                }
-              } while ((xi++ < xL || rem[0] != null) && s2--);
-              more = rem[0] != null;
-              if (!qc[0]) qc.splice(0, 1);
-            }
-            if (base == BASE) {
-              for (i2 = 1, s2 = qc[0]; s2 >= 10; s2 /= 10, i2++) ;
-              round(q, dp + (q.e = i2 + e2 * LOG_BASE - 1) + 1, rm, more);
-            } else {
-              q.e = e2;
-              q.r = +more;
-            }
-            return q;
-          };
-        })();
-        function format(n, i2, rm, id) {
-          var c0, e2, ne, len, str;
-          if (rm == null) rm = ROUNDING_MODE;
-          else intCheck(rm, 0, 8);
-          if (!n.c) return n.toString();
-          c0 = n.c[0];
-          ne = n.e;
-          if (i2 == null) {
-            str = coeffToString(n.c);
-            str = id == 1 || id == 2 && (ne <= TO_EXP_NEG || ne >= TO_EXP_POS) ? toExponential(str, ne) : toFixedPoint(str, ne, "0");
-          } else {
-            n = round(new BigNumber2(n), i2, rm);
-            e2 = n.e;
-            str = coeffToString(n.c);
-            len = str.length;
-            if (id == 1 || id == 2 && (i2 <= e2 || e2 <= TO_EXP_NEG)) {
-              for (; len < i2; str += "0", len++) ;
-              str = toExponential(str, e2);
-            } else {
-              i2 -= ne + (id === 2 && e2 > ne);
-              str = toFixedPoint(str, e2, "0");
-              if (e2 + 1 > len) {
-                if (--i2 > 0) for (str += "."; i2--; str += "0") ;
-              } else {
-                i2 += e2 - len;
-                if (i2 > 0) {
-                  if (e2 + 1 == len) str += ".";
-                  for (; i2--; str += "0") ;
-                }
-              }
-            }
-          }
-          return n.s < 0 && c0 ? "-" + str : str;
-        }
-        function maxOrMin(args, n) {
-          var k, y, i2 = 1, x2 = new BigNumber2(args[0]);
-          for (; i2 < args.length; i2++) {
-            y = new BigNumber2(args[i2]);
-            if (!y.s || (k = compare(x2, y)) === n || k === 0 && x2.s === n) {
-              x2 = y;
-            }
-          }
-          return x2;
-        }
-        function normalise(n, c, e2) {
-          var i2 = 1, j = c.length;
-          for (; !c[--j]; c.pop()) ;
-          for (j = c[0]; j >= 10; j /= 10, i2++) ;
-          if ((e2 = i2 + e2 * LOG_BASE - 1) > MAX_EXP) {
-            n.c = n.e = null;
-          } else if (e2 < MIN_EXP) {
-            n.c = [n.e = 0];
-          } else {
-            n.e = e2;
-            n.c = c;
-          }
-          return n;
-        }
-        parseNumeric = /* @__PURE__ */ (function() {
-          var basePrefix = /^(-?)0([xbo])(?=\w[\w.]*$)/i, dotAfter = /^([^.]+)\.$/, dotBefore = /^\.([^.]+)$/, isInfinityOrNaN = /^-?(Infinity|NaN)$/, whitespaceOrPlus = /^\s*\+(?=[\w.])|^\s+|\s+$/g;
-          return function(x2, str, isNum, b) {
-            var base, s2 = isNum ? str : str.replace(whitespaceOrPlus, "");
-            if (isInfinityOrNaN.test(s2)) {
-              x2.s = isNaN(s2) ? null : s2 < 0 ? -1 : 1;
-            } else {
-              if (!isNum) {
-                s2 = s2.replace(basePrefix, function(m2, p1, p2) {
-                  base = (p2 = p2.toLowerCase()) == "x" ? 16 : p2 == "b" ? 2 : 8;
-                  return !b || b == base ? p1 : m2;
-                });
-                if (b) {
-                  base = b;
-                  s2 = s2.replace(dotAfter, "$1").replace(dotBefore, "0.$1");
-                }
-                if (str != s2) return new BigNumber2(s2, base);
-              }
-              if (BigNumber2.DEBUG) {
-                throw Error(bignumberError + "Not a" + (b ? " base " + b : "") + " number: " + str);
-              }
-              x2.s = null;
-            }
-            x2.c = x2.e = null;
-          };
-        })();
-        function round(x2, sd, rm, r2) {
-          var d, i2, j, k, n, ni, rd, xc = x2.c, pows10 = POWS_TEN;
-          if (xc) {
-            out: {
-              for (d = 1, k = xc[0]; k >= 10; k /= 10, d++) ;
-              i2 = sd - d;
-              if (i2 < 0) {
-                i2 += LOG_BASE;
-                j = sd;
-                n = xc[ni = 0];
-                rd = mathfloor(n / pows10[d - j - 1] % 10);
-              } else {
-                ni = mathceil((i2 + 1) / LOG_BASE);
-                if (ni >= xc.length) {
-                  if (r2) {
-                    for (; xc.length <= ni; xc.push(0)) ;
-                    n = rd = 0;
-                    d = 1;
-                    i2 %= LOG_BASE;
-                    j = i2 - LOG_BASE + 1;
-                  } else {
-                    break out;
-                  }
-                } else {
-                  n = k = xc[ni];
-                  for (d = 1; k >= 10; k /= 10, d++) ;
-                  i2 %= LOG_BASE;
-                  j = i2 - LOG_BASE + d;
-                  rd = j < 0 ? 0 : mathfloor(n / pows10[d - j - 1] % 10);
-                }
-              }
-              r2 = r2 || sd < 0 || // Are there any non-zero digits after the rounding digit?
-              // The expression  n % pows10[d - j - 1]  returns all digits of n to the right
-              // of the digit at j, e.g. if n is 908714 and j is 2, the expression gives 714.
-              xc[ni + 1] != null || (j < 0 ? n : n % pows10[d - j - 1]);
-              r2 = rm < 4 ? (rd || r2) && (rm == 0 || rm == (x2.s < 0 ? 3 : 2)) : rd > 5 || rd == 5 && (rm == 4 || r2 || rm == 6 && // Check whether the digit to the left of the rounding digit is odd.
-              (i2 > 0 ? j > 0 ? n / pows10[d - j] : 0 : xc[ni - 1]) % 10 & 1 || rm == (x2.s < 0 ? 8 : 7));
-              if (sd < 1 || !xc[0]) {
-                xc.length = 0;
-                if (r2) {
-                  sd -= x2.e + 1;
-                  xc[0] = pows10[(LOG_BASE - sd % LOG_BASE) % LOG_BASE];
-                  x2.e = -sd || 0;
-                } else {
-                  xc[0] = x2.e = 0;
-                }
-                return x2;
-              }
-              if (i2 == 0) {
-                xc.length = ni;
-                k = 1;
-                ni--;
-              } else {
-                xc.length = ni + 1;
-                k = pows10[LOG_BASE - i2];
-                xc[ni] = j > 0 ? mathfloor(n / pows10[d - j] % pows10[j]) * k : 0;
-              }
-              if (r2) {
-                for (; ; ) {
-                  if (ni == 0) {
-                    for (i2 = 1, j = xc[0]; j >= 10; j /= 10, i2++) ;
-                    j = xc[0] += k;
-                    for (k = 1; j >= 10; j /= 10, k++) ;
-                    if (i2 != k) {
-                      x2.e++;
-                      if (xc[0] == BASE) xc[0] = 1;
-                    }
-                    break;
-                  } else {
-                    xc[ni] += k;
-                    if (xc[ni] != BASE) break;
-                    xc[ni--] = 0;
-                    k = 1;
-                  }
-                }
-              }
-              for (i2 = xc.length; xc[--i2] === 0; xc.pop()) ;
-            }
-            if (x2.e > MAX_EXP) {
-              x2.c = x2.e = null;
-            } else if (x2.e < MIN_EXP) {
-              x2.c = [x2.e = 0];
-            }
-          }
-          return x2;
-        }
-        function valueOf(n) {
-          var str, e2 = n.e;
-          if (e2 === null) return n.toString();
-          str = coeffToString(n.c);
-          str = e2 <= TO_EXP_NEG || e2 >= TO_EXP_POS ? toExponential(str, e2) : toFixedPoint(str, e2, "0");
-          return n.s < 0 ? "-" + str : str;
-        }
-        P.absoluteValue = P.abs = function() {
-          var x2 = new BigNumber2(this);
-          if (x2.s < 0) x2.s = 1;
-          return x2;
-        };
-        P.comparedTo = function(y, b) {
-          return compare(this, new BigNumber2(y, b));
-        };
-        P.decimalPlaces = P.dp = function(dp, rm) {
-          var c, n, v, x2 = this;
-          if (dp != null) {
-            intCheck(dp, 0, MAX);
-            if (rm == null) rm = ROUNDING_MODE;
-            else intCheck(rm, 0, 8);
-            return round(new BigNumber2(x2), dp + x2.e + 1, rm);
-          }
-          if (!(c = x2.c)) return null;
-          n = ((v = c.length - 1) - bitFloor(this.e / LOG_BASE)) * LOG_BASE;
-          if (v = c[v]) for (; v % 10 == 0; v /= 10, n--) ;
-          if (n < 0) n = 0;
-          return n;
-        };
-        P.dividedBy = P.div = function(y, b) {
-          return div(this, new BigNumber2(y, b), DECIMAL_PLACES, ROUNDING_MODE);
-        };
-        P.dividedToIntegerBy = P.idiv = function(y, b) {
-          return div(this, new BigNumber2(y, b), 0, 1);
-        };
-        P.exponentiatedBy = P.pow = function(n, m2) {
-          var half, isModExp, i2, k, more, nIsBig, nIsNeg, nIsOdd, y, x2 = this;
-          n = new BigNumber2(n);
-          if (n.c && !n.isInteger()) {
-            throw Error(bignumberError + "Exponent not an integer: " + valueOf(n));
-          }
-          if (m2 != null) m2 = new BigNumber2(m2);
-          nIsBig = n.e > 14;
-          if (!x2.c || !x2.c[0] || x2.c[0] == 1 && !x2.e && x2.c.length == 1 || !n.c || !n.c[0]) {
-            y = new BigNumber2(Math.pow(+valueOf(x2), nIsBig ? n.s * (2 - isOdd(n)) : +valueOf(n)));
-            return m2 ? y.mod(m2) : y;
-          }
-          nIsNeg = n.s < 0;
-          if (m2) {
-            if (m2.c ? !m2.c[0] : !m2.s) return new BigNumber2(NaN);
-            isModExp = !nIsNeg && x2.isInteger() && m2.isInteger();
-            if (isModExp) x2 = x2.mod(m2);
-          } else if (n.e > 9 && (x2.e > 0 || x2.e < -1 || (x2.e == 0 ? x2.c[0] > 1 || nIsBig && x2.c[1] >= 24e7 : x2.c[0] < 8e13 || nIsBig && x2.c[0] <= 9999975e7))) {
-            k = x2.s < 0 && isOdd(n) ? -0 : 0;
-            if (x2.e > -1) k = 1 / k;
-            return new BigNumber2(nIsNeg ? 1 / k : k);
-          } else if (POW_PRECISION) {
-            k = mathceil(POW_PRECISION / LOG_BASE + 2);
-          }
-          if (nIsBig) {
-            half = new BigNumber2(0.5);
-            if (nIsNeg) n.s = 1;
-            nIsOdd = isOdd(n);
-          } else {
-            i2 = Math.abs(+valueOf(n));
-            nIsOdd = i2 % 2;
-          }
-          y = new BigNumber2(ONE);
-          for (; ; ) {
-            if (nIsOdd) {
-              y = y.times(x2);
-              if (!y.c) break;
-              if (k) {
-                if (y.c.length > k) y.c.length = k;
-              } else if (isModExp) {
-                y = y.mod(m2);
-              }
-            }
-            if (i2) {
-              i2 = mathfloor(i2 / 2);
-              if (i2 === 0) break;
-              nIsOdd = i2 % 2;
-            } else {
-              n = n.times(half);
-              round(n, n.e + 1, 1);
-              if (n.e > 14) {
-                nIsOdd = isOdd(n);
-              } else {
-                i2 = +valueOf(n);
-                if (i2 === 0) break;
-                nIsOdd = i2 % 2;
-              }
-            }
-            x2 = x2.times(x2);
-            if (k) {
-              if (x2.c && x2.c.length > k) x2.c.length = k;
-            } else if (isModExp) {
-              x2 = x2.mod(m2);
-            }
-          }
-          if (isModExp) return y;
-          if (nIsNeg) y = ONE.div(y);
-          return m2 ? y.mod(m2) : k ? round(y, POW_PRECISION, ROUNDING_MODE, more) : y;
-        };
-        P.integerValue = function(rm) {
-          var n = new BigNumber2(this);
-          if (rm == null) rm = ROUNDING_MODE;
-          else intCheck(rm, 0, 8);
-          return round(n, n.e + 1, rm);
-        };
-        P.isEqualTo = P.eq = function(y, b) {
-          return compare(this, new BigNumber2(y, b)) === 0;
-        };
-        P.isFinite = function() {
-          return !!this.c;
-        };
-        P.isGreaterThan = P.gt = function(y, b) {
-          return compare(this, new BigNumber2(y, b)) > 0;
-        };
-        P.isGreaterThanOrEqualTo = P.gte = function(y, b) {
-          return (b = compare(this, new BigNumber2(y, b))) === 1 || b === 0;
-        };
-        P.isInteger = function() {
-          return !!this.c && bitFloor(this.e / LOG_BASE) > this.c.length - 2;
-        };
-        P.isLessThan = P.lt = function(y, b) {
-          return compare(this, new BigNumber2(y, b)) < 0;
-        };
-        P.isLessThanOrEqualTo = P.lte = function(y, b) {
-          return (b = compare(this, new BigNumber2(y, b))) === -1 || b === 0;
-        };
-        P.isNaN = function() {
-          return !this.s;
-        };
-        P.isNegative = function() {
-          return this.s < 0;
-        };
-        P.isPositive = function() {
-          return this.s > 0;
-        };
-        P.isZero = function() {
-          return !!this.c && this.c[0] == 0;
-        };
-        P.minus = function(y, b) {
-          var i2, j, t2, xLTy, x2 = this, a = x2.s;
-          y = new BigNumber2(y, b);
-          b = y.s;
-          if (!a || !b) return new BigNumber2(NaN);
-          if (a != b) {
-            y.s = -b;
-            return x2.plus(y);
-          }
-          var xe = x2.e / LOG_BASE, ye = y.e / LOG_BASE, xc = x2.c, yc = y.c;
-          if (!xe || !ye) {
-            if (!xc || !yc) return xc ? (y.s = -b, y) : new BigNumber2(yc ? x2 : NaN);
-            if (!xc[0] || !yc[0]) {
-              return yc[0] ? (y.s = -b, y) : new BigNumber2(xc[0] ? x2 : (
-                // IEEE 754 (2008) 6.3: n - n = -0 when rounding to -Infinity
-                ROUNDING_MODE == 3 ? -0 : 0
-              ));
-            }
-          }
-          xe = bitFloor(xe);
-          ye = bitFloor(ye);
-          xc = xc.slice();
-          if (a = xe - ye) {
-            if (xLTy = a < 0) {
-              a = -a;
-              t2 = xc;
-            } else {
-              ye = xe;
-              t2 = yc;
-            }
-            t2.reverse();
-            for (b = a; b--; t2.push(0)) ;
-            t2.reverse();
-          } else {
-            j = (xLTy = (a = xc.length) < (b = yc.length)) ? a : b;
-            for (a = b = 0; b < j; b++) {
-              if (xc[b] != yc[b]) {
-                xLTy = xc[b] < yc[b];
-                break;
-              }
-            }
-          }
-          if (xLTy) {
-            t2 = xc;
-            xc = yc;
-            yc = t2;
-            y.s = -y.s;
-          }
-          b = (j = yc.length) - (i2 = xc.length);
-          if (b > 0) for (; b--; xc[i2++] = 0) ;
-          b = BASE - 1;
-          for (; j > a; ) {
-            if (xc[--j] < yc[j]) {
-              for (i2 = j; i2 && !xc[--i2]; xc[i2] = b) ;
-              --xc[i2];
-              xc[j] += BASE;
-            }
-            xc[j] -= yc[j];
-          }
-          for (; xc[0] == 0; xc.splice(0, 1), --ye) ;
-          if (!xc[0]) {
-            y.s = ROUNDING_MODE == 3 ? -1 : 1;
-            y.c = [y.e = 0];
-            return y;
-          }
-          return normalise(y, xc, ye);
-        };
-        P.modulo = P.mod = function(y, b) {
-          var q, s2, x2 = this;
-          y = new BigNumber2(y, b);
-          if (!x2.c || !y.s || y.c && !y.c[0]) {
-            return new BigNumber2(NaN);
-          } else if (!y.c || x2.c && !x2.c[0]) {
-            return new BigNumber2(x2);
-          }
-          if (MODULO_MODE == 9) {
-            s2 = y.s;
-            y.s = 1;
-            q = div(x2, y, 0, 3);
-            y.s = s2;
-            q.s *= s2;
-          } else {
-            q = div(x2, y, 0, MODULO_MODE);
-          }
-          y = x2.minus(q.times(y));
-          if (!y.c[0] && MODULO_MODE == 1) y.s = x2.s;
-          return y;
-        };
-        P.multipliedBy = P.times = function(y, b) {
-          var c, e2, i2, j, k, m2, xcL, xlo, xhi, ycL, ylo, yhi, zc, base, sqrtBase, x2 = this, xc = x2.c, yc = (y = new BigNumber2(y, b)).c;
-          if (!xc || !yc || !xc[0] || !yc[0]) {
-            if (!x2.s || !y.s || xc && !xc[0] && !yc || yc && !yc[0] && !xc) {
-              y.c = y.e = y.s = null;
-            } else {
-              y.s *= x2.s;
-              if (!xc || !yc) {
-                y.c = y.e = null;
-              } else {
-                y.c = [0];
-                y.e = 0;
-              }
-            }
-            return y;
-          }
-          e2 = bitFloor(x2.e / LOG_BASE) + bitFloor(y.e / LOG_BASE);
-          y.s *= x2.s;
-          xcL = xc.length;
-          ycL = yc.length;
-          if (xcL < ycL) {
-            zc = xc;
-            xc = yc;
-            yc = zc;
-            i2 = xcL;
-            xcL = ycL;
-            ycL = i2;
-          }
-          for (i2 = xcL + ycL, zc = []; i2--; zc.push(0)) ;
-          base = BASE;
-          sqrtBase = SQRT_BASE;
-          for (i2 = ycL; --i2 >= 0; ) {
-            c = 0;
-            ylo = yc[i2] % sqrtBase;
-            yhi = yc[i2] / sqrtBase | 0;
-            for (k = xcL, j = i2 + k; j > i2; ) {
-              xlo = xc[--k] % sqrtBase;
-              xhi = xc[k] / sqrtBase | 0;
-              m2 = yhi * xlo + xhi * ylo;
-              xlo = ylo * xlo + m2 % sqrtBase * sqrtBase + zc[j] + c;
-              c = (xlo / base | 0) + (m2 / sqrtBase | 0) + yhi * xhi;
-              zc[j--] = xlo % base;
-            }
-            zc[j] = c;
-          }
-          if (c) {
-            ++e2;
-          } else {
-            zc.splice(0, 1);
-          }
-          return normalise(y, zc, e2);
-        };
-        P.negated = function() {
-          var x2 = new BigNumber2(this);
-          x2.s = -x2.s || null;
-          return x2;
-        };
-        P.plus = function(y, b) {
-          var t2, x2 = this, a = x2.s;
-          y = new BigNumber2(y, b);
-          b = y.s;
-          if (!a || !b) return new BigNumber2(NaN);
-          if (a != b) {
-            y.s = -b;
-            return x2.minus(y);
-          }
-          var xe = x2.e / LOG_BASE, ye = y.e / LOG_BASE, xc = x2.c, yc = y.c;
-          if (!xe || !ye) {
-            if (!xc || !yc) return new BigNumber2(a / 0);
-            if (!xc[0] || !yc[0]) return yc[0] ? y : new BigNumber2(xc[0] ? x2 : a * 0);
-          }
-          xe = bitFloor(xe);
-          ye = bitFloor(ye);
-          xc = xc.slice();
-          if (a = xe - ye) {
-            if (a > 0) {
-              ye = xe;
-              t2 = yc;
-            } else {
-              a = -a;
-              t2 = xc;
-            }
-            t2.reverse();
-            for (; a--; t2.push(0)) ;
-            t2.reverse();
-          }
-          a = xc.length;
-          b = yc.length;
-          if (a - b < 0) {
-            t2 = yc;
-            yc = xc;
-            xc = t2;
-            b = a;
-          }
-          for (a = 0; b; ) {
-            a = (xc[--b] = xc[b] + yc[b] + a) / BASE | 0;
-            xc[b] = BASE === xc[b] ? 0 : xc[b] % BASE;
-          }
-          if (a) {
-            xc = [a].concat(xc);
-            ++ye;
-          }
-          return normalise(y, xc, ye);
-        };
-        P.precision = P.sd = function(sd, rm) {
-          var c, n, v, x2 = this;
-          if (sd != null && sd !== !!sd) {
-            intCheck(sd, 1, MAX);
-            if (rm == null) rm = ROUNDING_MODE;
-            else intCheck(rm, 0, 8);
-            return round(new BigNumber2(x2), sd, rm);
-          }
-          if (!(c = x2.c)) return null;
-          v = c.length - 1;
-          n = v * LOG_BASE + 1;
-          if (v = c[v]) {
-            for (; v % 10 == 0; v /= 10, n--) ;
-            for (v = c[0]; v >= 10; v /= 10, n++) ;
-          }
-          if (sd && x2.e + 1 > n) n = x2.e + 1;
-          return n;
-        };
-        P.shiftedBy = function(k) {
-          intCheck(k, -MAX_SAFE_INTEGER, MAX_SAFE_INTEGER);
-          return this.times("1e" + k);
-        };
-        P.squareRoot = P.sqrt = function() {
-          var m2, n, r2, rep, t2, x2 = this, c = x2.c, s2 = x2.s, e2 = x2.e, dp = DECIMAL_PLACES + 4, half = new BigNumber2("0.5");
-          if (s2 !== 1 || !c || !c[0]) {
-            return new BigNumber2(!s2 || s2 < 0 && (!c || c[0]) ? NaN : c ? x2 : 1 / 0);
-          }
-          s2 = Math.sqrt(+valueOf(x2));
-          if (s2 == 0 || s2 == 1 / 0) {
-            n = coeffToString(c);
-            if ((n.length + e2) % 2 == 0) n += "0";
-            s2 = Math.sqrt(+n);
-            e2 = bitFloor((e2 + 1) / 2) - (e2 < 0 || e2 % 2);
-            if (s2 == 1 / 0) {
-              n = "5e" + e2;
-            } else {
-              n = s2.toExponential();
-              n = n.slice(0, n.indexOf("e") + 1) + e2;
-            }
-            r2 = new BigNumber2(n);
-          } else {
-            r2 = new BigNumber2(s2 + "");
-          }
-          if (r2.c[0]) {
-            e2 = r2.e;
-            s2 = e2 + dp;
-            if (s2 < 3) s2 = 0;
-            for (; ; ) {
-              t2 = r2;
-              r2 = half.times(t2.plus(div(x2, t2, dp, 1)));
-              if (coeffToString(t2.c).slice(0, s2) === (n = coeffToString(r2.c)).slice(0, s2)) {
-                if (r2.e < e2) --s2;
-                n = n.slice(s2 - 3, s2 + 1);
-                if (n == "9999" || !rep && n == "4999") {
-                  if (!rep) {
-                    round(t2, t2.e + DECIMAL_PLACES + 2, 0);
-                    if (t2.times(t2).eq(x2)) {
-                      r2 = t2;
-                      break;
-                    }
-                  }
-                  dp += 4;
-                  s2 += 4;
-                  rep = 1;
-                } else {
-                  if (!+n || !+n.slice(1) && n.charAt(0) == "5") {
-                    round(r2, r2.e + DECIMAL_PLACES + 2, 1);
-                    m2 = !r2.times(r2).eq(x2);
-                  }
-                  break;
-                }
-              }
-            }
-          }
-          return round(r2, r2.e + DECIMAL_PLACES + 1, ROUNDING_MODE, m2);
-        };
-        P.toExponential = function(dp, rm) {
-          if (dp != null) {
-            intCheck(dp, 0, MAX);
-            dp++;
-          }
-          return format(this, dp, rm, 1);
-        };
-        P.toFixed = function(dp, rm) {
-          if (dp != null) {
-            intCheck(dp, 0, MAX);
-            dp = dp + this.e + 1;
-          }
-          return format(this, dp, rm);
-        };
-        P.toFormat = function(dp, rm, format2) {
-          var str, x2 = this;
-          if (format2 == null) {
-            if (dp != null && rm && typeof rm == "object") {
-              format2 = rm;
-              rm = null;
-            } else if (dp && typeof dp == "object") {
-              format2 = dp;
-              dp = rm = null;
-            } else {
-              format2 = FORMAT;
-            }
-          } else if (typeof format2 != "object") {
-            throw Error(bignumberError + "Argument not an object: " + format2);
-          }
-          str = x2.toFixed(dp, rm);
-          if (x2.c) {
-            var i2, arr = str.split("."), g1 = +format2.groupSize, g2 = +format2.secondaryGroupSize, groupSeparator = format2.groupSeparator || "", intPart = arr[0], fractionPart = arr[1], isNeg = x2.s < 0, intDigits = isNeg ? intPart.slice(1) : intPart, len = intDigits.length;
-            if (g2) {
-              i2 = g1;
-              g1 = g2;
-              g2 = i2;
-              len -= i2;
-            }
-            if (g1 > 0 && len > 0) {
-              i2 = len % g1 || g1;
-              intPart = intDigits.substr(0, i2);
-              for (; i2 < len; i2 += g1) intPart += groupSeparator + intDigits.substr(i2, g1);
-              if (g2 > 0) intPart += groupSeparator + intDigits.slice(i2);
-              if (isNeg) intPart = "-" + intPart;
-            }
-            str = fractionPart ? intPart + (format2.decimalSeparator || "") + ((g2 = +format2.fractionGroupSize) ? fractionPart.replace(
-              new RegExp("\\d{" + g2 + "}\\B", "g"),
-              "$&" + (format2.fractionGroupSeparator || "")
-            ) : fractionPart) : intPart;
-          }
-          return (format2.prefix || "") + str + (format2.suffix || "");
-        };
-        P.toFraction = function(md) {
-          var d, d0, d1, d2, e2, exp, n, n0, n1, q, r2, s2, x2 = this, xc = x2.c;
-          if (md != null) {
-            n = new BigNumber2(md);
-            if (!n.isInteger() && (n.c || n.s !== 1) || n.lt(ONE)) {
-              throw Error(bignumberError + "Argument " + (n.isInteger() ? "out of range: " : "not an integer: ") + valueOf(n));
-            }
-          }
-          if (!xc) return new BigNumber2(x2);
-          d = new BigNumber2(ONE);
-          n1 = d0 = new BigNumber2(ONE);
-          d1 = n0 = new BigNumber2(ONE);
-          s2 = coeffToString(xc);
-          e2 = d.e = s2.length - x2.e - 1;
-          d.c[0] = POWS_TEN[(exp = e2 % LOG_BASE) < 0 ? LOG_BASE + exp : exp];
-          md = !md || n.comparedTo(d) > 0 ? e2 > 0 ? d : n1 : n;
-          exp = MAX_EXP;
-          MAX_EXP = 1 / 0;
-          n = new BigNumber2(s2);
-          n0.c[0] = 0;
-          for (; ; ) {
-            q = div(n, d, 0, 1);
-            d2 = d0.plus(q.times(d1));
-            if (d2.comparedTo(md) == 1) break;
-            d0 = d1;
-            d1 = d2;
-            n1 = n0.plus(q.times(d2 = n1));
-            n0 = d2;
-            d = n.minus(q.times(d2 = d));
-            n = d2;
-          }
-          d2 = div(md.minus(d0), d1, 0, 1);
-          n0 = n0.plus(d2.times(n1));
-          d0 = d0.plus(d2.times(d1));
-          n0.s = n1.s = x2.s;
-          e2 = e2 * 2;
-          r2 = div(n1, d1, e2, ROUNDING_MODE).minus(x2).abs().comparedTo(
-            div(n0, d0, e2, ROUNDING_MODE).minus(x2).abs()
-          ) < 1 ? [n1, d1] : [n0, d0];
-          MAX_EXP = exp;
-          return r2;
-        };
-        P.toNumber = function() {
-          return +valueOf(this);
-        };
-        P.toPrecision = function(sd, rm) {
-          if (sd != null) intCheck(sd, 1, MAX);
-          return format(this, sd, rm, 2);
-        };
-        P.toString = function(b) {
-          var str, n = this, s2 = n.s, e2 = n.e;
-          if (e2 === null) {
-            if (s2) {
-              str = "Infinity";
-              if (s2 < 0) str = "-" + str;
-            } else {
-              str = "NaN";
-            }
-          } else {
-            if (b == null) {
-              str = e2 <= TO_EXP_NEG || e2 >= TO_EXP_POS ? toExponential(coeffToString(n.c), e2) : toFixedPoint(coeffToString(n.c), e2, "0");
-            } else if (b === 10 && alphabetHasNormalDecimalDigits) {
-              n = round(new BigNumber2(n), DECIMAL_PLACES + e2 + 1, ROUNDING_MODE);
-              str = toFixedPoint(coeffToString(n.c), n.e, "0");
-            } else {
-              intCheck(b, 2, ALPHABET2.length, "Base");
-              str = convertBase(toFixedPoint(coeffToString(n.c), e2, "0"), 10, b, s2, true);
-            }
-            if (s2 < 0 && n.c[0]) str = "-" + str;
-          }
-          return str;
-        };
-        P.valueOf = P.toJSON = function() {
-          return valueOf(this);
-        };
-        P._isBigNumber = true;
-        if (configObject != null) BigNumber2.set(configObject);
-        return BigNumber2;
-      }
-      function bitFloor(n) {
-        var i2 = n | 0;
-        return n > 0 || n === i2 ? i2 : i2 - 1;
-      }
-      function coeffToString(a) {
-        var s2, z, i2 = 1, j = a.length, r2 = a[0] + "";
-        for (; i2 < j; ) {
-          s2 = a[i2++] + "";
-          z = LOG_BASE - s2.length;
-          for (; z--; s2 = "0" + s2) ;
-          r2 += s2;
-        }
-        for (j = r2.length; r2.charCodeAt(--j) === 48; ) ;
-        return r2.slice(0, j + 1 || 1);
-      }
-      function compare(x2, y) {
-        var a, b, xc = x2.c, yc = y.c, i2 = x2.s, j = y.s, k = x2.e, l = y.e;
-        if (!i2 || !j) return null;
-        a = xc && !xc[0];
-        b = yc && !yc[0];
-        if (a || b) return a ? b ? 0 : -j : i2;
-        if (i2 != j) return i2;
-        a = i2 < 0;
-        b = k == l;
-        if (!xc || !yc) return b ? 0 : !xc ^ a ? 1 : -1;
-        if (!b) return k > l ^ a ? 1 : -1;
-        j = (k = xc.length) < (l = yc.length) ? k : l;
-        for (i2 = 0; i2 < j; i2++) if (xc[i2] != yc[i2]) return xc[i2] > yc[i2] ^ a ? 1 : -1;
-        return k == l ? 0 : k > l ^ a ? 1 : -1;
-      }
-      function intCheck(n, min, max, name) {
-        if (n < min || n > max || n !== mathfloor(n)) {
-          throw Error(bignumberError + (name || "Argument") + (typeof n == "number" ? n < min || n > max ? " out of range: " : " not an integer: " : " not a primitive number: ") + String(n));
-        }
-      }
-      function isOdd(n) {
-        var k = n.c.length - 1;
-        return bitFloor(n.e / LOG_BASE) == k && n.c[k] % 2 != 0;
-      }
-      function toExponential(str, e2) {
-        return (str.length > 1 ? str.charAt(0) + "." + str.slice(1) : str) + (e2 < 0 ? "e" : "e+") + e2;
-      }
-      function toFixedPoint(str, e2, z) {
-        var len, zs;
-        if (e2 < 0) {
-          for (zs = z + "."; ++e2; zs += z) ;
-          str = zs + str;
-        } else {
-          len = str.length;
-          if (++e2 > len) {
-            for (zs = z, e2 -= len; --e2; zs += z) ;
-            str += zs;
-          } else if (e2 < len) {
-            str = str.slice(0, e2) + "." + str.slice(e2);
-          }
-        }
-        return str;
-      }
-      BigNumber = clone2();
-      BigNumber["default"] = BigNumber.BigNumber = BigNumber;
-      if (typeof define == "function" && define.amd) {
-        define(function() {
-          return BigNumber;
-        });
-      } else if (typeof module2 != "undefined" && module2.exports) {
-        module2.exports = BigNumber;
-      } else {
-        if (!globalObject) {
-          globalObject = typeof self != "undefined" && self ? self : window;
-        }
-        globalObject.BigNumber = BigNumber;
-      }
-    })(exports2);
-  }
-});
-
-// node_modules/json-bigint/lib/stringify.js
-var require_stringify2 = __commonJS({
-  "node_modules/json-bigint/lib/stringify.js"(exports2, module2) {
-    var BigNumber = require_bignumber();
-    var JSON2 = module2.exports;
-    (function() {
-      "use strict";
-      function f3(n) {
-        return n < 10 ? "0" + n : n;
-      }
-      var cx = /[\u0000\u00ad\u0600-\u0604\u070f\u17b4\u17b5\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufeff\ufff0-\uffff]/g, escapable = /[\\\"\x00-\x1f\x7f-\x9f\u00ad\u0600-\u0604\u070f\u17b4\u17b5\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufeff\ufff0-\uffff]/g, gap, indent, meta = {
-        // table of character substitutions
-        "\b": "\\b",
-        "	": "\\t",
-        "\n": "\\n",
-        "\f": "\\f",
-        "\r": "\\r",
-        '"': '\\"',
-        "\\": "\\\\"
-      }, rep;
-      function quote(string) {
-        escapable.lastIndex = 0;
-        return escapable.test(string) ? '"' + string.replace(escapable, function(a) {
-          var c = meta[a];
-          return typeof c === "string" ? c : "\\u" + ("0000" + a.charCodeAt(0).toString(16)).slice(-4);
-        }) + '"' : '"' + string + '"';
-      }
-      function str(key, holder) {
-        var i2, k, v, length, mind = gap, partial, value = holder[key], isBigNumber = value != null && (value instanceof BigNumber || BigNumber.isBigNumber(value));
-        if (value && typeof value === "object" && typeof value.toJSON === "function") {
-          value = value.toJSON(key);
-        }
-        if (typeof rep === "function") {
-          value = rep.call(holder, key, value);
-        }
-        switch (typeof value) {
-          case "string":
-            if (isBigNumber) {
-              return value;
-            } else {
-              return quote(value);
-            }
-          case "number":
-            return isFinite(value) ? String(value) : "null";
-          case "boolean":
-          case "null":
-          case "bigint":
-            return String(value);
-          // If the type is 'object', we might be dealing with an object or an array or
-          // null.
-          case "object":
-            if (!value) {
-              return "null";
-            }
-            gap += indent;
-            partial = [];
-            if (Object.prototype.toString.apply(value) === "[object Array]") {
-              length = value.length;
-              for (i2 = 0; i2 < length; i2 += 1) {
-                partial[i2] = str(i2, value) || "null";
-              }
-              v = partial.length === 0 ? "[]" : gap ? "[\n" + gap + partial.join(",\n" + gap) + "\n" + mind + "]" : "[" + partial.join(",") + "]";
-              gap = mind;
-              return v;
-            }
-            if (rep && typeof rep === "object") {
-              length = rep.length;
-              for (i2 = 0; i2 < length; i2 += 1) {
-                if (typeof rep[i2] === "string") {
-                  k = rep[i2];
-                  v = str(k, value);
-                  if (v) {
-                    partial.push(quote(k) + (gap ? ": " : ":") + v);
-                  }
-                }
-              }
-            } else {
-              Object.keys(value).forEach(function(k2) {
-                var v2 = str(k2, value);
-                if (v2) {
-                  partial.push(quote(k2) + (gap ? ": " : ":") + v2);
-                }
-              });
-            }
-            v = partial.length === 0 ? "{}" : gap ? "{\n" + gap + partial.join(",\n" + gap) + "\n" + mind + "}" : "{" + partial.join(",") + "}";
-            gap = mind;
-            return v;
-        }
-      }
-      if (typeof JSON2.stringify !== "function") {
-        JSON2.stringify = function(value, replacer, space) {
-          var i2;
-          gap = "";
-          indent = "";
-          if (typeof space === "number") {
-            for (i2 = 0; i2 < space; i2 += 1) {
-              indent += " ";
-            }
-          } else if (typeof space === "string") {
-            indent = space;
-          }
-          rep = replacer;
-          if (replacer && typeof replacer !== "function" && (typeof replacer !== "object" || typeof replacer.length !== "number")) {
-            throw new Error("JSON.stringify");
-          }
-          return str("", { "": value });
-        };
-      }
-    })();
-  }
-});
-
-// node_modules/json-bigint/lib/parse.js
-var require_parse2 = __commonJS({
-  "node_modules/json-bigint/lib/parse.js"(exports2, module2) {
-    var BigNumber = null;
-    var suspectProtoRx = /(?:_|\\u005[Ff])(?:_|\\u005[Ff])(?:p|\\u0070)(?:r|\\u0072)(?:o|\\u006[Ff])(?:t|\\u0074)(?:o|\\u006[Ff])(?:_|\\u005[Ff])(?:_|\\u005[Ff])/;
-    var suspectConstructorRx = /(?:c|\\u0063)(?:o|\\u006[Ff])(?:n|\\u006[Ee])(?:s|\\u0073)(?:t|\\u0074)(?:r|\\u0072)(?:u|\\u0075)(?:c|\\u0063)(?:t|\\u0074)(?:o|\\u006[Ff])(?:r|\\u0072)/;
-    var json_parse = function(options) {
-      "use strict";
-      var _options = {
-        strict: false,
-        // not being strict means do not generate syntax errors for "duplicate key"
-        storeAsString: false,
-        // toggles whether the values should be stored as BigNumber (default) or a string
-        alwaysParseAsBig: false,
-        // toggles whether all numbers should be Big
-        useNativeBigInt: false,
-        // toggles whether to use native BigInt instead of bignumber.js
-        protoAction: "error",
-        constructorAction: "error"
-      };
-      if (options !== void 0 && options !== null) {
-        if (options.strict === true) {
-          _options.strict = true;
-        }
-        if (options.storeAsString === true) {
-          _options.storeAsString = true;
-        }
-        _options.alwaysParseAsBig = options.alwaysParseAsBig === true ? options.alwaysParseAsBig : false;
-        _options.useNativeBigInt = options.useNativeBigInt === true ? options.useNativeBigInt : false;
-        if (typeof options.constructorAction !== "undefined") {
-          if (options.constructorAction === "error" || options.constructorAction === "ignore" || options.constructorAction === "preserve") {
-            _options.constructorAction = options.constructorAction;
-          } else {
-            throw new Error(
-              `Incorrect value for constructorAction option, must be "error", "ignore" or undefined but passed ${options.constructorAction}`
-            );
-          }
-        }
-        if (typeof options.protoAction !== "undefined") {
-          if (options.protoAction === "error" || options.protoAction === "ignore" || options.protoAction === "preserve") {
-            _options.protoAction = options.protoAction;
-          } else {
-            throw new Error(
-              `Incorrect value for protoAction option, must be "error", "ignore" or undefined but passed ${options.protoAction}`
-            );
-          }
-        }
-      }
-      var at, ch, escapee = {
-        '"': '"',
-        "\\": "\\",
-        "/": "/",
-        b: "\b",
-        f: "\f",
-        n: "\n",
-        r: "\r",
-        t: "	"
-      }, text, error = function(m2) {
-        throw {
-          name: "SyntaxError",
-          message: m2,
-          at,
-          text
-        };
-      }, next = function(c) {
-        if (c && c !== ch) {
-          error("Expected '" + c + "' instead of '" + ch + "'");
-        }
-        ch = text.charAt(at);
-        at += 1;
-        return ch;
-      }, number = function() {
-        var number2, string2 = "";
-        if (ch === "-") {
-          string2 = "-";
-          next("-");
-        }
-        while (ch >= "0" && ch <= "9") {
-          string2 += ch;
-          next();
-        }
-        if (ch === ".") {
-          string2 += ".";
-          while (next() && ch >= "0" && ch <= "9") {
-            string2 += ch;
-          }
-        }
-        if (ch === "e" || ch === "E") {
-          string2 += ch;
-          next();
-          if (ch === "-" || ch === "+") {
-            string2 += ch;
-            next();
-          }
-          while (ch >= "0" && ch <= "9") {
-            string2 += ch;
-            next();
-          }
-        }
-        number2 = +string2;
-        if (!isFinite(number2)) {
-          error("Bad number");
-        } else {
-          if (BigNumber == null) BigNumber = require_bignumber();
-          if (string2.length > 15)
-            return _options.storeAsString ? string2 : _options.useNativeBigInt ? BigInt(string2) : new BigNumber(string2);
-          else
-            return !_options.alwaysParseAsBig ? number2 : _options.useNativeBigInt ? BigInt(number2) : new BigNumber(number2);
-        }
-      }, string = function() {
-        var hex, i2, string2 = "", uffff;
-        if (ch === '"') {
-          var startAt = at;
-          while (next()) {
-            if (ch === '"') {
-              if (at - 1 > startAt) string2 += text.substring(startAt, at - 1);
-              next();
-              return string2;
-            }
-            if (ch === "\\") {
-              if (at - 1 > startAt) string2 += text.substring(startAt, at - 1);
-              next();
-              if (ch === "u") {
-                uffff = 0;
-                for (i2 = 0; i2 < 4; i2 += 1) {
-                  hex = parseInt(next(), 16);
-                  if (!isFinite(hex)) {
-                    break;
-                  }
-                  uffff = uffff * 16 + hex;
-                }
-                string2 += String.fromCharCode(uffff);
-              } else if (typeof escapee[ch] === "string") {
-                string2 += escapee[ch];
-              } else {
-                break;
-              }
-              startAt = at;
-            }
-          }
-        }
-        error("Bad string");
-      }, white = function() {
-        while (ch && ch <= " ") {
-          next();
-        }
-      }, word = function() {
-        switch (ch) {
-          case "t":
-            next("t");
-            next("r");
-            next("u");
-            next("e");
-            return true;
-          case "f":
-            next("f");
-            next("a");
-            next("l");
-            next("s");
-            next("e");
-            return false;
-          case "n":
-            next("n");
-            next("u");
-            next("l");
-            next("l");
-            return null;
-        }
-        error("Unexpected '" + ch + "'");
-      }, value, array = function() {
-        var array2 = [];
-        if (ch === "[") {
-          next("[");
-          white();
-          if (ch === "]") {
-            next("]");
-            return array2;
-          }
-          while (ch) {
-            array2.push(value());
-            white();
-            if (ch === "]") {
-              next("]");
-              return array2;
-            }
-            next(",");
-            white();
-          }
-        }
-        error("Bad array");
-      }, object = function() {
-        var key, object2 = /* @__PURE__ */ Object.create(null);
-        if (ch === "{") {
-          next("{");
-          white();
-          if (ch === "}") {
-            next("}");
-            return object2;
-          }
-          while (ch) {
-            key = string();
-            white();
-            next(":");
-            if (_options.strict === true && Object.hasOwnProperty.call(object2, key)) {
-              error('Duplicate key "' + key + '"');
-            }
-            if (suspectProtoRx.test(key) === true) {
-              if (_options.protoAction === "error") {
-                error("Object contains forbidden prototype property");
-              } else if (_options.protoAction === "ignore") {
-                value();
-              } else {
-                object2[key] = value();
-              }
-            } else if (suspectConstructorRx.test(key) === true) {
-              if (_options.constructorAction === "error") {
-                error("Object contains forbidden constructor property");
-              } else if (_options.constructorAction === "ignore") {
-                value();
-              } else {
-                object2[key] = value();
-              }
-            } else {
-              object2[key] = value();
-            }
-            white();
-            if (ch === "}") {
-              next("}");
-              return object2;
-            }
-            next(",");
-            white();
-          }
-        }
-        error("Bad object");
-      };
-      value = function() {
-        white();
-        switch (ch) {
-          case "{":
-            return object();
-          case "[":
-            return array();
-          case '"':
-            return string();
-          case "-":
-            return number();
-          default:
-            return ch >= "0" && ch <= "9" ? number() : word();
-        }
-      };
-      return function(source, reviver) {
-        var result;
-        text = source + "";
-        at = 0;
-        ch = " ";
-        result = value();
-        white();
-        if (ch) {
-          error("Syntax error");
-        }
-        return typeof reviver === "function" ? (function walk(holder, key) {
-          var k, v, value2 = holder[key];
-          if (value2 && typeof value2 === "object") {
-            Object.keys(value2).forEach(function(k2) {
-              v = walk(value2, k2);
-              if (v !== void 0) {
-                value2[k2] = v;
-              } else {
-                delete value2[k2];
-              }
-            });
-          }
-          return reviver.call(holder, key, value2);
-        })({ "": result }, "") : result;
-      };
-    };
-    module2.exports = json_parse;
-  }
-});
-
-// node_modules/json-bigint/index.js
-var require_json_bigint = __commonJS({
-  "node_modules/json-bigint/index.js"(exports2, module2) {
-    var json_stringify = require_stringify2().stringify;
-    var json_parse = require_parse2();
-    module2.exports = function(options) {
-      return {
-        parse: json_parse(options),
-        stringify: json_stringify
-      };
-    };
-    module2.exports.parse = json_parse();
-    module2.exports.stringify = json_stringify;
-  }
-});
-
 // utils/concurrency.js
 function sleep(ms) {
   return new Promise((r2) => setTimeout(r2, ms));
@@ -74789,6 +74789,155 @@ var init_ping = __esm({
   }
 });
 
+// services/shopee/jsonBig.js
+var import_json_bigint = __toESM(require_json_bigint(), 1);
+var JSONBig = (0, import_json_bigint.default)({ storeAsString: true });
+function parseShopeeJson(data) {
+  if (data == null || data === "") return {};
+  if (typeof data === "object" && !Buffer.isBuffer(data)) return data;
+  const text = Buffer.isBuffer(data) ? data.toString("utf8") : String(data);
+  if (!text.trim()) return {};
+  return JSONBig.parse(text);
+}
+function toShopeeId(value) {
+  if (value == null || value === "") return null;
+  if (typeof value === "bigint") {
+    const s2 = value.toString();
+    return s2 === "0" ? null : s2;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || value <= 0) return null;
+    if (!Number.isSafeInteger(value)) {
+      console.warn(
+        `[Shopee uint64] ID v\u01B0\u1EE3t Safe Integer \u0111\xE3 b\u1ECB Number() l\xE0m tr\xF2n \u2014 b\u1ECF qua: ${value}`
+      );
+      return null;
+    }
+    return String(Math.trunc(value));
+  }
+  const raw = String(value).trim();
+  if (!raw) return null;
+  if (/^\d+$/.test(raw)) return raw === "0" ? null : raw;
+  const m2 = raw.match(/(\d{6,})/);
+  if (m2?.[1] && m2[1] !== "0") return m2[1];
+  const m22 = raw.match(/(\d+)/);
+  if (m22?.[1] && m22[1] !== "0") return m22[1];
+  return null;
+}
+function toShopeeIdNumber(value) {
+  const id = toShopeeId(value);
+  if (id == null) return null;
+  if (!Number.isSafeInteger(Number(id))) {
+    console.warn(
+      `[Shopee uint64] ID v\u01B0\u1EE3t Safe Integer \u2014 kh\xF4ng \xE9p Number an to\xE0n: ${id}`
+    );
+  }
+  const n = Number(id);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.trunc(n);
+}
+var SHOPEE_ID_KEYS = /* @__PURE__ */ new Set([
+  "item_id",
+  "model_id",
+  "return_id",
+  "transaction_id",
+  "order_id",
+  "variation_id",
+  "package_id",
+  "promotion_id",
+  "activity_id",
+  "medicine_id",
+  "shopeeItemId",
+  "shopeeModelId",
+  "shopeeId",
+  "itemId",
+  "modelId",
+  "productId",
+  "shop_id",
+  "shopId",
+  "main_account_id",
+  "buyer_user_id",
+  "user_id"
+]);
+function stringifyShopeeIdsDeep(input, depth = 0) {
+  if (input == null || depth > 12) return input;
+  if (Array.isArray(input)) {
+    return input.map((v) => stringifyShopeeIdsDeep(v, depth + 1));
+  }
+  if (typeof input !== "object") return input;
+  const out = { ...input };
+  for (const [key, val] of Object.entries(out)) {
+    if (SHOPEE_ID_KEYS.has(key) && val != null && val !== "") {
+      const id = toShopeeId(val);
+      if (id != null) out[key] = id;
+      else if (typeof val === "number" || typeof val === "bigint") out[key] = String(val);
+      else out[key] = String(val);
+      continue;
+    }
+    if (val && typeof val === "object") {
+      out[key] = stringifyShopeeIdsDeep(val, depth + 1);
+    }
+  }
+  return out;
+}
+function toShopeeSn(value) {
+  if (value == null || value === "") return null;
+  if (typeof value === "bigint") return value.toString();
+  const s2 = String(value).trim();
+  return s2 || null;
+}
+function extractReturnRequestCode(detail) {
+  if (!detail || typeof detail !== "object") return null;
+  return toShopeeSn(detail.return_sn) || toShopeeSn(detail.returnSn) || toShopeeSn(detail.return_id) || null;
+}
+function normalizeShopeeReturnDetail(payload) {
+  if (payload == null) return payload;
+  const hasEnvelope = payload && typeof payload === "object" && payload.response != null;
+  const root = hasEnvelope ? payload.response : payload;
+  if (!root || typeof root !== "object") return payload;
+  const safe = stringifyShopeeIdsDeep(root);
+  const returnSn = extractReturnRequestCode(safe);
+  if (returnSn) safe.return_sn = returnSn;
+  const orderSn = toShopeeSn(safe.order_sn ?? safe.orderSn);
+  if (orderSn) safe.order_sn = orderSn;
+  if (Array.isArray(safe.activity)) {
+    safe.activity = safe.activity.map((act) => {
+      if (!act || typeof act !== "object") return act;
+      const aid = toShopeeId(act.activity_id) ?? (act.activity_id != null ? String(act.activity_id) : null);
+      return aid != null ? { ...act, activity_id: aid } : { ...act };
+    });
+  }
+  if (hasEnvelope) return { ...payload, response: safe };
+  return safe;
+}
+function normalizeShopeeProductIds(payload) {
+  if (payload == null) return payload;
+  return stringifyShopeeIdsDeep(payload);
+}
+
+// modules/webhooks/pushData.ts
+function readShopeePushData(payload) {
+  const envelope = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+  let data = envelope.data;
+  if (typeof data === "string" && data.trim()) {
+    try {
+      const parsed = parseShopeeJson(data);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) data = parsed;
+    } catch {
+      data = void 0;
+    }
+  }
+  if (data && typeof data === "object" && !Array.isArray(data)) return data;
+  return envelope;
+}
+function extractShopeeWebhookRawStatus(payload) {
+  const envelope = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+  const data = readShopeePushData(payload);
+  return String(
+    data?.status || data?.order_status || envelope.status || envelope.order_status || ""
+  ).trim().toUpperCase();
+}
+
 // server.ts
 var import_express31 = __toESM(require_express2(), 1);
 var import_path25 = __toESM(require("path"), 1);
@@ -74797,11 +74946,8 @@ var import_crypto6 = __toESM(require("crypto"), 1);
 var import_dotenv2 = __toESM(require_main(), 1);
 var import_pdf_lib = __toESM(require_cjs(), 1);
 
-// cron/index.js
-var import_fs2 = __toESM(require("fs"), 1);
-var import_path2 = __toESM(require("path"), 1);
+// modules/shopee-sync/schedulers/orders.js
 var import_node_cron = __toESM(require("node-cron"), 1);
-init_appPaths();
 
 // models/WebhookJob.js
 var import_mongoose = __toESM(require("mongoose"), 1);
@@ -74856,7 +75002,7 @@ WebhookJobSchema.index({ state: 1, next_run_at: 1 }, { name: "webhook_jobs_state
 var WebhookJob = import_mongoose.default.models.WebhookJob || import_mongoose.default.model("WebhookJob", WebhookJobSchema);
 var WebhookJob_default = WebhookJob;
 
-// services/webhookJobQueue.js
+// modules/jobs/webhookJobQueue.js
 var import_node_crypto = __toESM(require("node:crypto"), 1);
 
 // utils/safeProductionLog.js
@@ -74874,7 +75020,7 @@ function safeTokenMetadata(record) {
   };
 }
 
-// services/orderSync/syncOrchestrator.js
+// modules/shopee-sync/syncOrchestrator.js
 var import_crypto = __toESM(require("crypto"), 1);
 var import_mongoose2 = __toESM(require("mongoose"), 1);
 var import_node_os = __toESM(require("node:os"), 1);
@@ -75035,7 +75181,7 @@ async function markSuccessfulShopWatermarks(perShop) {
   if (ops.length) await db.collection(WATERMARK_COLLECTION).bulkWrite(ops, { ordered: false });
 }
 
-// services/webhookJobQueue.js
+// modules/jobs/webhookJobQueue.js
 var DRAIN_INTERVAL_MS = 8e3;
 var BATCH_LIMIT = 5;
 var JOB_GAP_MS = 400;
@@ -75348,7 +75494,7 @@ function stopWebhookJobDrainer() {
   console.log("[WebhookJobQueue] drainer OFF");
 }
 
-// services/orderSync/labelPdfQueue.js
+// modules/jobs/labelPdfQueue.js
 var prepareLabelsFn = null;
 var pendingBuffer = [];
 var flushScheduled = false;
@@ -75418,7 +75564,7 @@ function flushPending() {
   }
 }
 
-// services/orderSync/orderSyncService.js
+// modules/shopee-sync/orderSyncService.js
 var DEFAULT_INCREMENTAL_LOOKBACK_SEC = 2 * 60 * 60;
 var WEBHOOK_RESCUE_LOOKBACK_SEC = Math.max(
   300,
@@ -75633,7 +75779,7 @@ function triggerWebhookRescuePull(opts = {}) {
   return { accepted: true, busy: false, lookbackSec, trigger };
 }
 
-// cron/index.js
+// modules/shopee-sync/schedulers/orders.js
 var autoIncrementalScheduled = false;
 var cronTask = null;
 var handedOverReconcileScheduled = false;
@@ -75811,6 +75957,8 @@ function scheduleHandedOverStatusReconcile(deps23 = {}) {
     `[CRON] HandedOver setInterval ON \u2014 every ${Math.round(intervalMs / 1e3)}s + boot kick 20s.`
   );
 }
+
+// modules/jobs/keepAliveScheduler.js
 var keepAlivePingScheduled = false;
 var keepAlivePingInterval = null;
 function scheduleKeepAlivePing(deps23 = {}) {
@@ -75890,6 +76038,9 @@ function scheduleKeepAlivePing(deps23 = {}) {
   }, 15e3);
   console.log(`[CRON] Keep-alive self-ping ON \u2014 every ${Math.round(intervalMs / 1e3)}s -> ${url2}`);
 }
+
+// modules/shopee-sync/schedulers/returns.js
+var import_node_cron2 = __toESM(require("node-cron"), 1);
 var returnRequestsScheduled = false;
 var returnRequestsTask = null;
 function scheduleShopeeReturnRequestsSync(deps23 = {}) {
@@ -75912,12 +76063,12 @@ function scheduleShopeeReturnRequestsSync(deps23 = {}) {
   const cronExpr = String(
     deps23.cronExpr || process.env.AUTO_RETURN_REQUESTS_CRON_EXPR || "*/30 * * * *"
   ).trim();
-  if (!import_node_cron.default.validate(cronExpr)) {
+  if (!import_node_cron2.default.validate(cronExpr)) {
     console.error(`[CRON] Invalid return-requests cron expr="${cronExpr}"`);
     return;
   }
   let returnRequestsInFlight = false;
-  returnRequestsTask = import_node_cron.default.schedule(cronExpr, () => {
+  returnRequestsTask = import_node_cron2.default.schedule(cronExpr, () => {
     if (returnRequestsInFlight) {
       console.log("[CRON] Return Requests skipped \u2014 previous tick still running");
       return;
@@ -75957,6 +76108,9 @@ function scheduleShopeeReturnRequestsSync(deps23 = {}) {
   }, 45e3);
   console.log(`[CRON] Return Requests Sync ON \u2014 expr="${cronExpr}"`);
 }
+
+// modules/shopee-sync/schedulers/backfill.js
+var import_node_cron3 = __toESM(require("node-cron"), 1);
 var rtsBackfillScheduled = false;
 var rtsBackfillTask = null;
 function scheduleReadyToShipBackfill(deps23 = {}) {
@@ -75981,12 +76135,12 @@ function scheduleReadyToShipBackfill(deps23 = {}) {
   const cronExpr = String(
     deps23.cronExpr || process.env.AUTO_RTS_BACKFILL_CRON_EXPR || "*/10 * * * *"
   ).trim();
-  if (!import_node_cron.default.validate(cronExpr)) {
+  if (!import_node_cron3.default.validate(cronExpr)) {
     console.error(`[CRON] Invalid RTS backfill cron expr="${cronExpr}"`);
     return;
   }
   let isDeepPullInFlight = false;
-  rtsBackfillTask = import_node_cron.default.schedule(cronExpr, () => {
+  rtsBackfillTask = import_node_cron3.default.schedule(cronExpr, () => {
     if (isDeepPullInFlight) {
       console.log("[CRON] READY_TO_SHIP backfill skipped \u2014 isDeepPullInFlight");
       return;
@@ -76034,6 +76188,12 @@ function scheduleReadyToShipBackfill(deps23 = {}) {
     `[CRON] READY_TO_SHIP backfill ON \u2014 expr="${cronExpr}" lookbackSec=${lookbackSec}`
   );
 }
+
+// modules/logistics/pdfCleanupScheduler.js
+var import_fs2 = __toESM(require("fs"), 1);
+var import_path2 = __toESM(require("path"), 1);
+var import_node_cron4 = __toESM(require("node-cron"), 1);
+init_appPaths();
 var LABEL_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
 var labelPdfCleanupScheduled = false;
 var labelPdfCleanupTask = null;
@@ -76088,8 +76248,8 @@ function scheduleLabelPdfCleanup() {
     console.error("[Labels Cleanup Cron] boot failed:", err?.message || err);
   }
   try {
-    if (import_node_cron.default.validate("0 2 * * *")) {
-      labelPdfCleanupTask = import_node_cron.default.schedule("0 2 * * *", run, { timezone: "Asia/Ho_Chi_Minh" });
+    if (import_node_cron4.default.validate("0 2 * * *")) {
+      labelPdfCleanupTask = import_node_cron4.default.schedule("0 2 * * *", run, { timezone: "Asia/Ho_Chi_Minh" });
     }
   } catch (err) {
     console.warn("[Labels Cleanup Cron] node-cron kh\xF4ng start:", err?.message || err);
@@ -76105,6 +76265,9 @@ function scheduleLabelPdfCleanup() {
   }
   console.log(`[Labels Cleanup Cron] ON \u2014 02:00 Asia/Ho_Chi_Minh + setInterval 24h, dir=${PDF_DIR}, TTL=7d`);
 }
+
+// modules/logistics/ghnStatusScheduler.js
+var import_node_cron5 = __toESM(require("node-cron"), 1);
 var ghnStatusSyncScheduled = false;
 var ghnStatusSyncTask = null;
 var ghnStatusSyncInterval = null;
@@ -76150,8 +76313,8 @@ function scheduleGhnStatusSync(deps23 = {}) {
     10 * 60 * 1e3,
     Number(deps23.intervalMs) || Number(process.env.AUTO_GHN_STATUS_SYNC_MS) || 30 * 60 * 1e3
   );
-  if (import_node_cron.default.validate(cronExpr)) {
-    ghnStatusSyncTask = import_node_cron.default.schedule(cronExpr, () => {
+  if (import_node_cron5.default.validate(cronExpr)) {
+    ghnStatusSyncTask = import_node_cron5.default.schedule(cronExpr, () => {
       runGhnStatusSyncTick(deps23, "cron");
     });
     console.log(`[CRON] GHN status sync ON \u2014 expr="${cronExpr}" (\u0111\u01A1n ngo\u1EA1i s\xE0n GHN c\xF2n m\u1EDF).`);
@@ -76189,139 +76352,184 @@ function scheduleGhnStatusSync(deps23 = {}) {
   );
 }
 
-// src/webhooks/shopeeWebhookHandler.ts
-var import_express = __toESM(require_express2(), 1);
-
-// services/shopee/jsonBig.js
-var import_json_bigint = __toESM(require_json_bigint(), 1);
-var JSONBig = (0, import_json_bigint.default)({ storeAsString: true });
-function parseShopeeJson(data) {
-  if (data == null || data === "") return {};
-  if (typeof data === "object" && !Buffer.isBuffer(data)) return data;
-  const text = Buffer.isBuffer(data) ? data.toString("utf8") : String(data);
-  if (!text.trim()) return {};
-  return JSONBig.parse(text);
+// modules/webhooks/stats.ts
+var lastWebhookAt = 0;
+function markWebhookReceived() {
+  lastWebhookAt = Date.now();
 }
-function toShopeeId(value) {
-  if (value == null || value === "") return null;
-  if (typeof value === "bigint") {
-    const s2 = value.toString();
-    return s2 === "0" ? null : s2;
+function getShopeeWebhookStats() {
+  return {
+    pid: process.pid,
+    lastWebhookAt: lastWebhookAt ? new Date(lastWebhookAt).toISOString() : null
+  };
+}
+
+// modules/webhooks/payload.ts
+function unwrapWebhookData(payload) {
+  const raw = payload.data;
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      const parsed = parseShopeeJson(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+    }
   }
-  if (typeof value === "number") {
-    if (!Number.isFinite(value) || value <= 0) return null;
-    if (!Number.isSafeInteger(value)) {
-      console.warn(
-        `[Shopee uint64] ID v\u01B0\u1EE3t Safe Integer \u0111\xE3 b\u1ECB Number() l\xE0m tr\xF2n \u2014 b\u1ECF qua: ${value}`
-      );
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    return raw;
+  }
+  return payload;
+}
+function coerceWebhookPayload(payload) {
+  const data = unwrapWebhookData(payload);
+  if (data === payload) return payload;
+  if (payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)) {
+    return payload;
+  }
+  return { ...payload, data };
+}
+function parseWebhookBody(reqBody) {
+  try {
+    if (Buffer.isBuffer(reqBody)) {
+      const text = reqBody.toString("utf8");
+      if (!text.trim()) return null;
+      const parsed = parseShopeeJson(text);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return coerceWebhookPayload(parsed);
+      }
       return null;
     }
-    return String(Math.trunc(value));
+    if (typeof reqBody === "string") {
+      const text = reqBody.trim();
+      if (!text) return null;
+      const parsed = parseShopeeJson(text);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return coerceWebhookPayload(parsed);
+      }
+      return null;
+    }
+    if (reqBody && typeof reqBody === "object" && !Array.isArray(reqBody)) {
+      return coerceWebhookPayload(reqBody);
+    }
+  } catch (err) {
+    console.error("[Shopee Webhook] JSON parse failed:", safeError(err));
   }
-  const raw = String(value).trim();
-  if (!raw) return null;
-  if (/^\d+$/.test(raw)) return raw === "0" ? null : raw;
-  const m2 = raw.match(/(\d{6,})/);
-  if (m2?.[1] && m2[1] !== "0") return m2[1];
-  const m22 = raw.match(/(\d+)/);
-  if (m22?.[1] && m22[1] !== "0") return m22[1];
   return null;
 }
-function toShopeeIdNumber(value) {
-  const id = toShopeeId(value);
-  if (id == null) return null;
-  if (!Number.isSafeInteger(Number(id))) {
-    console.warn(
-      `[Shopee uint64] ID v\u01B0\u1EE3t Safe Integer \u2014 kh\xF4ng \xE9p Number an to\xE0n: ${id}`
-    );
-  }
-  const n = Number(id);
-  if (!Number.isFinite(n) || n <= 0) return null;
-  return Math.trunc(n);
-}
-var SHOPEE_ID_KEYS = /* @__PURE__ */ new Set([
-  "item_id",
-  "model_id",
-  "return_id",
-  "transaction_id",
-  "order_id",
-  "variation_id",
-  "package_id",
-  "promotion_id",
-  "activity_id",
-  "medicine_id",
-  "shopeeItemId",
-  "shopeeModelId",
-  "shopeeId",
-  "itemId",
-  "modelId",
-  "productId",
-  "shop_id",
-  "shopId",
-  "main_account_id",
-  "buyer_user_id",
-  "user_id"
-]);
-function stringifyShopeeIdsDeep(input, depth = 0) {
-  if (input == null || depth > 12) return input;
-  if (Array.isArray(input)) {
-    return input.map((v) => stringifyShopeeIdsDeep(v, depth + 1));
-  }
-  if (typeof input !== "object") return input;
-  const out = { ...input };
-  for (const [key, val] of Object.entries(out)) {
-    if (SHOPEE_ID_KEYS.has(key) && val != null && val !== "") {
-      const id = toShopeeId(val);
-      if (id != null) out[key] = id;
-      else if (typeof val === "number" || typeof val === "bigint") out[key] = String(val);
-      else out[key] = String(val);
-      continue;
-    }
-    if (val && typeof val === "object") {
-      out[key] = stringifyShopeeIdsDeep(val, depth + 1);
-    }
-  }
-  return out;
-}
-function toShopeeSn(value) {
-  if (value == null || value === "") return null;
-  if (typeof value === "bigint") return value.toString();
-  const s2 = String(value).trim();
-  return s2 || null;
-}
-function extractReturnRequestCode(detail) {
-  if (!detail || typeof detail !== "object") return null;
-  return toShopeeSn(detail.return_sn) || toShopeeSn(detail.returnSn) || toShopeeSn(detail.return_id) || null;
-}
-function normalizeShopeeReturnDetail(payload) {
-  if (payload == null) return payload;
-  const hasEnvelope = payload && typeof payload === "object" && payload.response != null;
-  const root = hasEnvelope ? payload.response : payload;
-  if (!root || typeof root !== "object") return payload;
-  const safe = stringifyShopeeIdsDeep(root);
-  const returnSn = extractReturnRequestCode(safe);
-  if (returnSn) safe.return_sn = returnSn;
-  const orderSn = toShopeeSn(safe.order_sn ?? safe.orderSn);
-  if (orderSn) safe.order_sn = orderSn;
-  if (Array.isArray(safe.activity)) {
-    safe.activity = safe.activity.map((act) => {
-      if (!act || typeof act !== "object") return act;
-      const aid = toShopeeId(act.activity_id) ?? (act.activity_id != null ? String(act.activity_id) : null);
-      return aid != null ? { ...act, activity_id: aid } : { ...act };
-    });
-  }
-  if (hasEnvelope) return { ...payload, response: safe };
-  return safe;
-}
-function normalizeShopeeProductIds(payload) {
-  if (payload == null) return payload;
-  return stringifyShopeeIdsDeep(payload);
+function buildWebhookJobId(shopId, orderSn, status, updateTime) {
+  const clean = (value, fallback) => {
+    const text = String(value || "").trim().replace(/[^\w.:-]/g, "");
+    return text || fallback;
+  };
+  return [
+    clean(shopId, "0"),
+    clean(orderSn, "0"),
+    clean(status, "UNKNOWN"),
+    clean(updateTime, "0")
+  ].join("_");
 }
 
-// src/webhooks/shopeeWebhookHandler.ts
+// modules/webhooks/request.ts
 init_appPaths();
+function ackShopeeOk(res) {
+  if (res.headersSent || res.writableEnded) return;
+  try {
+    res.status(200).send("OK");
+  } catch (ackErr) {
+    console.warn("[Shopee Webhook] ACK send failed:", ackErr);
+    try {
+      if (!res.writableEnded) res.end();
+    } catch {
+    }
+  }
+}
+function readAuthorizationHeader(req) {
+  const headers = req.headers;
+  return String(
+    req.get("authorization") || req.get("Authorization") || headers.authorization || headers.Authorization || headers.http_authorization || process.env.HTTP_AUTHORIZATION || ""
+  ).trim();
+}
+function buildWebhookUrlCandidates(req) {
+  const path26 = String(req.originalUrl || req.url || "").split("?")[0].trim();
+  const candidates = /* @__PURE__ */ new Set();
+  const base = resolveAppBaseUrl().replace(/\/$/, "");
+  const configured = String(process.env.SHOPEE_WEBHOOK_URL || "").trim();
+  if (configured) candidates.add(configured.replace(/\/$/, ""));
+  candidates.add(`${base}/api/shopee/webhook`);
+  if (path26.startsWith("/")) {
+    candidates.add(`${base}${path26}`);
+    const forwardedProto = String(req.get("x-forwarded-proto") || "").split(",")[0].trim();
+    const forwardedHost = String(req.get("x-forwarded-host") || "").split(",")[0].trim();
+    if (forwardedProto && forwardedHost) {
+      candidates.add(`${forwardedProto}://${forwardedHost}${path26}`);
+    }
+    const host = String(req.get("host") || "").trim();
+    if (host) {
+      candidates.add(`${req.protocol}://${host}${path26}`);
+      candidates.add(`https://${host}${path26}`);
+      candidates.add(`http://${host}${path26}`);
+    }
+  }
+  return [...candidates];
+}
+function readRawWebhookBody(req) {
+  const maxBytes = 1024 * 1024;
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let totalBytes = 0;
+    let overflow = false;
+    let settled = false;
+    let timer2;
+    const cleanup = () => {
+      if (timer2) clearTimeout(timer2);
+      req.removeListener("data", onData);
+      req.removeListener("end", onEnd);
+      req.removeListener("error", onError);
+    };
+    timer2 = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error("Webhook body stream timeout"));
+    }, 1e4);
+    const onData = (chunk) => {
+      if (settled) return;
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += buffer.length;
+      if (totalBytes > maxBytes) {
+        overflow = true;
+        return;
+      }
+      chunks.push(buffer);
+    };
+    const onEnd = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (overflow) {
+        console.warn(`[Shopee Webhook] Body v\u01B0\u1EE3t gi\u1EDBi h\u1EA1n ${maxBytes} bytes \u2014 b\u1ECF x\u1EED l\xFD sau ACK.`);
+        resolve(null);
+        return;
+      }
+      resolve(Buffer.concat(chunks));
+    };
+    const onError = (err) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    };
+    req.on("data", onData);
+    req.on("end", onEnd);
+    req.on("error", onError);
+  });
+}
 
-// src/webhooks/shopeeSignature.ts
+// modules/webhooks/shopeeWebhookHandler.ts
+var import_express = __toESM(require_express2(), 1);
+
+// modules/webhooks/shopeeSignature.ts
 var import_node_crypto2 = __toESM(require("node:crypto"), 1);
 function normalizeSignature(value) {
   return value.trim().replace(/^(?:Bearer|HMAC)\s+/i, "").replace(/^sha256=/i, "").trim().toLowerCase();
@@ -76473,7 +76681,7 @@ var import_path4 = __toESM(require("path"), 1);
 var import_crypto2 = __toESM(require("crypto"), 1);
 init_appPaths();
 
-// services/shopee/client.js
+// modules/shopee-sync/client.js
 var import_path3 = __toESM(require("path"), 1);
 var import_node_module = require("node:module");
 init_concurrency();
@@ -78452,174 +78660,7 @@ async function sendShopeeChatText({ shopId, toId, text }) {
   };
 }
 
-// src/webhooks/shopeeWebhookHandler.ts
-var lastWebhookAt = 0;
-function markWebhookReceived() {
-  lastWebhookAt = Date.now();
-}
-function getShopeeWebhookStats() {
-  return {
-    pid: process.pid,
-    lastWebhookAt: lastWebhookAt ? new Date(lastWebhookAt).toISOString() : null
-  };
-}
-function unwrapWebhookData(payload) {
-  const raw = payload.data;
-  if (typeof raw === "string" && raw.trim()) {
-    try {
-      const parsed = parseShopeeJson(raw);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return parsed;
-      }
-    } catch {
-    }
-  }
-  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-    return raw;
-  }
-  return payload;
-}
-function coerceWebhookPayload(payload) {
-  const data = unwrapWebhookData(payload);
-  if (data === payload) return payload;
-  if (payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)) {
-    return payload;
-  }
-  return { ...payload, data };
-}
-function ackShopeeOk(res) {
-  if (res.headersSent || res.writableEnded) return;
-  try {
-    res.status(200).send("OK");
-  } catch (ackErr) {
-    console.warn("[Shopee Webhook] ACK send failed:", ackErr);
-    try {
-      if (!res.writableEnded) res.end();
-    } catch {
-    }
-  }
-}
-function readAuthorizationHeader(req) {
-  const headers = req.headers;
-  return String(
-    req.get("authorization") || req.get("Authorization") || headers.authorization || headers.Authorization || headers.http_authorization || process.env.HTTP_AUTHORIZATION || ""
-  ).trim();
-}
-function buildWebhookUrlCandidates(req) {
-  const path26 = String(req.originalUrl || req.url || "").split("?")[0].trim();
-  const candidates = /* @__PURE__ */ new Set();
-  const base = resolveAppBaseUrl().replace(/\/$/, "");
-  const configured = String(process.env.SHOPEE_WEBHOOK_URL || "").trim();
-  if (configured) candidates.add(configured.replace(/\/$/, ""));
-  candidates.add(`${base}/api/shopee/webhook`);
-  if (path26.startsWith("/")) {
-    candidates.add(`${base}${path26}`);
-    const forwardedProto = String(req.get("x-forwarded-proto") || "").split(",")[0].trim();
-    const forwardedHost = String(req.get("x-forwarded-host") || "").split(",")[0].trim();
-    if (forwardedProto && forwardedHost) {
-      candidates.add(`${forwardedProto}://${forwardedHost}${path26}`);
-    }
-    const host = String(req.get("host") || "").trim();
-    if (host) {
-      candidates.add(`${req.protocol}://${host}${path26}`);
-      candidates.add(`https://${host}${path26}`);
-      candidates.add(`http://${host}${path26}`);
-    }
-  }
-  return [...candidates];
-}
-function parseWebhookBody(reqBody) {
-  try {
-    if (Buffer.isBuffer(reqBody)) {
-      const text = reqBody.toString("utf8");
-      if (!text.trim()) return null;
-      const parsed = parseShopeeJson(text);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return coerceWebhookPayload(parsed);
-      }
-      return null;
-    }
-    if (typeof reqBody === "string") {
-      const text = reqBody.trim();
-      if (!text) return null;
-      const parsed = parseShopeeJson(text);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return coerceWebhookPayload(parsed);
-      }
-      return null;
-    }
-    if (reqBody && typeof reqBody === "object" && !Array.isArray(reqBody)) {
-      return coerceWebhookPayload(reqBody);
-    }
-  } catch (err) {
-    console.error("[Shopee Webhook] JSON parse failed:", safeError(err));
-  }
-  return null;
-}
-function readRawWebhookBody(req) {
-  const maxBytes = 1024 * 1024;
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    let totalBytes = 0;
-    let overflow = false;
-    let settled = false;
-    let timer2;
-    const cleanup = () => {
-      if (timer2) clearTimeout(timer2);
-      req.removeListener("data", onData);
-      req.removeListener("end", onEnd);
-      req.removeListener("error", onError);
-    };
-    timer2 = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(new Error("Webhook body stream timeout"));
-    }, 1e4);
-    const onData = (chunk) => {
-      if (settled) return;
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      totalBytes += buffer.length;
-      if (totalBytes > maxBytes) {
-        overflow = true;
-        return;
-      }
-      chunks.push(buffer);
-    };
-    const onEnd = () => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      if (overflow) {
-        console.warn(`[Shopee Webhook] Body v\u01B0\u1EE3t gi\u1EDBi h\u1EA1n ${maxBytes} bytes \u2014 b\u1ECF x\u1EED l\xFD sau ACK.`);
-        resolve(null);
-        return;
-      }
-      resolve(Buffer.concat(chunks));
-    };
-    const onError = (err) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(err);
-    };
-    req.on("data", onData);
-    req.on("end", onEnd);
-    req.on("error", onError);
-  });
-}
-function buildWebhookJobId(shopId, orderSn, status, updateTime) {
-  const clean = (value, fallback) => {
-    const text = String(value || "").trim().replace(/[^\w.:-]/g, "");
-    return text || fallback;
-  };
-  return [
-    clean(shopId, "0"),
-    clean(orderSn, "0"),
-    clean(status, "UNKNOWN"),
-    clean(updateTime, "0")
-  ].join("_");
-}
+// modules/webhooks/shopeeWebhookHandler.ts
 async function processShopeeWebhookAsync(snapshot, rawBodyPromise, eagerStubOrder, onQueueOverflow) {
   try {
     const rawBody = await rawBodyPromise;
@@ -79240,7 +79281,7 @@ function advanceShopeeOrderListCursor(opts) {
   };
 }
 
-// src/utils/shopeeCancelReturnClassify.ts
+// modules/orders/cancelReturnState.ts
 var RTS_CANCEL_REASON_RE = /FAILED[_\s-]?DELIVERY|UNDELIVERABLE|PARCEL[_\s-]?LOST|PARCEL\s+IS\s+LOST|COD[_\s-]?REJECTED|COD[_\s-]?NOT[_\s-]?SUPPORTED/;
 function hasShopeeReturnSn(order) {
   return Boolean(String(order.return_sn || "").trim());
@@ -79361,7 +79402,7 @@ function resolveShopeeSubStatus(kind) {
   return void 0;
 }
 
-// src/utils/orderWarehouseStatus.ts
+// modules/orders/warehouseState.ts
 var ORDER_LOCAL_STATUS = {
   NONE: "NONE",
   HANDED_OVER: "HANDED_OVER",
@@ -79503,7 +79544,7 @@ function matchesHandedOverCarrierTab(order) {
   return true;
 }
 
-// src/utils/orderTracking.ts
+// modules/logistics/tracking.ts
 function isShopeeInternalTrackingCode(code) {
   return /^0FG/i.test(String(code || "").trim());
 }
@@ -79516,7 +79557,7 @@ function isCarrierTrackingCode(code) {
   return false;
 }
 
-// src/utils/orderHandover.ts
+// modules/logistics/handover.ts
 function getShopeeOrderRawStatus(order) {
   return String(order.shopee_order_status || order.order_status || "").toUpperCase();
 }
@@ -79871,7 +79912,45 @@ function isMongoTimeoutOrNetworkError(err) {
   );
 }
 
-// services/orderSync/orderIdentity.js
+// modules/orders/repositoryValues.ts
+function coerceShopeeWatermarkDate(value) {
+  if (value == null || value === "") return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const ms = value > 0 && value < 1e12 ? value * 1e3 : value;
+    const d2 = new Date(ms);
+    return Number.isNaN(d2.getTime()) ? null : d2;
+  }
+  const raw = String(value).trim();
+  if (!raw) return null;
+  if (/^\d+(\.\d+)?$/.test(raw)) {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return null;
+    const ms = n > 0 && n < 1e12 ? n * 1e3 : n;
+    const d2 = new Date(ms);
+    return Number.isNaN(d2.getTime()) ? null : d2;
+  }
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+function isValidTrackingNo(value) {
+  if (value === void 0 || value === null) return false;
+  const s2 = String(value).trim();
+  if (!s2 || /^0FG/i.test(s2)) return false;
+  return true;
+}
+
+// modules/orders/scanCode.ts
+function normalizeScannedCode(raw) {
+  return String(raw || "").trim().toUpperCase();
+}
+function stripScannedSeparators(code) {
+  return String(code || "").replace(/[\s\-_#./\\|:;,]+/g, "");
+}
+
+// modules/orders/orderIdentity.js
 async function resolveShopeeOrderIdentities(orders, db, OrderModel2) {
   const rows = orders.filter((o) => String(o.channel || "shopee").toLowerCase() === "shopee" && String(o.shopId ?? o.shop_id ?? "").trim() && String(o.orderSn ?? o.order_sn ?? "").trim());
   const result = /* @__PURE__ */ new Map();
@@ -82586,34 +82665,6 @@ function readExistingWarehouseLock(doc) {
   }
   return { locked: flag, local: resolvedLocal };
 }
-function coerceShopeeWatermarkDate(value) {
-  if (value == null || value === "") return null;
-  if (value instanceof Date) {
-    return Number.isNaN(value.getTime()) ? null : value;
-  }
-  if (typeof value === "number" && Number.isFinite(value)) {
-    const ms = value > 0 && value < 1e12 ? value * 1e3 : value;
-    const d2 = new Date(ms);
-    return Number.isNaN(d2.getTime()) ? null : d2;
-  }
-  const raw = String(value).trim();
-  if (!raw) return null;
-  if (/^\d+(\.\d+)?$/.test(raw)) {
-    const n = Number(raw);
-    if (!Number.isFinite(n)) return null;
-    const ms = n > 0 && n < 1e12 ? n * 1e3 : n;
-    const d2 = new Date(ms);
-    return Number.isNaN(d2.getTime()) ? null : d2;
-  }
-  const d = new Date(raw);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-function isValidTrackingNo(value) {
-  if (value === void 0 || value === null) return false;
-  const s2 = String(value).trim();
-  if (!s2 || /^0FG/i.test(s2)) return false;
-  return true;
-}
 var WEBHOOK_STUB_THIN_RAW = /* @__PURE__ */ new Set([
   "UNPAID",
   "PENDING",
@@ -85300,12 +85351,6 @@ async function hydrateTrackingBulkInStore() {
     scanned: docs.length,
     samples
   };
-}
-function normalizeScannedCode(raw) {
-  return String(raw || "").trim().toUpperCase();
-}
-function stripScannedSeparators(code) {
-  return String(code || "").replace(/[\s\-_#./\\|:;,]+/g, "");
 }
 function pushScanFieldVariants($or, field, variants) {
   for (const v of variants) {
@@ -114228,7 +114273,7 @@ function maskApiKey(key) {
   return key.slice(0, 4) + "\u2022\u2022\u2022\u2022" + key.slice(-4);
 }
 
-// services/logisticsConfig.js
+// modules/logistics/logisticsConfig.js
 var import_fs18 = __toESM(require("fs"), 1);
 var import_path17 = __toESM(require("path"), 1);
 init_appPaths();
@@ -126096,36 +126141,8 @@ function attachPdfAvailability(orders) {
   }));
 }
 
-// services/orders.js
-var import_fs22 = __toESM(require("fs"), 1);
-var import_path22 = __toESM(require("path"), 1);
-init_appPaths();
-var APP_ROOT11 = resolveAppRoot();
-var ORDERS_DB_PATH = import_path22.default.join(APP_ROOT11, "data", "orders.json");
-var HANDED_OVER_CLEANUP_MARKER = import_path22.default.join(APP_ROOT11, "data", ".cleanup-handed-over-v2");
-var deps14 = {
-  repairMisassignedTracking: (o) => o,
-  repairFalseProcessedReadyToShip: (o) => o,
-  isValidOrder: () => true,
-  matchesHandedOverCarrierTabOrder: () => false,
-  matchesReceivedCancelReturnTabOrder: () => false,
-  resolveLocalStatusUpdatedAt: () => 0,
-  isShopeeInternalTrackingCode: () => false,
-  hasLeftHandedOverCarrierTab: () => false,
-  resolveOrderHandoverFlag: () => false,
-  isEligibleForHandOverShared: () => false,
-  matchesProcessedPickupTabShared: () => false,
-  hasOrderTrackingNoShared: () => false,
-  getHandOverIneligibleReasonShared: () => "",
-  applyHandedOverWrite: (o) => o,
-  HANDED_OVER_SOURCE: { QR_SCAN: "qr_scan", MANUAL_BUTTON: "manual_button" }
-};
-function initOrdersService(partial) {
-  deps14 = { ...deps14, ...partial };
-}
+// modules/orders/lookupService.js
 var orderLookupIndex = null;
-var ordersJsonMirrorQueued = false;
-var ordersJsonMirrorSnapshot = null;
 function normalizeOrderIndexKey(raw) {
   return String(raw || "").trim().toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
 }
@@ -126156,20 +126173,107 @@ function rebuildOrderLookupIndex(orders) {
   });
   return { byId, byOrderSn, byTracking, byReturnTracking, byInternal, byPackage };
 }
+function getOrderLookupIndex(orders) {
+  orderLookupIndex = rebuildOrderLookupIndex(orders);
+  return orderLookupIndex;
+}
+function findOrderRecord(orders, idOrSn) {
+  const key = String(idOrSn || "").trim();
+  if (!key) return null;
+  const idx = rebuildOrderLookupIndex(orders);
+  const normalized = normalizeOrderIndexKey(key);
+  const stripped = key.replace(/^shopee-/i, "").trim();
+  let index = idx.byId.get(normalized) ?? idx.byOrderSn.get(normalized);
+  if (index === void 0 && stripped && stripped !== key) {
+    const strippedNorm = normalizeOrderIndexKey(stripped);
+    index = idx.byId.get(strippedNorm) ?? idx.byOrderSn.get(strippedNorm);
+  }
+  if (index === void 0 && !key.toLowerCase().startsWith("shopee-")) {
+    index = idx.byId.get(normalizeOrderIndexKey(`shopee-${key}`)) ?? idx.byOrderSn.get(normalizeOrderIndexKey(`shopee-${key}`));
+  }
+  if (index === void 0) {
+    const keyLower = key.toLowerCase();
+    const strippedLower = stripped.toLowerCase();
+    index = orders.findIndex((o) => {
+      const candidates = [
+        o?.id,
+        o?._id,
+        o?.orderSn,
+        o?.order_sn,
+        o?.id != null ? String(o.id).replace(/^shopee-/i, "") : "",
+        o?._id != null ? String(o._id).replace(/^shopee-/i, "") : ""
+      ];
+      return candidates.some((c) => {
+        const s2 = String(c || "").trim();
+        if (!s2) return false;
+        return s2 === key || s2.toLowerCase() === keyLower || s2 === stripped || s2.toLowerCase() === strippedLower || normalizeOrderIndexKey(s2) === normalized;
+      });
+    });
+    if (index < 0) index = void 0;
+  }
+  if (index === void 0) return null;
+  return { index, order: orders[index] };
+}
+function resolveOrdersFromRequest(orders, orderIds, orderSns) {
+  const hits = [];
+  const seen = /* @__PURE__ */ new Set();
+  const tryAdd = (idOrSn) => {
+    const raw = String(idOrSn || "").trim();
+    if (!raw) return;
+    const hit = findOrderRecord(orders, raw);
+    if (hit && !seen.has(hit.index)) {
+      seen.add(hit.index);
+      hits.push(hit);
+    }
+  };
+  for (const id of orderIds || []) tryAdd(String(id));
+  for (const sn of orderSns || []) tryAdd(String(sn));
+  return hits;
+}
+
+// modules/orders/ordersService.js
+var import_fs22 = __toESM(require("fs"), 1);
+var import_path22 = __toESM(require("path"), 1);
+init_appPaths();
+var APP_ROOT11 = resolveAppRoot();
+var ORDERS_DB_PATH = import_path22.default.join(APP_ROOT11, "data", "orders.json");
+var HANDED_OVER_CLEANUP_MARKER = import_path22.default.join(APP_ROOT11, "data", ".cleanup-handed-over-v2");
+var deps14 = {
+  repairMisassignedTracking: (o) => o,
+  repairFalseProcessedReadyToShip: (o) => o,
+  isValidOrder: () => true,
+  matchesHandedOverCarrierTabOrder: () => false,
+  matchesReceivedCancelReturnTabOrder: () => false,
+  resolveLocalStatusUpdatedAt: () => 0,
+  isShopeeInternalTrackingCode: () => false,
+  hasLeftHandedOverCarrierTab: () => false,
+  resolveOrderHandoverFlag: () => false,
+  isEligibleForHandOverShared: () => false,
+  matchesProcessedPickupTabShared: () => false,
+  hasOrderTrackingNoShared: () => false,
+  getHandOverIneligibleReasonShared: () => "",
+  applyHandedOverWrite: (o) => o,
+  HANDED_OVER_SOURCE: { QR_SCAN: "qr_scan", MANUAL_BUTTON: "manual_button" }
+};
+function initOrdersService(partial) {
+  deps14 = { ...deps14, ...partial };
+}
+var ordersJsonMirrorQueued = false;
+var ordersJsonMirrorSnapshot = null;
 function loadOrders() {
   try {
     if (!import_fs22.default.existsSync(ORDERS_DB_PATH)) {
-      orderLookupIndex = rebuildOrderLookupIndex([]);
+      getOrderLookupIndex([]);
       return [];
     }
     const raw = import_fs22.default.readFileSync(ORDERS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     const orders = Array.isArray(parsed) ? parsed.map(deps14.repairMisassignedTracking) : [];
-    orderLookupIndex = rebuildOrderLookupIndex(orders);
+    getOrderLookupIndex(orders);
     return orders;
   } catch (error) {
     console.error("[Orders DB] Failed to read orders.json:", error);
-    orderLookupIndex = rebuildOrderLookupIndex([]);
+    getOrderLookupIndex([]);
     return [];
   }
 }
@@ -126373,7 +126477,7 @@ function saveOrders(orders) {
     }
     import_fs22.default.mkdirSync(import_path22.default.dirname(ORDERS_DB_PATH), { recursive: true });
     import_fs22.default.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
-    orderLookupIndex = rebuildOrderLookupIndex(sanitized);
+    getOrderLookupIndex(sanitized);
     console.log(
       `[Orders DB] WRITE OK \u2014 path=${ORDERS_DB_PATH} count=${sanitized.length}`
     );
@@ -126451,59 +126555,6 @@ async function purgeHandedOverGarbageOrdersOnce(opts) {
     `[Cleanup HandedOver] \u0110\xC3 X\xD3A json=${garbage.length} mongo=${mongoDeleted} \u2014 ${allSns.join(", ") || "(none)"}`
   );
   return { removed, sns: allSns, skipped: false };
-}
-function findOrderRecord(orders, idOrSn) {
-  const key = String(idOrSn || "").trim();
-  if (!key) return null;
-  const idx = rebuildOrderLookupIndex(orders);
-  const normalized = normalizeOrderIndexKey(key);
-  const stripped = key.replace(/^shopee-/i, "").trim();
-  let index = idx.byId.get(normalized) ?? idx.byOrderSn.get(normalized);
-  if (index === void 0 && stripped && stripped !== key) {
-    const strippedNorm = normalizeOrderIndexKey(stripped);
-    index = idx.byId.get(strippedNorm) ?? idx.byOrderSn.get(strippedNorm);
-  }
-  if (index === void 0 && !key.toLowerCase().startsWith("shopee-")) {
-    index = idx.byId.get(normalizeOrderIndexKey(`shopee-${key}`)) ?? idx.byOrderSn.get(normalizeOrderIndexKey(`shopee-${key}`));
-  }
-  if (index === void 0) {
-    const keyLower = key.toLowerCase();
-    const strippedLower = stripped.toLowerCase();
-    index = orders.findIndex((o) => {
-      const candidates = [
-        o?.id,
-        o?._id,
-        o?.orderSn,
-        o?.order_sn,
-        o?.id != null ? String(o.id).replace(/^shopee-/i, "") : "",
-        o?._id != null ? String(o._id).replace(/^shopee-/i, "") : ""
-      ];
-      return candidates.some((c) => {
-        const s2 = String(c || "").trim();
-        if (!s2) return false;
-        return s2 === key || s2.toLowerCase() === keyLower || s2 === stripped || s2.toLowerCase() === strippedLower || normalizeOrderIndexKey(s2) === normalized;
-      });
-    });
-    if (index < 0) index = void 0;
-  }
-  if (index === void 0) return null;
-  return { index, order: orders[index] };
-}
-function resolveOrdersFromRequest(orders, orderIds, orderSns) {
-  const hits = [];
-  const seen = /* @__PURE__ */ new Set();
-  const tryAdd = (idOrSn) => {
-    const raw = String(idOrSn || "").trim();
-    if (!raw) return;
-    const hit = findOrderRecord(orders, raw);
-    if (hit && !seen.has(hit.index)) {
-      seen.add(hit.index);
-      hits.push(hit);
-    }
-  };
-  for (const id of orderIds || []) tryAdd(String(id));
-  for (const sn of orderSns || []) tryAdd(String(sn));
-  return hits;
 }
 function mapHandoverWriteError(err) {
   const msg = String(err?.message || err || "");
@@ -134508,7 +134559,7 @@ async function updateWooCommerceOrderStatus(req, res) {
 // server.ts
 init_wooCommerce();
 
-// services/orderSync/orderWorkLock.js
+// modules/orders/orderWorkLock.js
 var import_node_crypto3 = __toESM(require("node:crypto"), 1);
 var import_mongoose14 = __toESM(require("mongoose"), 1);
 var import_node_os2 = __toESM(require("node:os"), 1);
@@ -151193,27 +151244,6 @@ function isValidOrder(order) {
   const sn = String(order?.orderSn || "");
   if (sn.startsWith("260709") && !hasItems && Number(order?.totalAmount) === 0) return false;
   return true;
-}
-function readShopeePushData(payload) {
-  const envelope = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
-  let data = envelope.data;
-  if (typeof data === "string" && data.trim()) {
-    try {
-      const parsed = parseShopeeJson(data);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) data = parsed;
-    } catch {
-      data = void 0;
-    }
-  }
-  if (data && typeof data === "object" && !Array.isArray(data)) return data;
-  return envelope;
-}
-function extractShopeeWebhookRawStatus(payload) {
-  const envelope = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
-  const data = readShopeePushData(payload);
-  return String(
-    data?.status || data?.order_status || envelope.status || envelope.order_status || ""
-  ).trim().toUpperCase();
 }
 function normalizeShopeeOrder(payload) {
   const data = readShopeePushData(payload);

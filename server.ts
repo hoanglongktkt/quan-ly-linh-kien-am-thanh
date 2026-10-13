@@ -1,3 +1,4 @@
+import { readShopeePushData, extractShopeeWebhookRawStatus } from "./modules/webhooks/pushData.ts";
 import express from "express";
 import path from "path";
 import fs from "fs";
@@ -21922,34 +21923,6 @@ function isValidOrder(order: any): boolean {
 // Push Code 4 (Order TrackingNo) thường CHỈ có ordersn + tracking_no — KHÔNG có status.
 // Tuyệt đối KHÔNG default status = PENDING (sẽ kéo đơn GHN đã có mã về "Chưa xử lý").
 // Có tracking thì PROCESSED; không có status lẫn tracking thì UNPAID — không để undefined.
-function readShopeePushData(payload: any): any {
-  const envelope =
-    payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
-  let data = envelope.data;
-  if (typeof data === "string" && data.trim()) {
-    try {
-      const parsed = parseShopeeJson(data);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) data = parsed;
-    } catch {
-      data = undefined;
-    }
-  }
-  if (data && typeof data === "object" && !Array.isArray(data)) return data;
-  return envelope;
-}
-
-/** body.data.status | body.data.order_status | body.status | body.order_status */
-function extractShopeeWebhookRawStatus(payload: any): string {
-  const envelope =
-    payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
-  const data = readShopeePushData(payload);
-  return String(
-    data?.status || data?.order_status || envelope.status || envelope.order_status || "",
-  )
-    .trim()
-    .toUpperCase();
-}
-
 function normalizeShopeeOrder(payload: any): any | null {
   const data = readShopeePushData(payload);
   const orderSn =

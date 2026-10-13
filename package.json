@@ -16,6 +16,7 @@
     "migrate:mongo": "node scripts/migrate-json-to-mongo.mjs",
     "test:shopee": "node scripts/test-shopee-connection.mjs",
     "test:order-sync": "tsx scripts/test-order-sync-pagination.mjs",
+    "test:backend-modules": "esbuild scripts/test-backend-modules.mjs --bundle --platform=node --format=esm --outfile=tmp/test-backend-modules.mjs --packages=external && node --test tmp/test-backend-modules.mjs",
     "wipe:dummy-data": "node scripts/wipe-dummy-data.mjs",
     "init:local-inventory": "node scripts/init-local-inventory.mjs",
     "start": "node dist/server.cjs",
