@@ -8,12 +8,10 @@
  * Không expose Shopee API ra Frontend.
  */
 
+import { enqueueOrderSyncJob, setOrderSyncJobProcessor } from "../webhookJobQueue.js";
 import { enqueueLabelPdfDownload } from "./labelPdfQueue.js";
 import {
-  acquireShopeeSyncLease,
   markSuccessfulShopWatermarks,
-  releaseShopeeSyncLease,
-  renewShopeeSyncLease,
   resolveIncrementalLookbackSec,
 } from "./syncOrchestrator.js";
 
@@ -45,28 +43,31 @@ let deps = {
   listShopIds: () => [],
 };
 
-const PULL_LOCK_TIMEOUT_MS = 12 * 60_000;
 let bgRunning = false;
-/** Mốc bắt đầu phiên pull — cờ khóa hết hạn sau 90s thì tự phá. */
+/** Mốc bắt đầu phiên pull để đo thời gian; không dùng để tự mở khóa. */
 let lastPullStart = 0;
 
 export function initOrderSyncService(partial) {
   deps = { ...deps, ...partial };
+  // Worker duy nhất thực thi job sync đã lưu trong Mongo.
+  setOrderSyncJobProcessor(async (opts) => {
+    // Cron phụ cũng dùng khóa và hàng đợi chung với nút Đồng bộ.
+    if (opts.mode === "task") {
+      const task = deps.syncTasks?.[opts.task];
+      if (typeof task !== "function") throw new Error("sync_task_invalid");
+      return task(opts);
+    }
+    if (opts.mode === "quick") return deps.runManualQuickSync3h(opts);
+    if (opts.mode === "full") return deps.runQueuedOrdersPull(opts);
+    return executeBackgroundOrderSync(opts);
+  });
   console.log("[OrderSyncService] initialized");
 }
 
-/** true = bgRunning còn trong 90s. Quá hạn hoặc không có timestamp → reset false. */
+/** Giữ khóa theo vòng đời worker. */
 function isBgPullLocked() {
-  if (!bgRunning) return false;
-  const elapsed = lastPullStart > 0 ? Date.now() - lastPullStart : Number.POSITIVE_INFINITY;
-  if (elapsed < PULL_LOCK_TIMEOUT_MS) return true;
-  console.warn(
-    `[OrderSyncService] AUTO-UNLOCK pull sau ${Number.isFinite(elapsed) ? elapsed : "no_timestamp"}ms` +
-      ` >= ${PULL_LOCK_TIMEOUT_MS}ms — nhả pull_already_in_flight`,
-  );
-  bgRunning = false;
-  lastPullStart = 0;
-  return false;
+  // Giữ khóa tới finally, không mở khi tác vụ vẫn chạy.
+  return bgRunning;
 }
 
 export function isOrderSyncBackgroundBusy() {
@@ -83,15 +84,13 @@ export function isOrderSyncBackgroundBusy() {
  * @param {string} [opts.trigger] cron | api | webhook
  * @param {boolean} [opts.reconcileActive]
  */
-export async function runBackgroundOrderSync(opts = {}) {
+async function executeBackgroundOrderSync(opts = {}) {
   let lookbackSec = Math.max(
     60,
     Number(opts.lookbackSec) || DEFAULT_INCREMENTAL_LOOKBACK_SEC,
   );
   const trigger = String(opts.trigger || "manual");
   const logTag = `OrderSync[${trigger}]`;
-  let leaseOwner = "";
-  let leaseHeartbeat = null;
 
   if (isBgPullLocked()) {
     console.error(
@@ -131,27 +130,7 @@ export async function runBackgroundOrderSync(opts = {}) {
   );
 
   try {
-    const lease = await acquireShopeeSyncLease(trigger);
-    if (!lease.acquired) {
-      bgRunning = false;
-      lastPullStart = 0;
-      return {
-        success: true,
-        skipped: true,
-        message: "Hệ thống đang đồng bộ ngầm ở tiến trình khác. Vui lòng đợi trong giây lát",
-        pulled: 0,
-        added: 0,
-        updated: 0,
-      };
-    }
-    leaseOwner = lease.owner;
-    leaseHeartbeat = setInterval(() => {
-      void renewShopeeSyncLease(leaseOwner).catch((err) => {
-        console.warn("[SyncOrchestrator] renew lease failed:", err?.message || err);
-      });
-    }, 60_000);
-    if (typeof leaseHeartbeat.unref === "function") leaseHeartbeat.unref();
-
+    // Hàng đợi đã giữ khóa Mongo toàn cục trước khi gọi worker.
     // Watermark is a fast path only; first run and explicit long pulls preserve
     // the caller's requested range.
     const watermarkShopIds = opts.shopIds?.length
@@ -263,14 +242,6 @@ export async function runBackgroundOrderSync(opts = {}) {
       jobId,
     };
   } finally {
-    if (leaseHeartbeat) clearInterval(leaseHeartbeat);
-    if (leaseOwner) {
-      try {
-        await releaseShopeeSyncLease(leaseOwner);
-      } catch (releaseErr) {
-        console.warn("[SyncOrchestrator] release lease failed:", releaseErr?.message || releaseErr);
-      }
-    }
     if (lastPullStart === myPullStart) {
       bgRunning = false;
       lastPullStart = 0;
@@ -282,38 +253,12 @@ export async function runBackgroundOrderSync(opts = {}) {
  * Trigger sync ngầm — trả về ngay, không await Shopee.
  * Dùng cho API Routes + Cron.
  */
-export function triggerBackgroundOrderSync(opts = {}) {
-  if (isOrderSyncBackgroundBusy()) {
-    console.log(
-      `[OrderSyncService] trigger SKIP — đang đồng bộ ngầm (trigger=${opts.trigger || "api"})`,
-    );
-    return {
-      accepted: false,
-      busy: true,
-      message: "Hệ thống đang trong quá trình đồng bộ ngầm. Vui lòng đợi trong giây lát",
-    };
-  }
+export async function triggerBackgroundOrderSync(opts = {}) {
+  return enqueueOrderSyncJob(opts, opts.trigger === "manual" || opts.trigger === "api" ? 10 : 0);
+}
 
-  console.log(
-    `[OrderSyncService] trigger ACCEPTED — hệ thống đang đồng bộ ngầm` +
-      ` (trigger=${opts.trigger || "api"} lookbackSec=${opts.lookbackSec || DEFAULT_INCREMENTAL_LOOKBACK_SEC})`,
-  );
-
-  setImmediate(() => {
-    void runBackgroundOrderSync(opts).catch((err) => {
-      console.error(
-        "[OrderSyncService] background run failed:",
-        err?.stack || err?.message || err,
-      );
-    });
-  });
-
-  return {
-    accepted: true,
-    busy: false,
-    message: "Hệ thống đang đồng bộ ngầm",
-    lookbackSec: opts.lookbackSec || DEFAULT_INCREMENTAL_LOOKBACK_SEC,
-  };
+export async function runBackgroundOrderSync(opts = {}) {
+  return triggerBackgroundOrderSync(opts);
 }
 
 /**
@@ -344,31 +289,10 @@ export function triggerWebhookRescuePull(opts = {}) {
       ` order_sn=${orderSn || "?"} shop=${shopId || "all"} lookbackSec=${lookbackSec}`,
   );
 
-  setImmediate(() => {
-    void deps
-      .pullIncrementalOrdersFromShopee({
-        lookbackSec,
-        shopIds: shopId ? [shopId] : undefined,
-        allowShortLookback: true,
-        reconcileActive: false,
-        enrichTracking: false,
-      })
-      .then((result) => {
-        console.log(
-          `[OrderSyncService] webhook_rescue DONE trigger=${trigger}` +
-            ` order_sn=${orderSn || "?"}` +
-            ` pulled=${result?.pulled || 0} +${result?.added || 0}/~${result?.updated || 0}` +
-            ` skipped=${Boolean(result?.skipped)} elapsedMs=${result?.elapsedMs || "?"}`,
-        );
-      })
-      .catch((err) => {
-        console.error(
-          `[OrderSyncService] webhook_rescue FAILED trigger=${trigger} order_sn=${orderSn || "?"}`,
-          err?.stack || err?.message || err,
-        );
-      });
-  });
-
+  // Rescue cũng vào hàng đợi, không ghi đơn độc lập với cron.
+  void enqueueOrderSyncJob({ lookbackSec, shopIds: shopId ? [shopId] : undefined,
+    trigger, useWatermark: false, reconcileActive: false }, 5)
+    .catch(() => console.warn("[OrderSyncService] rescue_enqueue_failed"));
   return { accepted: true, busy: false, lookbackSec, trigger };
 }
 

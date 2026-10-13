@@ -4,6 +4,7 @@
  * Mọi ghi: bulkWrite / insertMany / updateMany.
  * KHÔNG dùng mảng in-memory làm nguồn dữ liệu.
  */
+import { resolveShopeeOrderIdentities } from "../../services/orderSync/orderIdentity.js";
 import mongoose, { Schema, type Model } from "mongoose";
 import fs from "fs";
 import path from "path";
@@ -3125,6 +3126,8 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     ? orders.filter((o) => o != null && typeof o === "object")
     : [];
   if (list.length === 0) return 0;
+  // Ánh xạ theo lô giữ nguyên dữ liệu cũ và chặn tạo đơn trùng từ mọi nguồn ghi.
+  const identityIds = await resolveShopeeOrderIdentities(list, mongoose.connection.db!, OrderModel);
 
   const pendingWrites: Array<{
     op: any;
@@ -3140,7 +3143,8 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     const id = String(order.id || "").trim();
     const orderSn = String(order.orderSn || order.order_sn || "").trim();
     if (!id && !orderSn) continue;
-    const _id = id || `shopee-${orderSn}`;
+    const identityShop = String(order.shopId ?? order.shop_id ?? "").trim();
+    const _id = identityIds.get(identityShop + ":" + orderSn) || id || "shopee-" + orderSn;
 
     const rawStatus = String(
       order.shopee_order_status || order.order_status || "",

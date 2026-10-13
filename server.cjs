@@ -20051,14 +20051,14 @@ var require_etag = __commonJS({
   "node_modules/etag/index.js"(exports2, module2) {
     "use strict";
     module2.exports = etag;
-    var crypto9 = require("crypto");
+    var crypto11 = require("crypto");
     var Stats = require("fs").Stats;
     var toString3 = Object.prototype.toString;
     function entitytag(entity) {
       if (entity.length === 0) {
         return '"0-2jmj7l5rSw0yVb/vlWAYkK/YBwk"';
       }
-      var hash = crypto9.createHash("sha1").update(entity, "utf8").digest("base64").substring(0, 27);
+      var hash = crypto11.createHash("sha1").update(entity, "utf8").digest("base64").substring(0, 27);
       var len = typeof entity === "string" ? Buffer.byteLength(entity, "utf8") : entity.length;
       return '"' + len.toString(16) + "-" + hash + '"';
     }
@@ -22951,11 +22951,11 @@ var require_request = __commonJS({
 // node_modules/cookie-signature/index.js
 var require_cookie_signature = __commonJS({
   "node_modules/cookie-signature/index.js"(exports2) {
-    var crypto9 = require("crypto");
+    var crypto11 = require("crypto");
     exports2.sign = function(val, secret) {
       if ("string" !== typeof val) throw new TypeError("Cookie value must be provided as a string.");
       if (null == secret) throw new TypeError("Secret key must be provided.");
-      return val + "." + crypto9.createHmac("sha256", secret).update(val).digest("base64").replace(/\=+$/, "");
+      return val + "." + crypto11.createHmac("sha256", secret).update(val).digest("base64").replace(/\=+$/, "");
     };
     exports2.unsign = function(val, secret) {
       if ("string" !== typeof val) throw new TypeError("Signed cookie string must be provided.");
@@ -22964,7 +22964,7 @@ var require_cookie_signature = __commonJS({
       return sha1(mac) == sha1(val) ? str : false;
     };
     function sha1(str) {
-      return crypto9.createHash("sha1").update(str).digest("hex");
+      return crypto11.createHash("sha1").update(str).digest("hex");
     }
   }
 });
@@ -23937,8 +23937,8 @@ var require_main = __commonJS({
   "node_modules/dotenv/lib/main.js"(exports2, module2) {
     var fs26 = require("fs");
     var path26 = require("path");
-    var os = require("os");
-    var crypto9 = require("crypto");
+    var os3 = require("os");
+    var crypto11 = require("crypto");
     var TIPS = [
       "\u25C8 encrypted .env [www.dotenvx.com]",
       "\u25C8 secrets for agents [www.dotenvx.com]",
@@ -24083,7 +24083,7 @@ var require_main = __commonJS({
       return null;
     }
     function _resolveHome(envPath) {
-      return envPath[0] === "~" ? path26.join(os.homedir(), envPath.slice(1)) : envPath;
+      return envPath[0] === "~" ? path26.join(os3.homedir(), envPath.slice(1)) : envPath;
     }
     function _configVault(options) {
       const debug = parseBoolean(process.env.DOTENV_CONFIG_DEBUG || options && options.debug);
@@ -24182,7 +24182,7 @@ var require_main = __commonJS({
       const authTag = ciphertext.subarray(-16);
       ciphertext = ciphertext.subarray(12, -16);
       try {
-        const aesgcm = crypto9.createDecipheriv("aes-256-gcm", key, nonce);
+        const aesgcm = crypto11.createDecipheriv("aes-256-gcm", key, nonce);
         aesgcm.setAuthTag(authTag);
         return `${aesgcm.update(ciphertext)}${aesgcm.final()}`;
       } catch (error) {
@@ -48093,7 +48093,7 @@ async function mapByShopGroups(items, resolveShopId, worker, opts = {}) {
     (group) => mapInChunks(group, perShopChunk, worker, pauseMs)
   );
 }
-function delay(ms = DEFAULT_DELAY_MS) {
+function delay2(ms = DEFAULT_DELAY_MS) {
   return sleep(ms);
 }
 async function yieldEventLoop(ms = DEFAULT_YIELD_MS) {
@@ -48457,14 +48457,14 @@ var require_buffer_equal_constant_time = __commonJS({
 var require_jwa = __commonJS({
   "node_modules/jwa/index.js"(exports2, module2) {
     var Buffer4 = require_safe_buffer().Buffer;
-    var crypto9 = require("crypto");
+    var crypto11 = require("crypto");
     var formatEcdsa = require_ecdsa_sig_formatter();
     var util4 = require("util");
     var MSG_INVALID_ALGORITHM = '"%s" is not a valid algorithm.\n  Supported algorithms are:\n  "HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512" and "none".';
     var MSG_INVALID_SECRET = "secret must be a string or buffer";
     var MSG_INVALID_VERIFIER_KEY = "key must be a string or a buffer";
     var MSG_INVALID_SIGNER_KEY = "key must be a string, a buffer or an object";
-    var supportsKeyObjects = typeof crypto9.createPublicKey === "function";
+    var supportsKeyObjects = typeof crypto11.createPublicKey === "function";
     if (supportsKeyObjects) {
       MSG_INVALID_VERIFIER_KEY += " or a KeyObject";
       MSG_INVALID_SECRET += "or a KeyObject";
@@ -48554,17 +48554,17 @@ var require_jwa = __commonJS({
       return function sign(thing, secret) {
         checkIsSecretKey(secret);
         thing = normalizeInput(thing);
-        var hmac = crypto9.createHmac("sha" + bits, secret);
+        var hmac = crypto11.createHmac("sha" + bits, secret);
         var sig = (hmac.update(thing), hmac.digest("base64"));
         return fromBase64(sig);
       };
     }
     var bufferEqual;
-    var timingSafeEqual = "timingSafeEqual" in crypto9 ? function timingSafeEqual2(a, b) {
+    var timingSafeEqual = "timingSafeEqual" in crypto11 ? function timingSafeEqual2(a, b) {
       if (a.byteLength !== b.byteLength) {
         return false;
       }
-      return crypto9.timingSafeEqual(a, b);
+      return crypto11.timingSafeEqual(a, b);
     } : function timingSafeEqual2(a, b) {
       if (!bufferEqual) {
         bufferEqual = require_buffer_equal_constant_time();
@@ -48581,7 +48581,7 @@ var require_jwa = __commonJS({
       return function sign(thing, privateKey) {
         checkIsPrivateKey(privateKey);
         thing = normalizeInput(thing);
-        var signer = crypto9.createSign("RSA-SHA" + bits);
+        var signer = crypto11.createSign("RSA-SHA" + bits);
         var sig = (signer.update(thing), signer.sign(privateKey, "base64"));
         return fromBase64(sig);
       };
@@ -48591,7 +48591,7 @@ var require_jwa = __commonJS({
         checkIsPublicKey(publicKey);
         thing = normalizeInput(thing);
         signature = toBase64(signature);
-        var verifier = crypto9.createVerify("RSA-SHA" + bits);
+        var verifier = crypto11.createVerify("RSA-SHA" + bits);
         verifier.update(thing);
         return verifier.verify(publicKey, signature, "base64");
       };
@@ -48600,11 +48600,11 @@ var require_jwa = __commonJS({
       return function sign(thing, privateKey) {
         checkIsPrivateKey(privateKey);
         thing = normalizeInput(thing);
-        var signer = crypto9.createSign("RSA-SHA" + bits);
+        var signer = crypto11.createSign("RSA-SHA" + bits);
         var sig = (signer.update(thing), signer.sign({
           key: privateKey,
-          padding: crypto9.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto9.constants.RSA_PSS_SALTLEN_DIGEST
+          padding: crypto11.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto11.constants.RSA_PSS_SALTLEN_DIGEST
         }, "base64"));
         return fromBase64(sig);
       };
@@ -48614,12 +48614,12 @@ var require_jwa = __commonJS({
         checkIsPublicKey(publicKey);
         thing = normalizeInput(thing);
         signature = toBase64(signature);
-        var verifier = crypto9.createVerify("RSA-SHA" + bits);
+        var verifier = crypto11.createVerify("RSA-SHA" + bits);
         verifier.update(thing);
         return verifier.verify({
           key: publicKey,
-          padding: crypto9.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto9.constants.RSA_PSS_SALTLEN_DIGEST
+          padding: crypto11.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto11.constants.RSA_PSS_SALTLEN_DIGEST
         }, signature, "base64");
       };
     }
@@ -61747,22 +61747,22 @@ var require_crypto2 = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.NodeCrypto = void 0;
-    var crypto9 = require("crypto");
+    var crypto11 = require("crypto");
     var NodeCrypto = class {
       async sha256DigestBase64(str) {
-        return crypto9.createHash("sha256").update(str).digest("base64");
+        return crypto11.createHash("sha256").update(str).digest("base64");
       }
       randomBytesBase64(count) {
-        return crypto9.randomBytes(count).toString("base64");
+        return crypto11.randomBytes(count).toString("base64");
       }
       async verify(pubkey, data, signature) {
-        const verifier = crypto9.createVerify("RSA-SHA256");
+        const verifier = crypto11.createVerify("RSA-SHA256");
         verifier.update(data);
         verifier.end();
         return verifier.verify(pubkey, signature, "base64");
       }
       async sign(privateKey, data) {
-        const signer = crypto9.createSign("RSA-SHA256");
+        const signer = crypto11.createSign("RSA-SHA256");
         signer.update(data);
         signer.end();
         return signer.sign(privateKey, "base64");
@@ -61780,7 +61780,7 @@ var require_crypto2 = __commonJS({
        *   string in hexadecimal encoding.
        */
       async sha256DigestHex(str) {
-        return crypto9.createHash("sha256").update(str).digest("hex");
+        return crypto11.createHash("sha256").update(str).digest("hex");
       }
       /**
        * Computes the HMAC hash of a message using the provided crypto key and the
@@ -61792,7 +61792,7 @@ var require_crypto2 = __commonJS({
        */
       async signWithHmacSha256(key, msg) {
         const cryptoKey = typeof key === "string" ? key : toBuffer(key);
-        return toArrayBuffer(crypto9.createHmac("sha256", cryptoKey).update(msg).digest());
+        return toArrayBuffer(crypto11.createHmac("sha256", cryptoKey).update(msg).digest());
       }
     };
     exports2.NodeCrypto = NodeCrypto;
@@ -61860,7 +61860,7 @@ var require_util2 = __commonJS({
     exports2.isValidFile = isValidFile;
     exports2.getWellKnownCertificateConfigFileLocation = getWellKnownCertificateConfigFileLocation;
     var fs26 = require("fs");
-    var os = require("os");
+    var os3 = require("os");
     var path26 = require("path");
     var WELL_KNOWN_CERTIFICATE_CONFIG_FILE = "certificate_config.json";
     var CLOUDSDK_CONFIG_DIRECTORY = "gcloud";
@@ -61958,7 +61958,7 @@ var require_util2 = __commonJS({
       return path26.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
     }
     function _isWindows() {
-      return os.platform().startsWith("win");
+      return os3.platform().startsWith("win");
     }
   }
 });
@@ -62483,10 +62483,10 @@ var require_oauth2client = __commonJS({
        * https://github.com/googleapis/google-auth-library-nodejs/blob/main/samples/oauth2-codeVerifier.js
        */
       async generateCodeVerifierAsync() {
-        const crypto9 = (0, crypto_1.createCrypto)();
-        const randomString = crypto9.randomBytesBase64(96);
+        const crypto11 = (0, crypto_1.createCrypto)();
+        const randomString = crypto11.randomBytesBase64(96);
         const codeVerifier = randomString.replace(/\+/g, "~").replace(/=/g, "_").replace(/\//g, "-");
-        const unencodedCodeChallenge = await crypto9.sha256DigestBase64(codeVerifier);
+        const unencodedCodeChallenge = await crypto11.sha256DigestBase64(codeVerifier);
         const codeChallenge = unencodedCodeChallenge.split("=")[0].replace(/\+/g, "-").replace(/\//g, "_");
         return { codeVerifier, codeChallenge };
       }
@@ -62927,7 +62927,7 @@ var require_oauth2client = __commonJS({
        * @return Returns a promise resolving to LoginTicket on verification.
        */
       async verifySignedJwtWithCertsAsync(jwt2, certs, requiredAudience, issuers, maxExpiry) {
-        const crypto9 = (0, crypto_1.createCrypto)();
+        const crypto11 = (0, crypto_1.createCrypto)();
         if (!maxExpiry) {
           maxExpiry = _OAuth2Client.DEFAULT_MAX_TOKEN_LIFETIME_SECS_;
         }
@@ -62940,7 +62940,7 @@ var require_oauth2client = __commonJS({
         let envelope;
         let payload;
         try {
-          envelope = JSON.parse(crypto9.decodeBase64StringUtf8(segments[0]));
+          envelope = JSON.parse(crypto11.decodeBase64StringUtf8(segments[0]));
         } catch (err) {
           if (err instanceof Error) {
             err.message = `Can't parse token envelope: ${segments[0]}': ${err.message}`;
@@ -62951,7 +62951,7 @@ var require_oauth2client = __commonJS({
           throw new Error("Can't parse token envelope: " + segments[0]);
         }
         try {
-          payload = JSON.parse(crypto9.decodeBase64StringUtf8(segments[1]));
+          payload = JSON.parse(crypto11.decodeBase64StringUtf8(segments[1]));
         } catch (err) {
           if (err instanceof Error) {
             err.message = `Can't parse token payload '${segments[0]}`;
@@ -62968,7 +62968,7 @@ var require_oauth2client = __commonJS({
         if (envelope.alg === "ES256") {
           signature = formatEcdsa.joseToDer(signature, "ES256").toString("base64");
         }
-        const verified = await crypto9.verify(cert, signed, signature);
+        const verified = await crypto11.verify(cert, signed, signature);
         if (!verified) {
           throw new Error("Invalid token signature: " + jwt2);
         }
@@ -65538,14 +65538,14 @@ var require_awsrequestsigner = __commonJS({
       }
     };
     exports2.AwsRequestSigner = AwsRequestSigner;
-    async function sign(crypto9, key, msg) {
-      return await crypto9.signWithHmacSha256(key, msg);
+    async function sign(crypto11, key, msg) {
+      return await crypto11.signWithHmacSha256(key, msg);
     }
-    async function getSigningKey(crypto9, key, dateStamp, region, serviceName) {
-      const kDate = await sign(crypto9, `AWS4${key}`, dateStamp);
-      const kRegion = await sign(crypto9, kDate, region);
-      const kService = await sign(crypto9, kRegion, serviceName);
-      const kSigning = await sign(crypto9, kService, "aws4_request");
+    async function getSigningKey(crypto11, key, dateStamp, region, serviceName) {
+      const kDate = await sign(crypto11, `AWS4${key}`, dateStamp);
+      const kRegion = await sign(crypto11, kDate, region);
+      const kService = await sign(crypto11, kRegion, serviceName);
+      const kSigning = await sign(crypto11, kService, "aws4_request");
       return kSigning;
     }
     async function generateAuthenticationHeaderMap(options) {
@@ -66511,7 +66511,7 @@ var require_gdchclient = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GdchClient = exports2.GDCH_SERVICE_ACCOUNT_TYPE = void 0;
-    var crypto9 = require("crypto");
+    var crypto11 = require("crypto");
     var fs26 = require("fs");
     var https3 = require("https");
     var oauth2client_1 = require_oauth2client();
@@ -66702,7 +66702,7 @@ var require_gdchclient = __commonJS({
         const encodedHeader = this.base64UrlEncode(JSON.stringify(header));
         const encodedPayload = this.base64UrlEncode(JSON.stringify(payload));
         const signingInput = `${encodedHeader}.${encodedPayload}`;
-        const signature = crypto9.sign("sha256", Buffer.from(signingInput), {
+        const signature = crypto11.sign("sha256", Buffer.from(signingInput), {
           key: this.privateKey,
           dsaEncoding: "ieee-p1363"
         });
@@ -66798,7 +66798,7 @@ var require_googleauth = __commonJS({
     var fs26 = require("fs");
     var gaxios_1 = require_src6();
     var gcpMetadata = require_src8();
-    var os = require("os");
+    var os3 = require("os");
     var path26 = require("path");
     var crypto_1 = require_crypto3();
     var computeclient_1 = require_computeclient();
@@ -67305,7 +67305,7 @@ var require_googleauth = __commonJS({
        * @api private
        */
       _isWindows() {
-        const sys = os.platform();
+        const sys = os3.platform();
         if (sys && sys.length >= 3) {
           if (sys.substring(0, 3).toLowerCase() === "win") {
             return true;
@@ -67563,24 +67563,24 @@ var require_googleauth = __commonJS({
           const signed = await client.sign(data);
           return signed.signedBlob;
         }
-        const crypto9 = (0, crypto_1.createCrypto)();
+        const crypto11 = (0, crypto_1.createCrypto)();
         if (client instanceof jwtclient_1.JWT && client.key) {
-          const sign = await crypto9.sign(client.key, data);
+          const sign = await crypto11.sign(client.key, data);
           return sign;
         }
         const creds = await this.getCredentials();
         if (!creds.client_email) {
           throw new Error("Cannot sign data without `client_email`.");
         }
-        return this.signBlob(crypto9, creds.client_email, data, endpoint);
+        return this.signBlob(crypto11, creds.client_email, data, endpoint);
       }
-      async signBlob(crypto9, emailOrUniqueId, data, endpoint) {
+      async signBlob(crypto11, emailOrUniqueId, data, endpoint) {
         const url2 = new URL(endpoint + `${emailOrUniqueId}:signBlob`);
         const res = await this.request({
           method: "POST",
           url: url2.href,
           data: {
-            payload: crypto9.encodeBase64StringUtf8(data)
+            payload: crypto11.encodeBase64StringUtf8(data)
           },
           retry: true,
           retryConfig: {
@@ -72212,7 +72212,7 @@ var require_form_data = __commonJS({
     var parseUrl2 = require("url").parse;
     var fs26 = require("fs");
     var Stream4 = require("stream").Stream;
-    var crypto9 = require("crypto");
+    var crypto11 = require("crypto");
     var mime = require_mime_types();
     var asynckit = require_asynckit();
     var setToStringTag = require_es_set_tostringtag();
@@ -72421,7 +72421,7 @@ var require_form_data = __commonJS({
       return Buffer.concat([dataBuffer, Buffer.from(this._lastBoundary())]);
     };
     FormData5.prototype._generateBoundary = function() {
-      this._boundary = "--------------------------" + crypto9.randomBytes(12).toString("hex");
+      this._boundary = "--------------------------" + crypto11.randomBytes(12).toString("hex");
     };
     FormData5.prototype.getLengthSync = function() {
       var knownLength = this._overheadLength + this._valueLength;
@@ -74803,6 +74803,551 @@ var import_path2 = __toESM(require("path"), 1);
 var import_node_cron = __toESM(require("node-cron"), 1);
 init_appPaths();
 
+// models/WebhookJob.js
+var import_mongoose = __toESM(require("mongoose"), 1);
+var WebhookJobSchema = new import_mongoose.default.Schema(
+  {
+    jobId: {
+      type: String,
+      required: true,
+      trim: true
+    },
+    payload: {
+      type: import_mongoose.default.Schema.Types.Mixed,
+      required: true
+    },
+    // Đồng bộ thủ công và cron dùng chung hàng đợi bền với webhook.
+    kind: { type: String, enum: ["webhook", "sync"], default: "webhook" },
+    priority: { type: Number, default: 0 },
+    orderKey: { type: String, default: "" },
+    claim_token: { type: String, default: "" },
+    // Chỉ một job cron cùng loại đang chờ/chạy/retry; không tạo backlog trùng.
+    active_key: { type: String },
+    state: {
+      type: String,
+      enum: ["pending", "running", "succeeded", "failed", "dead-letter"],
+      default: "pending",
+      required: true
+    },
+    retry_count: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    error_log: {
+      type: String,
+      default: ""
+    },
+    next_run_at: {
+      type: Date,
+      default: Date.now,
+      required: true
+    }
+  },
+  {
+    collection: "webhook_jobs",
+    versionKey: false,
+    timestamps: true
+  }
+);
+WebhookJobSchema.index({ jobId: 1 }, { unique: true, name: "webhook_jobs_jobId_unique" });
+WebhookJobSchema.index({ active_key: 1 }, { unique: true, sparse: true, name: "webhook_jobs_active_key_unique" });
+WebhookJobSchema.index({ state: 1, next_run_at: 1 }, { name: "webhook_jobs_state_next_run" });
+var WebhookJob = import_mongoose.default.models.WebhookJob || import_mongoose.default.model("WebhookJob", WebhookJobSchema);
+var WebhookJob_default = WebhookJob;
+
+// services/webhookJobQueue.js
+var import_node_crypto = __toESM(require("node:crypto"), 1);
+
+// utils/safeProductionLog.js
+function safeError(error) {
+  const code = String(error?.code || error?.name || "operation_failed");
+  return code.replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 100) || "operation_failed";
+}
+function safeTokenMetadata(record) {
+  return {
+    shop_id: record?.shop_id ?? null,
+    hasAccessToken: Boolean(record?.access_token),
+    hasRefreshToken: Boolean(record?.refresh_token),
+    expire_in: record?.expire_in ?? null,
+    error: record?.error ? "token_api_error" : null
+  };
+}
+
+// services/orderSync/syncOrchestrator.js
+var import_crypto = __toESM(require("crypto"), 1);
+var import_mongoose2 = __toESM(require("mongoose"), 1);
+var import_node_os = __toESM(require("node:os"), 1);
+function isOwnerProcessDead(lock) {
+  if (lock?.hostname !== import_node_os.default.hostname() || !Number.isInteger(lock?.pid) || lock.pid <= 0) return false;
+  try {
+    process.kill(lock.pid, 0);
+    return false;
+  } catch (error) {
+    return error?.code === "ESRCH";
+  }
+}
+var LOCK_ID = "shopee_orders_global";
+var LOCK_COLLECTION = "sync_orchestrator_locks";
+var WATERMARK_COLLECTION = "sync_orchestrator_watermarks";
+var DEFAULT_LEASE_MS = 12 * 60 * 1e3;
+var DEFAULT_OVERLAP_SEC = 5 * 60;
+var DEFAULT_BOOTSTRAP_LOOKBACK_SEC = 2 * 60 * 60;
+function numberInRange(value, fallback, min, max) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(parsed)));
+}
+function leaseMs() {
+  return numberInRange(
+    process.env.SHOPEE_SYNC_ORCHESTRATOR_LEASE_MS,
+    DEFAULT_LEASE_MS,
+    2 * 60 * 1e3,
+    30 * 60 * 1e3
+  );
+}
+function overlapSec() {
+  return numberInRange(
+    process.env.SHOPEE_SYNC_WATERMARK_OVERLAP_SEC,
+    DEFAULT_OVERLAP_SEC,
+    60,
+    30 * 60
+  );
+}
+function database() {
+  if (import_mongoose2.default.connection.readyState !== 1 || !import_mongoose2.default.connection.db) return null;
+  return import_mongoose2.default.connection.db;
+}
+async function ensureIndexes() {
+  const db = database();
+  if (!db) return false;
+  await Promise.all([
+    db.collection(LOCK_COLLECTION).createIndex({ expiresAt: 1 }),
+    db.collection(WATERMARK_COLLECTION).createIndex({ updatedAt: -1 })
+  ]);
+  return true;
+}
+async function acquireShopeeSyncLease(trigger = "unknown") {
+  const db = database();
+  if (!db) return { acquired: false, reason: "mongodb_not_ready" };
+  const now = /* @__PURE__ */ new Date();
+  const owner = `${process.pid}:${import_crypto.default.randomUUID()}`;
+  const expiresAt = new Date(now.getTime() + leaseMs());
+  try {
+    await ensureIndexes();
+    const previous = await db.collection(LOCK_COLLECTION).findOne({ _id: LOCK_ID });
+    if (previous?.owner && isOwnerProcessDead(previous)) {
+      await db.collection(LOCK_COLLECTION).updateOne(
+        { _id: LOCK_ID, owner: previous.owner },
+        { $set: { owner: null, expiresAt: /* @__PURE__ */ new Date(0), recoveredAt: now } }
+      );
+      console.warn("[SyncOrchestrator] recovered_dead_process_lock");
+    }
+    const result = await db.collection(LOCK_COLLECTION).findOneAndUpdate(
+      {
+        _id: LOCK_ID,
+        // Khóa còn owner không bị cướp khi tác vụ kéo dài hoặc DB mất kết nối.
+        $or: [{ owner: null }, { owner: { $exists: false } }, { expiresAt: /* @__PURE__ */ new Date(0) }]
+      },
+      {
+        $set: { owner, hostname: import_node_os.default.hostname(), pid: process.pid, trigger: String(trigger), acquiredAt: now, expiresAt, heartbeatAt: now }
+      },
+      { upsert: false, returnDocument: "after" }
+    );
+    const claimed = result?.value ?? result;
+    if (claimed?.owner === owner) return { acquired: true, owner, expiresAt };
+    try {
+      await db.collection(LOCK_COLLECTION).insertOne({
+        _id: LOCK_ID,
+        owner,
+        hostname: import_node_os.default.hostname(),
+        pid: process.pid,
+        trigger: String(trigger),
+        acquiredAt: now,
+        expiresAt,
+        heartbeatAt: now
+      });
+      return { acquired: true, owner, expiresAt };
+    } catch (insertErr) {
+      if (insertErr?.code === 11e3) return { acquired: false, reason: "lease_held" };
+      throw insertErr;
+    }
+  } catch (err) {
+    console.error("[SyncOrchestrator] acquire lease failed:", safeError(err));
+    return { acquired: false, reason: "lease_error" };
+  }
+}
+async function renewShopeeSyncLease(owner) {
+  const db = database();
+  if (!db || !owner) return false;
+  const now = /* @__PURE__ */ new Date();
+  const result = await db.collection(LOCK_COLLECTION).updateOne(
+    { _id: LOCK_ID, owner },
+    { $set: { heartbeatAt: now, expiresAt: new Date(now.getTime() + leaseMs()) } }
+  );
+  return result.modifiedCount === 1;
+}
+async function releaseShopeeSyncLease(owner) {
+  const db = database();
+  if (!db || !owner) return;
+  await db.collection(LOCK_COLLECTION).updateOne(
+    { _id: LOCK_ID, owner },
+    { $set: { owner: null, expiresAt: /* @__PURE__ */ new Date(0), releasedAt: /* @__PURE__ */ new Date() } }
+  );
+}
+async function resolveIncrementalLookbackSec(shopIds, fallbackSec) {
+  const db = database();
+  const fallback = numberInRange(fallbackSec, DEFAULT_BOOTSTRAP_LOOKBACK_SEC, 60, 30 * 24 * 3600);
+  const ids = [...new Set((shopIds || []).map((id) => String(id || "").trim()).filter(Boolean))];
+  if (!db || ids.length === 0) return fallback;
+  try {
+    const rows = await db.collection(WATERMARK_COLLECTION).find({ _id: { $in: ids } }, { projection: { lastSuccessfulAt: 1 } }).toArray();
+    if (rows.length !== ids.length) return fallback;
+    const oldest = Math.min(...rows.map((row) => new Date(row.lastSuccessfulAt).getTime()));
+    if (!Number.isFinite(oldest)) return fallback;
+    const elapsed = Math.floor((Date.now() - oldest) / 1e3) + overlapSec();
+    return numberInRange(elapsed, fallback, overlapSec(), 30 * 24 * 3600);
+  } catch (err) {
+    console.warn("[SyncOrchestrator] read watermark failed:", safeError(err));
+    return fallback;
+  }
+}
+async function markSuccessfulShopWatermarks(perShop) {
+  const db = database();
+  if (!db || !Array.isArray(perShop)) return;
+  const now = /* @__PURE__ */ new Date();
+  const ops = perShop.filter((item) => String(item?.shopId || "").trim() && item?.status === "DONE" && !item?.error).map((item) => ({
+    updateOne: {
+      filter: { _id: String(item.shopId).trim() },
+      update: {
+        $set: {
+          lastSuccessfulAt: now,
+          updatedAt: now,
+          lastPulled: Number(item.pulled) || 0,
+          lastAdded: Number(item.added) || 0,
+          lastUpdated: Number(item.updated) || 0
+        },
+        $setOnInsert: { createdAt: now }
+      },
+      upsert: true
+    }
+  }));
+  if (ops.length) await db.collection(WATERMARK_COLLECTION).bulkWrite(ops, { ordered: false });
+}
+
+// services/webhookJobQueue.js
+var DRAIN_INTERVAL_MS = 8e3;
+var BATCH_LIMIT = 5;
+var JOB_GAP_MS = 400;
+var MAX_RETRY = 5;
+var RUNNING_LEASE_MS = 4 * 60 * 1e3;
+var STALE_JOB_MAX_AGE_MS = 15 * 60 * 1e3;
+var STALE_SWEEP_INTERVAL_MS = 6e4;
+var STALE_SKIP_LOG = "stale_job_dead_letter";
+var timer = null;
+var draining = false;
+var processor = null;
+var syncProcessor = null;
+var releasePendingOwner = "";
+async function enqueueOrderSyncJob(payload = {}, priority = 0) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload) || !Number.isFinite(priority) || priority < 0 || priority > 10 || payload.mode && !["quick", "full", "task"].includes(payload.mode) || payload.shopIds && (!Array.isArray(payload.shopIds) || payload.shopIds.some((id) => !/^\d+$/.test(String(id)))) || payload.lookbackSec != null && (!Number.isFinite(Number(payload.lookbackSec)) || Number(payload.lookbackSec) < 60)) {
+    throw new Error("sync_job_invalid");
+  }
+  const jobId = `sync:${import_node_crypto.default.randomUUID()}`;
+  const activeKey = priority === 0 ? import_node_crypto.default.createHash("sha256").update(JSON.stringify({
+    mode: payload.mode || "incremental",
+    task: payload.task || "",
+    shopIds: [...payload.shopIds || []].sort(),
+    lookbackSec: payload.lookbackSec || 0
+  })).digest("hex") : null;
+  try {
+    await WebhookJob_default.create({
+      jobId,
+      kind: "sync",
+      priority,
+      payload,
+      state: "pending",
+      next_run_at: /* @__PURE__ */ new Date(),
+      ...activeKey ? { active_key: activeKey } : {}
+    });
+  } catch (error) {
+    if (!activeKey || !isDuplicateKeyError(error)) throw error;
+    return { accepted: true, busy: true, duplicate: true, background: true, message: "Job \u0111\u1ED3ng b\u1ED9 c\xF9ng lo\u1EA1i \u0111\xE3 c\xF3 trong h\xE0ng \u0111\u1EE3i" };
+  }
+  return { accepted: true, busy: false, jobId, background: true, message: "\u0110\xE3 x\u1EBFp h\xE0ng \u0111\u1ED3ng b\u1ED9" };
+}
+function setOrderSyncJobProcessor(handler) {
+  syncProcessor = handler;
+}
+function webhookEventTime(payload) {
+  const data = payload?.data && typeof payload.data === "object" ? payload.data : payload;
+  const raw = data?.update_time ?? data?.updateTime ?? payload?.timestamp ?? data?.timestamp;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return value < 1e12 ? value * 1e3 : value;
+}
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+function isDuplicateKeyError(err) {
+  const code = err?.code ?? err?.cause?.code;
+  if (code === 11e3 || code === 11001) return true;
+  const msg = String(err?.message || "");
+  return msg.includes("E11000") || msg.includes("duplicate key");
+}
+function backoffMs(retryCount) {
+  const n = Number(retryCount) || 1;
+  if (n <= 1) return 6e4;
+  return 12e4;
+}
+async function enqueueWebhookJob(input) {
+  const jobId = String(input?.jobId || "").trim();
+  const payload = input?.payload;
+  if (!jobId || !payload || typeof payload !== "object") {
+    throw new Error("webhook_job_invalid");
+  }
+  const data = payload.data && typeof payload.data === "object" ? payload.data : payload;
+  const shopId = String(payload.shop_id ?? payload.shopId ?? data.shop_id ?? data.shopId ?? "").trim();
+  const orderSn = String(data.ordersn ?? data.order_sn ?? data.orderSn ?? payload.order_sn ?? "").trim();
+  if (!/^\d+$/.test(shopId) || !/^[a-zA-Z0-9-]+$/.test(orderSn)) throw new Error("webhook_order_key_invalid");
+  const stale = webhookEventTime(payload) != null && Date.now() - webhookEventTime(payload) > STALE_JOB_MAX_AGE_MS;
+  try {
+    await WebhookJob_default.create({
+      jobId,
+      payload,
+      kind: "webhook",
+      orderKey: `${shopId}:${orderSn}`,
+      state: stale ? "dead-letter" : "pending",
+      retry_count: 0,
+      error_log: stale ? STALE_SKIP_LOG : "",
+      next_run_at: /* @__PURE__ */ new Date()
+    });
+    if (stale) console.warn("[WebhookJobQueue] stale_event_dead_letter");
+    return { ok: true, duplicate: false, jobId };
+  } catch (err) {
+    if (isDuplicateKeyError(err)) {
+      return { ok: true, duplicate: true, jobId };
+    }
+    throw err;
+  }
+}
+async function claimNextJob() {
+  const now = /* @__PURE__ */ new Date();
+  const leaseUntil = new Date(now.getTime() + RUNNING_LEASE_MS);
+  return WebhookJob_default.findOneAndUpdate(
+    {
+      $or: [
+        { state: "pending", next_run_at: { $lte: now } },
+        { state: "failed", next_run_at: { $lte: now }, retry_count: { $lt: MAX_RETRY } }
+        // Không claim lại running: worker có thể vẫn đang chờ API/DB.
+      ]
+    },
+    [
+      {
+        $set: {
+          retry_count: {
+            $cond: [{ $eq: ["$state", "running"] }, { $add: ["$retry_count", 1] }, "$retry_count"]
+          },
+          state: "running",
+          claim_token: import_node_crypto.default.randomUUID(),
+          next_run_at: leaseUntil
+        }
+      }
+    ],
+    // Mongoose 9 chặn update dạng mảng (pipeline) nếu thiếu updatePipeline.
+    { sort: { priority: -1, next_run_at: 1, _id: 1 }, returnDocument: "after", updatePipeline: true }
+  ).lean();
+}
+var lastStaleSweepAt = 0;
+async function sweepStaleJobs() {
+  const now = Date.now();
+  if (now - lastStaleSweepAt < STALE_SWEEP_INTERVAL_MS) return;
+  lastStaleSweepAt = now;
+  const cutoff = new Date(now - STALE_JOB_MAX_AGE_MS);
+  const result = await WebhookJob_default.updateMany(
+    { kind: { $ne: "sync" }, state: { $in: ["pending", "failed"] }, createdAt: { $lt: cutoff } },
+    { $set: { state: "dead-letter", error_log: STALE_SKIP_LOG, next_run_at: new Date(now) } }
+  );
+  if (result?.modifiedCount) {
+    console.warn(
+      `[WebhookJobQueue] stale sweep: b\u1ECF qua ${result.modifiedCount} job c\u0169 h\u01A1n ${STALE_JOB_MAX_AGE_MS / 6e4} ph\xFAt`
+    );
+  }
+}
+function isStaleJob(job) {
+  if (job?.kind === "sync") return false;
+  const created = job?.createdAt ? new Date(job.createdAt).getTime() : NaN;
+  const eventAt = webhookEventTime(job?.payload);
+  return Number.isFinite(created) && Date.now() - created > STALE_JOB_MAX_AGE_MS || eventAt != null && Date.now() - eventAt > STALE_JOB_MAX_AGE_MS;
+}
+async function markSucceeded(job, note = "") {
+  await WebhookJob_default.updateOne(
+    { _id: job._id, state: "running", claim_token: job.claim_token },
+    { $set: { state: "succeeded", error_log: note, next_run_at: /* @__PURE__ */ new Date() }, $unset: { active_key: "" } }
+  );
+}
+async function markFailed(job, err) {
+  const retry2 = Number(job.retry_count || 0) + 1;
+  const message = safeError(err);
+  const nextRun = new Date(Date.now() + backoffMs(retry2));
+  const result = await WebhookJob_default.updateOne(
+    { _id: job._id, state: "running", claim_token: job.claim_token },
+    {
+      $set: {
+        state: retry2 >= MAX_RETRY ? "dead-letter" : "failed",
+        retry_count: retry2,
+        error_log: message,
+        next_run_at: nextRun
+      },
+      ...retry2 >= MAX_RETRY ? { $unset: { active_key: "" } } : {}
+    }
+  );
+  if (!result.matchedCount) {
+    console.warn(
+      `[WebhookJobQueue] skip fail-write jobId=${job.jobId} \u2014 job \u0111\xE3 b\u1ECB claim l\u1EA1i`
+    );
+    return;
+  }
+  console.error(
+    `[WebhookJobQueue] job failed jobId=${job.jobId} retry=${retry2}/${MAX_RETRY} next_run_at=${nextRun.toISOString()} \u2014 ${message}`
+  );
+}
+async function runClaimedJob(job) {
+  if (typeof processor !== "function") {
+    throw new Error("webhook_job_processor_missing");
+  }
+  if (isStaleJob(job)) {
+    await WebhookJob_default.updateOne(
+      { _id: job._id, state: "running", claim_token: job.claim_token },
+      { $set: { state: "dead-letter", error_log: STALE_SKIP_LOG } }
+    );
+    console.warn("[WebhookJobQueue] stale_job_dead_letter");
+    return false;
+  }
+  const heartbeat = setInterval(() => {
+    void WebhookJob_default.updateOne(
+      { _id: job._id, state: "running", claim_token: job.claim_token },
+      { $set: { next_run_at: new Date(Date.now() + RUNNING_LEASE_MS) } }
+    ).catch(() => console.warn("[WebhookJobQueue] heartbeat_failed"));
+  }, 3e4);
+  heartbeat.unref?.();
+  try {
+    if (job.kind === "sync") {
+      if (typeof syncProcessor !== "function") throw new Error("sync_processor_missing");
+      const result = await syncProcessor(job.payload);
+      if (result?.success === false || result?.skipped) throw new Error("sync_job_incomplete");
+    } else {
+      await processor(job.payload);
+    }
+    await markSucceeded(job);
+  } finally {
+    clearInterval(heartbeat);
+  }
+  return true;
+}
+async function drainOnce(processPayload) {
+  if (typeof processPayload === "function") processor = processPayload;
+  if (draining) return;
+  if (typeof processor !== "function") return;
+  draining = true;
+  let leaseOwner = "";
+  let leaseHeartbeat = null;
+  try {
+    if (releasePendingOwner) {
+      await releaseShopeeSyncLease(releasePendingOwner);
+      releasePendingOwner = "";
+    }
+    const lease = await acquireShopeeSyncLease("shared_queue");
+    if (!lease.acquired) return;
+    leaseOwner = lease.owner;
+    const abandoned = await WebhookJob_default.updateMany(
+      { state: "running" },
+      { $set: { state: "dead-letter", error_log: "abandoned_worker_requires_review" }, $unset: { active_key: "" } }
+    );
+    if (abandoned.modifiedCount) console.warn(`[WebhookJobQueue] abandoned_dead_letter count=${abandoned.modifiedCount}`);
+    leaseHeartbeat = setInterval(() => {
+      void renewShopeeSyncLease(leaseOwner).catch(() => console.warn("[WebhookJobQueue] global_heartbeat_failed"));
+    }, 3e4);
+    leaseHeartbeat.unref?.();
+    try {
+      await sweepStaleJobs();
+    } catch (sweepErr) {
+      console.error("[WebhookJobQueue] stale sweep failed:", safeError(sweepErr));
+    }
+    for (let i2 = 0; i2 < BATCH_LIMIT; i2 += 1) {
+      let job = null;
+      try {
+        job = await claimNextJob();
+      } catch (claimErr) {
+        console.error(
+          "[WebhookJobQueue] claim failed:",
+          safeError(claimErr)
+        );
+        break;
+      }
+      if (!job) break;
+      try {
+        const processed = await runClaimedJob(job);
+        console.log(
+          processed ? `[WebhookJobQueue] job succeeded jobId=${job.jobId}` : `[WebhookJobQueue] job stale skipped jobId=${job.jobId}`
+        );
+      } catch (jobErr) {
+        try {
+          await markFailed(job, jobErr);
+        } catch (writeErr) {
+          console.error(
+            `[WebhookJobQueue] markFailed crashed jobId=${job.jobId}:`,
+            safeError(writeErr)
+          );
+        }
+      }
+      if (i2 < BATCH_LIMIT - 1) {
+        await delay(JOB_GAP_MS);
+      }
+    }
+  } catch (err) {
+    console.error("[WebhookJobQueue] drainOnce failed:", safeError(err));
+  } finally {
+    if (leaseHeartbeat) clearInterval(leaseHeartbeat);
+    if (leaseOwner) {
+      try {
+        await releaseShopeeSyncLease(leaseOwner);
+      } catch {
+        releasePendingOwner = leaseOwner;
+        console.warn("[WebhookJobQueue] release_failed_will_retry");
+      }
+    }
+    draining = false;
+  }
+}
+function startWebhookJobDrainer(processPayload) {
+  if (typeof processPayload === "function") {
+    processor = processPayload;
+  }
+  if (timer) return;
+  timer = setInterval(() => {
+    void drainOnce().catch((err) => {
+      console.error("[WebhookJobQueue] drain tick failed:", safeError(err));
+    });
+  }, DRAIN_INTERVAL_MS);
+  if (typeof timer.unref === "function") timer.unref();
+  console.log(
+    `[WebhookJobQueue] drainer ON interval=${DRAIN_INTERVAL_MS}ms batch=${BATCH_LIMIT} gapMs=${JOB_GAP_MS}`
+  );
+  void drainOnce().catch((err) => {
+    console.error("[WebhookJobQueue] boot drain failed:", safeError(err));
+  });
+}
+function stopWebhookJobDrainer() {
+  if (timer) {
+    clearInterval(timer);
+    timer = null;
+  }
+  console.log("[WebhookJobQueue] drainer OFF");
+}
+
 // services/orderSync/labelPdfQueue.js
 var prepareLabelsFn = null;
 var pendingBuffer = [];
@@ -74873,146 +75418,6 @@ function flushPending() {
   }
 }
 
-// services/orderSync/syncOrchestrator.js
-var import_crypto = __toESM(require("crypto"), 1);
-var import_mongoose = __toESM(require("mongoose"), 1);
-var LOCK_ID = "shopee_orders_global";
-var LOCK_COLLECTION = "sync_orchestrator_locks";
-var WATERMARK_COLLECTION = "sync_orchestrator_watermarks";
-var DEFAULT_LEASE_MS = 12 * 60 * 1e3;
-var DEFAULT_OVERLAP_SEC = 5 * 60;
-var DEFAULT_BOOTSTRAP_LOOKBACK_SEC = 2 * 60 * 60;
-function numberInRange(value, fallback, min, max) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, Math.min(max, Math.floor(parsed)));
-}
-function leaseMs() {
-  return numberInRange(
-    process.env.SHOPEE_SYNC_ORCHESTRATOR_LEASE_MS,
-    DEFAULT_LEASE_MS,
-    2 * 60 * 1e3,
-    30 * 60 * 1e3
-  );
-}
-function overlapSec() {
-  return numberInRange(
-    process.env.SHOPEE_SYNC_WATERMARK_OVERLAP_SEC,
-    DEFAULT_OVERLAP_SEC,
-    60,
-    30 * 60
-  );
-}
-function database() {
-  if (import_mongoose.default.connection.readyState !== 1 || !import_mongoose.default.connection.db) return null;
-  return import_mongoose.default.connection.db;
-}
-async function ensureIndexes() {
-  const db = database();
-  if (!db) return false;
-  await Promise.all([
-    db.collection(LOCK_COLLECTION).createIndex({ expiresAt: 1 }),
-    db.collection(WATERMARK_COLLECTION).createIndex({ updatedAt: -1 })
-  ]);
-  return true;
-}
-async function acquireShopeeSyncLease(trigger = "unknown") {
-  const db = database();
-  if (!db) return { acquired: false, reason: "mongodb_not_ready" };
-  const now = /* @__PURE__ */ new Date();
-  const owner = `${process.pid}:${import_crypto.default.randomUUID()}`;
-  const expiresAt = new Date(now.getTime() + leaseMs());
-  try {
-    await ensureIndexes();
-    const result = await db.collection(LOCK_COLLECTION).findOneAndUpdate(
-      {
-        _id: LOCK_ID,
-        $or: [{ expiresAt: { $lte: now } }, { expiresAt: { $exists: false } }]
-      },
-      {
-        $set: { owner, trigger: String(trigger), acquiredAt: now, expiresAt, heartbeatAt: now }
-      },
-      { upsert: false, returnDocument: "after" }
-    );
-    const claimed = result?.value ?? result;
-    if (claimed?.owner === owner) return { acquired: true, owner, expiresAt };
-    try {
-      await db.collection(LOCK_COLLECTION).insertOne({
-        _id: LOCK_ID,
-        owner,
-        trigger: String(trigger),
-        acquiredAt: now,
-        expiresAt,
-        heartbeatAt: now
-      });
-      return { acquired: true, owner, expiresAt };
-    } catch (insertErr) {
-      if (insertErr?.code === 11e3) return { acquired: false, reason: "lease_held" };
-      throw insertErr;
-    }
-  } catch (err) {
-    console.error("[SyncOrchestrator] acquire lease failed:", err?.message || err);
-    return { acquired: false, reason: "lease_error" };
-  }
-}
-async function renewShopeeSyncLease(owner) {
-  const db = database();
-  if (!db || !owner) return false;
-  const now = /* @__PURE__ */ new Date();
-  const result = await db.collection(LOCK_COLLECTION).updateOne(
-    { _id: LOCK_ID, owner, expiresAt: { $gt: now } },
-    { $set: { heartbeatAt: now, expiresAt: new Date(now.getTime() + leaseMs()) } }
-  );
-  return result.modifiedCount === 1;
-}
-async function releaseShopeeSyncLease(owner) {
-  const db = database();
-  if (!db || !owner) return;
-  await db.collection(LOCK_COLLECTION).updateOne(
-    { _id: LOCK_ID, owner },
-    { $set: { expiresAt: /* @__PURE__ */ new Date(0), releasedAt: /* @__PURE__ */ new Date() } }
-  );
-}
-async function resolveIncrementalLookbackSec(shopIds, fallbackSec) {
-  const db = database();
-  const fallback = numberInRange(fallbackSec, DEFAULT_BOOTSTRAP_LOOKBACK_SEC, 60, 30 * 24 * 3600);
-  const ids = [...new Set((shopIds || []).map((id) => String(id || "").trim()).filter(Boolean))];
-  if (!db || ids.length === 0) return fallback;
-  try {
-    const rows = await db.collection(WATERMARK_COLLECTION).find({ _id: { $in: ids } }, { projection: { lastSuccessfulAt: 1 } }).toArray();
-    if (rows.length !== ids.length) return fallback;
-    const oldest = Math.min(...rows.map((row) => new Date(row.lastSuccessfulAt).getTime()));
-    if (!Number.isFinite(oldest)) return fallback;
-    const elapsed = Math.floor((Date.now() - oldest) / 1e3) + overlapSec();
-    return numberInRange(elapsed, fallback, overlapSec(), 30 * 24 * 3600);
-  } catch (err) {
-    console.warn("[SyncOrchestrator] read watermark failed:", err?.message || err);
-    return fallback;
-  }
-}
-async function markSuccessfulShopWatermarks(perShop) {
-  const db = database();
-  if (!db || !Array.isArray(perShop)) return;
-  const now = /* @__PURE__ */ new Date();
-  const ops = perShop.filter((item) => String(item?.shopId || "").trim() && item?.status === "DONE" && !item?.error).map((item) => ({
-    updateOne: {
-      filter: { _id: String(item.shopId).trim() },
-      update: {
-        $set: {
-          lastSuccessfulAt: now,
-          updatedAt: now,
-          lastPulled: Number(item.pulled) || 0,
-          lastAdded: Number(item.added) || 0,
-          lastUpdated: Number(item.updated) || 0
-        },
-        $setOnInsert: { createdAt: now }
-      },
-      upsert: true
-    }
-  }));
-  if (ops.length) await db.collection(WATERMARK_COLLECTION).bulkWrite(ops, { ordered: false });
-}
-
 // services/orderSync/orderSyncService.js
 var DEFAULT_INCREMENTAL_LOOKBACK_SEC = 2 * 60 * 60;
 var WEBHOOK_RESCUE_LOOKBACK_SEC = Math.max(
@@ -75040,37 +75445,32 @@ var deps = {
   isOrdersPullLocked: () => false,
   listShopIds: () => []
 };
-var PULL_LOCK_TIMEOUT_MS = 12 * 6e4;
 var bgRunning = false;
 var lastPullStart = 0;
 function initOrderSyncService(partial) {
   deps = { ...deps, ...partial };
+  setOrderSyncJobProcessor(async (opts) => {
+    if (opts.mode === "task") {
+      const task = deps.syncTasks?.[opts.task];
+      if (typeof task !== "function") throw new Error("sync_task_invalid");
+      return task(opts);
+    }
+    if (opts.mode === "quick") return deps.runManualQuickSync3h(opts);
+    if (opts.mode === "full") return deps.runQueuedOrdersPull(opts);
+    return executeBackgroundOrderSync(opts);
+  });
   console.log("[OrderSyncService] initialized");
 }
 function isBgPullLocked() {
-  if (!bgRunning) return false;
-  const elapsed = lastPullStart > 0 ? Date.now() - lastPullStart : Number.POSITIVE_INFINITY;
-  if (elapsed < PULL_LOCK_TIMEOUT_MS) return true;
-  console.warn(
-    `[OrderSyncService] AUTO-UNLOCK pull sau ${Number.isFinite(elapsed) ? elapsed : "no_timestamp"}ms >= ${PULL_LOCK_TIMEOUT_MS}ms \u2014 nh\u1EA3 pull_already_in_flight`
-  );
-  bgRunning = false;
-  lastPullStart = 0;
-  return false;
+  return bgRunning;
 }
-function isOrderSyncBackgroundBusy() {
-  if (isBgPullLocked()) return true;
-  return typeof deps.isOrdersPullLocked === "function" && deps.isOrdersPullLocked();
-}
-async function runBackgroundOrderSync(opts = {}) {
+async function executeBackgroundOrderSync(opts = {}) {
   let lookbackSec = Math.max(
     60,
     Number(opts.lookbackSec) || DEFAULT_INCREMENTAL_LOOKBACK_SEC
   );
   const trigger = String(opts.trigger || "manual");
   const logTag = `OrderSync[${trigger}]`;
-  let leaseOwner = "";
-  let leaseHeartbeat = null;
   if (isBgPullLocked()) {
     console.error(
       "[SHOPEE API CRON ERROR]:",
@@ -75106,26 +75506,6 @@ async function runBackgroundOrderSync(opts = {}) {
     `[${logTag}] B\u1EAFt \u0111\u1EA7u ch\u1EA1y ti\u1EBFn tr\xECnh ng\u1EA7m \u2014 lookbackSec=${lookbackSec} shops=${opts.shopIds?.length ? opts.shopIds.join(",") : "all"}`
   );
   try {
-    const lease = await acquireShopeeSyncLease(trigger);
-    if (!lease.acquired) {
-      bgRunning = false;
-      lastPullStart = 0;
-      return {
-        success: true,
-        skipped: true,
-        message: "H\u1EC7 th\u1ED1ng \u0111ang \u0111\u1ED3ng b\u1ED9 ng\u1EA7m \u1EDF ti\u1EBFn tr\xECnh kh\xE1c. Vui l\xF2ng \u0111\u1EE3i trong gi\xE2y l\xE1t",
-        pulled: 0,
-        added: 0,
-        updated: 0
-      };
-    }
-    leaseOwner = lease.owner;
-    leaseHeartbeat = setInterval(() => {
-      void renewShopeeSyncLease(leaseOwner).catch((err) => {
-        console.warn("[SyncOrchestrator] renew lease failed:", err?.message || err);
-      });
-    }, 6e4);
-    if (typeof leaseHeartbeat.unref === "function") leaseHeartbeat.unref();
     const watermarkShopIds = opts.shopIds?.length ? opts.shopIds : deps.listShopIds?.();
     if (opts.useWatermark !== false && watermarkShopIds?.length) {
       lookbackSec = await resolveIncrementalLookbackSec(watermarkShopIds, lookbackSec);
@@ -75215,48 +75595,14 @@ async function runBackgroundOrderSync(opts = {}) {
       jobId
     };
   } finally {
-    if (leaseHeartbeat) clearInterval(leaseHeartbeat);
-    if (leaseOwner) {
-      try {
-        await releaseShopeeSyncLease(leaseOwner);
-      } catch (releaseErr) {
-        console.warn("[SyncOrchestrator] release lease failed:", releaseErr?.message || releaseErr);
-      }
-    }
     if (lastPullStart === myPullStart) {
       bgRunning = false;
       lastPullStart = 0;
     }
   }
 }
-function triggerBackgroundOrderSync(opts = {}) {
-  if (isOrderSyncBackgroundBusy()) {
-    console.log(
-      `[OrderSyncService] trigger SKIP \u2014 \u0111ang \u0111\u1ED3ng b\u1ED9 ng\u1EA7m (trigger=${opts.trigger || "api"})`
-    );
-    return {
-      accepted: false,
-      busy: true,
-      message: "H\u1EC7 th\u1ED1ng \u0111ang trong qu\xE1 tr\xECnh \u0111\u1ED3ng b\u1ED9 ng\u1EA7m. Vui l\xF2ng \u0111\u1EE3i trong gi\xE2y l\xE1t"
-    };
-  }
-  console.log(
-    `[OrderSyncService] trigger ACCEPTED \u2014 h\u1EC7 th\u1ED1ng \u0111ang \u0111\u1ED3ng b\u1ED9 ng\u1EA7m (trigger=${opts.trigger || "api"} lookbackSec=${opts.lookbackSec || DEFAULT_INCREMENTAL_LOOKBACK_SEC})`
-  );
-  setImmediate(() => {
-    void runBackgroundOrderSync(opts).catch((err) => {
-      console.error(
-        "[OrderSyncService] background run failed:",
-        err?.stack || err?.message || err
-      );
-    });
-  });
-  return {
-    accepted: true,
-    busy: false,
-    message: "H\u1EC7 th\u1ED1ng \u0111ang \u0111\u1ED3ng b\u1ED9 ng\u1EA7m",
-    lookbackSec: opts.lookbackSec || DEFAULT_INCREMENTAL_LOOKBACK_SEC
-  };
+async function triggerBackgroundOrderSync(opts = {}) {
+  return enqueueOrderSyncJob(opts, opts.trigger === "manual" || opts.trigger === "api" ? 10 : 0);
 }
 function triggerWebhookRescuePull(opts = {}) {
   const orderSn = String(opts.orderSn || "").trim();
@@ -75277,24 +75623,13 @@ function triggerWebhookRescuePull(opts = {}) {
   console.log(
     `[OrderSyncService] webhook_rescue TRIGGER trigger=${trigger} order_sn=${orderSn || "?"} shop=${shopId || "all"} lookbackSec=${lookbackSec}`
   );
-  setImmediate(() => {
-    void deps.pullIncrementalOrdersFromShopee({
-      lookbackSec,
-      shopIds: shopId ? [shopId] : void 0,
-      allowShortLookback: true,
-      reconcileActive: false,
-      enrichTracking: false
-    }).then((result) => {
-      console.log(
-        `[OrderSyncService] webhook_rescue DONE trigger=${trigger} order_sn=${orderSn || "?"} pulled=${result?.pulled || 0} +${result?.added || 0}/~${result?.updated || 0} skipped=${Boolean(result?.skipped)} elapsedMs=${result?.elapsedMs || "?"}`
-      );
-    }).catch((err) => {
-      console.error(
-        `[OrderSyncService] webhook_rescue FAILED trigger=${trigger} order_sn=${orderSn || "?"}`,
-        err?.stack || err?.message || err
-      );
-    });
-  });
+  void enqueueOrderSyncJob({
+    lookbackSec,
+    shopIds: shopId ? [shopId] : void 0,
+    trigger,
+    useWatermark: false,
+    reconcileActive: false
+  }, 5).catch(() => console.warn("[OrderSyncService] rescue_enqueue_failed"));
   return { accepted: true, busy: false, lookbackSec, trigger };
 }
 
@@ -75327,7 +75662,7 @@ function scheduleAutoIncrementalOrdersSync(deps23 = {}) {
     console.error(`[CRON] Invalid cron expr="${cronExpr}" \u2014 sync cron NOT started`);
     return;
   }
-  const runIncrementalTick = (trigger) => {
+  const runIncrementalTick = async (trigger) => {
     if (trigger === "interval") {
       console.log("\n--- [CRON INTERVAL START] --- Fetching Shopee orders...");
     }
@@ -75341,7 +75676,7 @@ function scheduleAutoIncrementalOrdersSync(deps23 = {}) {
         });
         return;
       }
-      const ack = triggerBackgroundOrderSync({
+      const ack = await triggerBackgroundOrderSync({
         lookbackSec,
         trigger,
         allowShortLookback: true,
@@ -75987,7 +76322,7 @@ function normalizeShopeeProductIds(payload) {
 init_appPaths();
 
 // src/webhooks/shopeeSignature.ts
-var import_node_crypto = __toESM(require("node:crypto"), 1);
+var import_node_crypto2 = __toESM(require("node:crypto"), 1);
 function normalizeSignature(value) {
   return value.trim().replace(/^(?:Bearer|HMAC)\s+/i, "").replace(/^sha256=/i, "").trim().toLowerCase();
 }
@@ -75995,7 +76330,7 @@ function timingSafeEqualHex(a, b) {
   try {
     const aBuf = Buffer.from(a, "hex");
     const bBuf = Buffer.from(b, "hex");
-    return aBuf.length === bBuf.length && import_node_crypto.default.timingSafeEqual(aBuf, bBuf);
+    return aBuf.length === bBuf.length && import_node_crypto2.default.timingSafeEqual(aBuf, bBuf);
   } catch {
     return false;
   }
@@ -76049,7 +76384,7 @@ function verifyShopeeWebhookSignature(rawBody, authorization, requestUrls = []) 
   }
   for (const url2 of candidates) {
     const baseString = `${url2}|${bodyStr}`;
-    const expected = import_node_crypto.default.createHmac("sha256", secret).update(baseString).digest("hex");
+    const expected = import_node_crypto2.default.createHmac("sha256", secret).update(baseString).digest("hex");
     if (timingSafeEqualHex(expected, supplied)) {
       console.log(`[Shopee Webhook] HMAC OK (url=${url2})`);
       return true;
@@ -76057,19 +76392,18 @@ function verifyShopeeWebhookSignature(rawBody, authorization, requestUrls = []) 
   }
   console.warn("[Shopee Webhook] HMAC mismatch", {
     bodyBytes: Buffer.byteLength(bodyStr, "utf8"),
-    urlCandidates: candidates,
-    suppliedPrefix: supplied.slice(0, 12)
+    urlCandidates: candidates
   });
   return false;
 }
 
 // models/Chat.js
-var import_mongoose2 = __toESM(require("mongoose"), 1);
-var ConversationSchema = new import_mongoose2.default.Schema(
+var import_mongoose3 = __toESM(require("mongoose"), 1);
+var ConversationSchema = new import_mongoose3.default.Schema(
   {
     shop_id: { type: Number, required: true, index: true },
     conversation_id: { type: String, required: true, trim: true },
-    customer_id: { type: import_mongoose2.default.Schema.Types.Mixed, required: true },
+    customer_id: { type: import_mongoose3.default.Schema.Types.Mixed, required: true },
     customer_name: { type: String, default: "", trim: true },
     customer_avatar: { type: String, default: "", trim: true },
     unread_count: { type: Number, default: 0, min: 0 },
@@ -76093,7 +76427,7 @@ ConversationSchema.index(
   { shop_id: 1, unread_count: 1, last_updated_at: -1 },
   { name: "chat_conv_shop_unread" }
 );
-var ChatMessageSchema = new import_mongoose2.default.Schema(
+var ChatMessageSchema = new import_mongoose3.default.Schema(
   {
     conversation_id: { type: String, required: true, trim: true, index: true },
     message_id: { type: String, required: true, trim: true },
@@ -76102,7 +76436,7 @@ var ChatMessageSchema = new import_mongoose2.default.Schema(
       required: true,
       enum: ["shop", "customer"]
     },
-    content: { type: import_mongoose2.default.Schema.Types.Mixed, default: () => ({}) },
+    content: { type: import_mongoose3.default.Schema.Types.Mixed, default: () => ({}) },
     created_at: { type: Date, default: Date.now }
   },
   {
@@ -76118,7 +76452,7 @@ ChatMessageSchema.index(
   { conversation_id: 1, created_at: 1 },
   { name: "chat_msg_conversation_created" }
 );
-var QuickReplySchema = new import_mongoose2.default.Schema(
+var QuickReplySchema = new import_mongoose3.default.Schema(
   {
     shortcut: { type: String, required: true, trim: true },
     content: { type: String, required: true, trim: true }
@@ -76129,9 +76463,9 @@ var QuickReplySchema = new import_mongoose2.default.Schema(
   }
 );
 QuickReplySchema.index({ shortcut: 1 }, { unique: true, name: "chat_quick_reply_shortcut" });
-var Conversation = import_mongoose2.default.models.Conversation || import_mongoose2.default.model("Conversation", ConversationSchema);
-var ChatMessage = import_mongoose2.default.models.ChatMessage || import_mongoose2.default.model("ChatMessage", ChatMessageSchema);
-var QuickReply = import_mongoose2.default.models.QuickReply || import_mongoose2.default.model("QuickReply", QuickReplySchema);
+var Conversation = import_mongoose3.default.models.Conversation || import_mongoose3.default.model("Conversation", ConversationSchema);
+var ChatMessage = import_mongoose3.default.models.ChatMessage || import_mongoose3.default.model("ChatMessage", ChatMessageSchema);
+var QuickReply = import_mongoose3.default.models.QuickReply || import_mongoose3.default.model("QuickReply", QuickReplySchema);
 
 // services/shopee/auth.js
 var import_fs3 = __toESM(require("fs"), 1);
@@ -76675,8 +77009,8 @@ function maskTokenStoreForLog(tokens) {
       merchant_id_list: record?.merchant_id_list ?? [],
       expire_in: record?.expire_in ?? null,
       obtained_at: record?.obtained_at ?? null,
-      access_token: record?.access_token ? `${String(record.access_token).slice(0, 16)}\u2026` : null,
-      refresh_token: record?.refresh_token ? `${String(record.refresh_token).slice(0, 16)}\u2026` : null
+      access_token: record?.access_token ? "[REDACTED]" : null,
+      refresh_token: record?.refresh_token ? "[REDACTED]" : null
     };
   }
   return masked;
@@ -76896,7 +77230,7 @@ function persistOAuthTokens(authJson, opts) {
   const updates = {};
   for (const id of shopIds) {
     updates[id] = buildShopeeTokenRecord(id, authJson, tokenOwner || id, loadShopeeTokens()[id]);
-    console.log("DEBUG SAVE: Saving data for shop:", id, "Full Data:", JSON.stringify(updates[id]));
+    console.log("DEBUG SAVE: Saving data for shop:", id, "Full Data:", JSON.stringify(safeTokenMetadata(updates[id])));
   }
   saveShopeeTokens(updates);
   for (const id of shopIds) {
@@ -77271,7 +77605,7 @@ async function exchangeShopeeCodeForToken(code, opts) {
       message: error?.message || "Kh\xF4ng g\u1ECDi \u0111\u01B0\u1EE3c Shopee token/get"
     };
   }
-  console.log("DEBUG RAW RESPONSE:", rawText);
+  console.log("[Shopee OAuth] response bytes:", Buffer.byteLength(rawText || "", "utf8"));
   let json2;
   try {
     json2 = rawText ? parseShopeeJson(rawText) : {};
@@ -77280,7 +77614,7 @@ async function exchangeShopeeCodeForToken(code, opts) {
     return { error: "invalid_json", message: rawText.slice(0, 500) };
   }
   json2 = normalizeShopeeTokenResponse(json2);
-  console.log("DEBUG NORMALIZED RESPONSE:", JSON.stringify(json2));
+  console.log("DEBUG NORMALIZED RESPONSE:", JSON.stringify(safeTokenMetadata(json2)));
   console.log(`[Shopee API] POST ${apiPath} (env=${SHOPEE_ENV}) -> HTTP ${res.status}`);
   if (json2.access_token && json2.refresh_token) {
     console.log(
@@ -77288,8 +77622,8 @@ async function exchangeShopeeCodeForToken(code, opts) {
       JSON.stringify({
         shop_id: shopId || null,
         main_account_id: mainAccountId || null,
-        access_token: `${String(json2.access_token).slice(0, 16)}\u2026`,
-        refresh_token: `${String(json2.refresh_token).slice(0, 16)}\u2026`,
+        access_token: "[REDACTED]",
+        refresh_token: "[REDACTED]",
         expire_in: json2.expire_in,
         shop_id_list: json2.shop_id_list || []
       })
@@ -77332,7 +77666,7 @@ async function refreshShopeeToken(shopId, refreshToken) {
     const json2 = rawText ? parseShopeeJson(rawText) : {};
     console.log(
       `[Shopee API] POST ${apiPath} (refresh shop_id=${key}) -> HTTP ${res.status}:`,
-      JSON.stringify(json2)
+      JSON.stringify(safeTokenMetadata(json2))
     );
     const normalized = normalizeShopeeTokenResponse(json2);
     if (normalized.access_token) {
@@ -77679,7 +78013,7 @@ async function getValidShopeeAccessToken(shopId) {
       console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
       return null;
     }
-    console.error(`[Shopee API] Refresh token th\u1EA5t b\u1EA1i shop_id=${key}:`, err);
+    console.error(`[Shopee API] Refresh token th\u1EA5t b\u1EA1i shop_id=${key}:`, safeError(err));
     console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
     return null;
   }
@@ -78118,264 +78452,6 @@ async function sendShopeeChatText({ shopId, toId, text }) {
   };
 }
 
-// models/WebhookJob.js
-var import_mongoose3 = __toESM(require("mongoose"), 1);
-var WebhookJobSchema = new import_mongoose3.default.Schema(
-  {
-    jobId: {
-      type: String,
-      required: true,
-      trim: true
-    },
-    payload: {
-      type: import_mongoose3.default.Schema.Types.Mixed,
-      required: true
-    },
-    state: {
-      type: String,
-      enum: ["pending", "running", "succeeded", "failed"],
-      default: "pending",
-      required: true
-    },
-    retry_count: {
-      type: Number,
-      default: 0,
-      min: 0
-    },
-    error_log: {
-      type: String,
-      default: ""
-    },
-    next_run_at: {
-      type: Date,
-      default: Date.now,
-      required: true
-    }
-  },
-  {
-    collection: "webhook_jobs",
-    versionKey: false,
-    timestamps: true
-  }
-);
-WebhookJobSchema.index({ jobId: 1 }, { unique: true, name: "webhook_jobs_jobId_unique" });
-WebhookJobSchema.index({ state: 1, next_run_at: 1 }, { name: "webhook_jobs_state_next_run" });
-var WebhookJob = import_mongoose3.default.models.WebhookJob || import_mongoose3.default.model("WebhookJob", WebhookJobSchema);
-var WebhookJob_default = WebhookJob;
-
-// services/webhookJobQueue.js
-var DRAIN_INTERVAL_MS = 8e3;
-var BATCH_LIMIT = 5;
-var JOB_GAP_MS = 400;
-var MAX_RETRY = 5;
-var RUNNING_LEASE_MS = 4 * 60 * 1e3;
-var STALE_JOB_MAX_AGE_MS = 15 * 60 * 1e3;
-var STALE_SWEEP_INTERVAL_MS = 6e4;
-var STALE_SKIP_LOG = "stale_skipped";
-var timer = null;
-var draining = false;
-var processor = null;
-function delay2(ms) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-function isDuplicateKeyError(err) {
-  const code = err?.code ?? err?.cause?.code;
-  if (code === 11e3 || code === 11001) return true;
-  const msg = String(err?.message || "");
-  return msg.includes("E11000") || msg.includes("duplicate key");
-}
-function backoffMs(retryCount) {
-  const n = Number(retryCount) || 1;
-  if (n <= 1) return 6e4;
-  return 12e4;
-}
-async function enqueueWebhookJob(input) {
-  const jobId = String(input?.jobId || "").trim();
-  const payload = input?.payload;
-  if (!jobId || !payload || typeof payload !== "object") {
-    throw new Error("webhook_job_invalid");
-  }
-  try {
-    await WebhookJob_default.create({
-      jobId,
-      payload,
-      state: "pending",
-      retry_count: 0,
-      error_log: "",
-      next_run_at: /* @__PURE__ */ new Date()
-    });
-    return { ok: true, duplicate: false, jobId };
-  } catch (err) {
-    if (isDuplicateKeyError(err)) {
-      return { ok: true, duplicate: true, jobId };
-    }
-    throw err;
-  }
-}
-async function claimNextJob() {
-  const now = /* @__PURE__ */ new Date();
-  const leaseUntil = new Date(now.getTime() + RUNNING_LEASE_MS);
-  return WebhookJob_default.findOneAndUpdate(
-    {
-      $or: [
-        { state: "pending", next_run_at: { $lte: now } },
-        { state: "failed", next_run_at: { $lte: now }, retry_count: { $lt: MAX_RETRY } },
-        { state: "running", next_run_at: { $lte: now }, retry_count: { $lt: MAX_RETRY } }
-      ]
-    },
-    [
-      {
-        $set: {
-          retry_count: {
-            $cond: [{ $eq: ["$state", "running"] }, { $add: ["$retry_count", 1] }, "$retry_count"]
-          },
-          state: "running",
-          next_run_at: leaseUntil
-        }
-      }
-    ],
-    // Mongoose 9 chặn update dạng mảng (pipeline) nếu thiếu updatePipeline.
-    { sort: { next_run_at: 1, _id: 1 }, returnDocument: "after", updatePipeline: true }
-  ).lean();
-}
-var lastStaleSweepAt = 0;
-async function sweepStaleJobs() {
-  const now = Date.now();
-  if (now - lastStaleSweepAt < STALE_SWEEP_INTERVAL_MS) return;
-  lastStaleSweepAt = now;
-  const cutoff = new Date(now - STALE_JOB_MAX_AGE_MS);
-  const result = await WebhookJob_default.updateMany(
-    { state: { $in: ["pending", "failed"] }, createdAt: { $lt: cutoff } },
-    { $set: { state: "succeeded", error_log: STALE_SKIP_LOG, next_run_at: new Date(now) } }
-  );
-  if (result?.modifiedCount) {
-    console.warn(
-      `[WebhookJobQueue] stale sweep: b\u1ECF qua ${result.modifiedCount} job c\u0169 h\u01A1n ${STALE_JOB_MAX_AGE_MS / 6e4} ph\xFAt`
-    );
-  }
-}
-function isStaleJob(job) {
-  const created = job?.createdAt ? new Date(job.createdAt).getTime() : NaN;
-  return Number.isFinite(created) && Date.now() - created > STALE_JOB_MAX_AGE_MS;
-}
-async function markSucceeded(job, note = "") {
-  await WebhookJob_default.updateOne(
-    { _id: job._id, state: "running", next_run_at: job.next_run_at },
-    { $set: { state: "succeeded", error_log: note, next_run_at: /* @__PURE__ */ new Date() } }
-  );
-}
-async function markFailed(job, err) {
-  const retry2 = Number(job.retry_count || 0) + 1;
-  const message = String(err?.message || err || "webhook_job_failed").slice(0, 2e3);
-  const nextRun = new Date(Date.now() + backoffMs(retry2));
-  const result = await WebhookJob_default.updateOne(
-    { _id: job._id, state: "running", next_run_at: job.next_run_at },
-    {
-      $set: {
-        state: "failed",
-        retry_count: retry2,
-        error_log: message,
-        next_run_at: nextRun
-      }
-    }
-  );
-  if (!result.matchedCount) {
-    console.warn(
-      `[WebhookJobQueue] skip fail-write jobId=${job.jobId} \u2014 job \u0111\xE3 b\u1ECB claim l\u1EA1i`
-    );
-    return;
-  }
-  console.error(
-    `[WebhookJobQueue] job failed jobId=${job.jobId} retry=${retry2}/${MAX_RETRY} next_run_at=${nextRun.toISOString()} \u2014 ${message}`
-  );
-}
-async function runClaimedJob(job) {
-  if (typeof processor !== "function") {
-    throw new Error("webhook_job_processor_missing");
-  }
-  if (isStaleJob(job)) {
-    await markSucceeded(job, STALE_SKIP_LOG);
-    return false;
-  }
-  await processor(job.payload);
-  await markSucceeded(job);
-  return true;
-}
-async function drainOnce() {
-  if (draining) return;
-  if (typeof processor !== "function") return;
-  draining = true;
-  try {
-    try {
-      await sweepStaleJobs();
-    } catch (sweepErr) {
-      console.error("[WebhookJobQueue] stale sweep failed:", sweepErr?.message || sweepErr);
-    }
-    for (let i2 = 0; i2 < BATCH_LIMIT; i2 += 1) {
-      let job = null;
-      try {
-        job = await claimNextJob();
-      } catch (claimErr) {
-        console.error(
-          "[WebhookJobQueue] claim failed:",
-          claimErr?.message || claimErr
-        );
-        break;
-      }
-      if (!job) break;
-      try {
-        const processed = await runClaimedJob(job);
-        console.log(
-          processed ? `[WebhookJobQueue] job succeeded jobId=${job.jobId}` : `[WebhookJobQueue] job stale skipped jobId=${job.jobId}`
-        );
-      } catch (jobErr) {
-        try {
-          await markFailed(job, jobErr);
-        } catch (writeErr) {
-          console.error(
-            `[WebhookJobQueue] markFailed crashed jobId=${job.jobId}:`,
-            writeErr?.message || writeErr
-          );
-        }
-      }
-      if (i2 < BATCH_LIMIT - 1) {
-        await delay2(JOB_GAP_MS);
-      }
-    }
-  } catch (err) {
-    console.error("[WebhookJobQueue] drainOnce failed:", err?.message || err);
-  } finally {
-    draining = false;
-  }
-}
-function startWebhookJobDrainer(processPayload) {
-  if (typeof processPayload === "function") {
-    processor = processPayload;
-  }
-  if (timer) return;
-  timer = setInterval(() => {
-    void drainOnce().catch((err) => {
-      console.error("[WebhookJobQueue] drain tick failed:", err?.message || err);
-    });
-  }, DRAIN_INTERVAL_MS);
-  if (typeof timer.unref === "function") timer.unref();
-  console.log(
-    `[WebhookJobQueue] drainer ON interval=${DRAIN_INTERVAL_MS}ms batch=${BATCH_LIMIT} gapMs=${JOB_GAP_MS}`
-  );
-  void drainOnce().catch((err) => {
-    console.error("[WebhookJobQueue] boot drain failed:", err?.message || err);
-  });
-}
-function stopWebhookJobDrainer() {
-  if (timer) {
-    clearInterval(timer);
-    timer = null;
-  }
-  console.log("[WebhookJobQueue] drainer OFF");
-}
-
 // src/webhooks/shopeeWebhookHandler.ts
 var lastWebhookAt = 0;
 function markWebhookReceived() {
@@ -78476,7 +78552,7 @@ function parseWebhookBody(reqBody) {
       return coerceWebhookPayload(reqBody);
     }
   } catch (err) {
-    console.error("[Shopee Webhook] JSON parse failed:", err);
+    console.error("[Shopee Webhook] JSON parse failed:", safeError(err));
   }
   return null;
 }
@@ -78576,13 +78652,11 @@ async function processShopeeWebhookAsync(snapshot, rawBodyPromise, eagerStubOrde
         bodyBytes
       }
     );
-    console.log("[WEBHOOK RECEIVED] req.body (full):", rawBody.toString("utf8"));
     const payload = parseWebhookBody(rawBody);
     if (!payload) {
       console.log("[Shopee Webhook] Invalid JSON after ACK \u2014 nothing to process.");
       return;
     }
-    console.log("[WEBHOOK RECEIVED] req.body (parsed object):", JSON.stringify(payload));
     const data = unwrapWebhookData(payload);
     const code = Number(payload.code ?? data.code);
     const routeLabel = String(snapshot.routeLabel || "");
@@ -78612,14 +78686,6 @@ async function processShopeeWebhookAsync(snapshot, rawBodyPromise, eagerStubOrde
       return;
     }
     console.log("[WEBHOOK] Nh\u1EADn event m\u1EDBi:", orderSn, status || "");
-    if (eagerStubOrder) {
-      try {
-        await eagerStubOrder(payload);
-      } catch (stubErr) {
-        console.error("[WEBHOOK DB ERROR]:", stubErr);
-        console.error("Stub order error:", stubErr);
-      }
-    }
     const shopId = String(payload.shop_id ?? data.shop_id ?? "").trim();
     const updateTime = String(
       data.update_time ?? data.updateTime ?? payload.timestamp ?? data.timestamp ?? "0"
@@ -78650,7 +78716,7 @@ async function processShopeeWebhookAsync(snapshot, rawBodyPromise, eagerStubOrde
     } catch (queueErr) {
       console.error(
         "[WEBHOOK] enqueue webhook_jobs failed:",
-        queueErr instanceof Error ? queueErr.message : queueErr
+        safeError(queueErr)
       );
       if (onQueueOverflow) {
         try {
@@ -78658,7 +78724,7 @@ async function processShopeeWebhookAsync(snapshot, rawBodyPromise, eagerStubOrde
         } catch (overflowErr) {
           console.error(
             "[WEBHOOK] overflow fallback failed:",
-            overflowErr instanceof Error ? overflowErr.message : overflowErr
+            safeError(overflowErr)
           );
         }
       }
@@ -78666,7 +78732,7 @@ async function processShopeeWebhookAsync(snapshot, rawBodyPromise, eagerStubOrde
   } catch (error) {
     console.error(
       "[Shopee Webhook] processShopeeWebhookAsync failed after ACK:",
-      error instanceof Error ? error.stack || error.message : error
+      safeError(error)
     );
   }
 }
@@ -78682,7 +78748,7 @@ function createShopeeWebhookRouter(_processPayload, routePath = "/shopee", optio
     ackShopeeOk(res);
   });
   router30.post(paths, (req, res) => {
-    console.log("\n--- [WEBHOOK TRIGGERED] ---", JSON.stringify(req.body));
+    console.log("[WEBHOOK TRIGGERED]");
     console.log(
       "[WEBHOOK TRIGGERED] meta",
       JSON.stringify({
@@ -78699,7 +78765,7 @@ function createShopeeWebhookRouter(_processPayload, routePath = "/shopee", optio
         "[WEBHOOK] SILENT? raw body ch\u01B0a emit end sau 8s \u2014 listener c\xF3 th\u1EC3 g\u1EAFn sau khi stream \u0111\xE3 b\u1ECB consume. ACK \u0111\xE3 g\u1EEDi n\xEAn Shopee kh\xF4ng retry."
       );
     }, 8e3);
-    void rawBodyPromise.finally(() => clearTimeout(rawBodyWatch));
+    void rawBodyPromise.then(() => clearTimeout(rawBodyWatch), () => clearTimeout(rawBodyWatch));
     ackShopeeOk(res);
     const snapshot = {
       routeLabel: `POST ${req.originalUrl || req.url}`,
@@ -78715,7 +78781,7 @@ function createShopeeWebhookRouter(_processPayload, routePath = "/shopee", optio
       options.eagerStubOrder,
       options.onQueueOverflow
     ).catch((error) => {
-      console.error("L\u1ED7i x\u1EED l\xFD ng\u1EA7m Webhook Shopee:", error);
+      console.error("L\u1ED7i x\u1EED l\xFD ng\u1EA7m Webhook Shopee:", safeError(error));
     });
   });
   return router30;
@@ -79803,6 +79869,52 @@ function isMongoTimeoutOrNetworkError(err) {
   return /serverSelection|ServerSelectionError|MongoServerSelectionError|MongoNetworkTimeoutError|MongoNetworkError|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ETIMEOUT|timed out|timeout|27017|topology was destroyed|connection.*closed|pool destroyed|checking out a connection|wait queue|WaitQueueTimeout/i.test(
     `${msg} ${name}`
   );
+}
+
+// services/orderSync/orderIdentity.js
+async function resolveShopeeOrderIdentities(orders, db, OrderModel2) {
+  const rows = orders.filter((o) => String(o.channel || "shopee").toLowerCase() === "shopee" && String(o.shopId ?? o.shop_id ?? "").trim() && String(o.orderSn ?? o.order_sn ?? "").trim());
+  const result = /* @__PURE__ */ new Map();
+  if (!rows.length) return result;
+  const identities = db.collection("shopee_order_idempotency");
+  const snOf = (o) => String(o.orderSn ?? o.order_sn ?? "").trim();
+  const shopOf = (o) => String(o.shopId ?? o.shop_id ?? "").trim();
+  const idOf = (o) => String(o.id || `shopee-${snOf(o)}`).trim();
+  const keys = [...new Set(rows.map((o) => `${shopOf(o)}:${snOf(o)}`))];
+  const existing = await OrderModel2.find({
+    $or: [{ orderSn: { $in: rows.map(snOf) } }, { _id: { $in: rows.map(idOf) } }]
+  }).select({ _id: 1, shopId: 1, orderSn: 1 }).lean();
+  const byId = new Map(existing.map((o) => [String(o._id), o]));
+  const byPair = new Map(existing.map((o) => [`${o.shopId || ""}:${o.orderSn || ""}`, o]));
+  const operations = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    const shopId = shopOf(row);
+    const orderSn = snOf(row);
+    const key = `${shopId}:${orderSn}`;
+    const current = byPair.get(key) || byPair.get(`:${orderSn}`);
+    const documentId = current ? String(current._id) : idOf(row);
+    const collision = byId.get(documentId);
+    if (collision?.shopId && String(collision.shopId) !== shopId) {
+      throw new Error("shopee_order_shop_identity_conflict");
+    }
+    operations.set(key, { updateOne: {
+      filter: { _id: key },
+      update: { $setOnInsert: { documentId, shopId, orderSn, createdAt: /* @__PURE__ */ new Date() } },
+      upsert: true
+    } });
+  }
+  try {
+    await identities.bulkWrite([...operations.values()], { ordered: false });
+  } catch (error) {
+    const errors = error?.writeErrors;
+    if (error?.code !== 11e3 || !Array.isArray(errors) || !errors.length || errors.some((e2) => e2.code !== 11e3) || error?.writeConcernErrors?.length) throw error;
+  }
+  const mappings = await identities.find({ _id: { $in: keys } }).toArray();
+  for (const mapping of mappings) {
+    if (mapping.documentId) result.set(String(mapping._id), String(mapping.documentId));
+  }
+  if (keys.some((key) => !result.has(key))) throw new Error("shopee_order_identity_missing");
+  return result;
 }
 
 // src/db/mongoStore.ts
@@ -82699,12 +82811,14 @@ async function bulkUpsertOrdersToStore(orders) {
   requireMongo();
   const list = Array.isArray(orders) ? orders.filter((o) => o != null && typeof o === "object") : [];
   if (list.length === 0) return 0;
+  const identityIds = await resolveShopeeOrderIdentities(list, import_mongoose6.default.connection.db, OrderModel);
   const pendingWrites = [];
   for (const order of list) {
     const id = String(order.id || "").trim();
     const orderSn = String(order.orderSn || order.order_sn || "").trim();
     if (!id && !orderSn) continue;
-    const _id = id || `shopee-${orderSn}`;
+    const identityShop = String(order.shopId ?? order.shop_id ?? "").trim();
+    const _id = identityIds.get(identityShop + ":" + orderSn) || id || "shopee-" + orderSn;
     const rawStatus = String(
       order.shopee_order_status || order.order_status || ""
     ).trim().toUpperCase();
@@ -130173,7 +130287,7 @@ var deps16 = {
 function initShopeeOrdersController(partial) {
   deps16 = { ...deps16, ...partial };
 }
-async function runOrdersPull(opts) {
+async function runQueuedOrdersPull(opts) {
   const {
     lookbackSec,
     shopIds,
@@ -130458,38 +130572,8 @@ function resolveFullSyncLookbackHours(raw) {
   if (!Number.isFinite(hoursRaw) || hoursRaw <= 0) return 14 * 24;
   return Math.min(Math.max(hoursRaw, FULL_SYNC_MIN_LOOKBACK_HOURS), FULL_SYNC_MAX_LOOKBACK_HOURS);
 }
-function ackBackgroundPull(res, meta) {
-  sendJson(res, 200, {
-    status: 200,
-    success: true,
-    background: true,
-    message: "H\u1EC7 th\u1ED1ng \u0111ang \u0111\u1ED3ng b\u1ED9 ng\u1EA7m",
-    pulled: 0,
-    added: 0,
-    updated: 0,
-    shopee_response: null,
-    ...meta
-  });
-}
-function fireOrdersPullInBackground(pullOpts) {
-  setImmediate(() => {
-    void (async () => {
-      console.log(
-        `[${pullOpts.logTag}] B\u1EAFt \u0111\u1EA7u ch\u1EA1y ti\u1EBFn tr\xECnh ng\u1EA7m lookbackSec=${pullOpts.lookbackSec}`
-      );
-      try {
-        const result = await runOrdersPull(pullOpts);
-        console.log(
-          `[${pullOpts.logTag}] BG done pulled=${result?.pulled || 0} +${result?.added || 0}/~${result?.updated || 0} msg=${result?.message || ""}`
-        );
-      } catch (bgErr) {
-        console.error(
-          `[${pullOpts.logTag}] BG failed:`,
-          bgErr?.stack || bgErr?.message || bgErr
-        );
-      }
-    })();
-  });
+async function fireOrdersPullInBackground(pullOpts) {
+  return enqueueOrderSyncJob({ ...pullOpts, mode: "full", trigger: "manual" }, 10);
 }
 async function pullOrders(req, res) {
   console.log("=== B\u1EAET \u0110\u1EA6U PULL ORDERS (BG) ===");
@@ -130502,25 +130586,14 @@ async function pullOrders(req, res) {
     console.log(
       `Pull trigger shop_id${shopIds?.length ? `: [${shopIds.join(",")}]` : ": all"} lookback_hours=${hours}`
     );
-    if (typeof deps16.isOrdersPullLocked === "function" && deps16.isOrdersPullLocked()) {
-      sendJson(res, 200, {
-        status: 200,
-        success: true,
-        warning: true,
-        background: true,
-        message: "H\u1EC7 th\u1ED1ng \u0111ang trong qu\xE1 tr\xECnh \u0111\u1ED3ng b\u1ED9 ng\u1EA7m. Vui l\xF2ng \u0111\u1EE3i trong gi\xE2y l\xE1t",
-        shopee_response: { skipped: true, reason: "pull_in_flight" }
-      });
-      return;
-    }
-    ackBackgroundPull(res, { lookbackSec, mode: "full" });
-    fireOrdersPullInBackground({
+    const queued = await fireOrdersPullInBackground({
       lookbackSec,
       shopIds,
       username,
       jobType: "shopee_orders_pull",
       logTag: "Orders Pull BG"
     });
+    sendJson(res, 200, { ...queued, success: true, mode: "full", lookbackSec });
     return;
   } catch (err) {
     console.error("[API_SYNC_ERROR] pullOrders:", err?.stack || err);
@@ -130545,25 +130618,14 @@ async function syncOrders(req, res) {
     console.log(
       `Sync trigger shop_id${shopIds?.length ? `: [${shopIds.join(",")}]` : ": all"} lookback_hours=${hours}`
     );
-    if (typeof deps16.isOrdersPullLocked === "function" && deps16.isOrdersPullLocked()) {
-      sendJson(res, 200, {
-        status: 200,
-        success: true,
-        warning: true,
-        background: true,
-        message: "H\u1EC7 th\u1ED1ng \u0111ang trong qu\xE1 tr\xECnh \u0111\u1ED3ng b\u1ED9 ng\u1EA7m. Vui l\xF2ng \u0111\u1EE3i trong gi\xE2y l\xE1t",
-        shopee_response: { skipped: true, reason: "pull_in_flight" }
-      });
-      return;
-    }
-    ackBackgroundPull(res, { lookbackSec, mode: "full" });
-    fireOrdersPullInBackground({
+    const queued = await fireOrdersPullInBackground({
       lookbackSec,
       shopIds,
       username,
       jobType: "shopee_orders_sync",
       logTag: "Orders Sync BG"
     });
+    sendJson(res, 200, { ...queued, success: true, mode: "full", lookbackSec });
     return;
   } catch (err) {
     console.error("[API_SYNC_ERROR] syncOrders:", err?.stack || err);
@@ -130579,54 +130641,14 @@ async function syncOrders(req, res) {
 }
 var QUICK_SYNC_LOOKBACK_SEC = 3 * 60 * 60;
 async function respondManualQuickSync3h(req, res, ctx) {
-  const lookbackSec = QUICK_SYNC_LOOKBACK_SEC;
-  const shopIds = ctx?.shopIds;
-  const username = String(ctx?.username || req.user?.username || "");
-  console.log(
-    `[Manual Sync 3h] API start user=${username || "(anon)"} shop_id${shopIds?.length ? `: [${shopIds.join(",")}]` : ": all"} lookbackSec=${lookbackSec}`
-  );
-  try {
-    const result = await deps16.runManualQuickSync3h({
-      lookbackSec,
-      shopIds: shopIds?.length ? shopIds : void 0
-    });
-    const skipped = result?.skipped === true;
-    sendJson(res, result?.success === false ? 500 : 200, {
-      status: result?.success === false ? 500 : 200,
-      success: result?.success !== false,
-      warning: skipped,
-      background: false,
-      mode: "quick_sync",
-      lookbackSec: result?.lookbackSec || lookbackSec,
-      time_from: result?.timeFrom,
-      time_to: result?.timeTo,
-      scanned: result?.scanned || 0,
-      pulled: result?.pulled || 0,
-      added: result?.added || 0,
-      updated: result?.updated || 0,
-      shops: result?.shops || 0,
-      sweeps: result?.sweeps || [],
-      errors: result?.errors || [],
-      elapsedMs: result?.elapsedMs || 0,
-      message: result?.message || `\u0110\xE3 qu\xE9t ${result?.scanned || 0} \u0111\u01A1n, th\xEAm ${result?.added || 0}, c\u1EADp nh\u1EADt ${result?.updated || 0}.`,
-      shopee_response: skipped ? { skipped: true, reason: result?.reason || "manual_sync_in_flight" } : { sweeps: result?.sweeps || [] }
-    });
-  } catch (err) {
-    console.error("[MANUAL SYNC ERROR DETAIL]:", err.response?.data || err.message);
-    console.error("[API_SYNC_ERROR] Manual Sync 3h:", err?.stack || err);
-    if (!res.headersSent) {
-      sendJson(res, 500, {
-        success: false,
-        background: false,
-        mode: "quick_sync",
-        scanned: 0,
-        pulled: 0,
-        added: 0,
-        updated: 0,
-        message: friendlyPullError(err)
-      });
-    }
-  }
+  const queued = await enqueueOrderSyncJob({
+    mode: "quick",
+    trigger: "manual",
+    lookbackSec: QUICK_SYNC_LOOKBACK_SEC,
+    shopIds: ctx?.shopIds,
+    username: ctx?.username
+  }, 10);
+  sendJson(res, 200, { ...queued, success: true, mode: "quick_sync", lookbackSec: QUICK_SYNC_LOOKBACK_SEC });
 }
 async function syncShopee(req, res) {
   try {
@@ -130638,77 +130660,22 @@ async function syncShopee(req, res) {
     const shopIds = resolvePullShopIds(shopIdsRaw);
     const username = String(req.user?.username || "");
     if (isQuick) {
-      if (!res.headersSent) {
-        res.status(200).json({
-          success: true,
-          message: "H\u1EC7 th\u1ED1ng \u0111ang ti\u1EBFn h\xE0nh c\xE0o d\u1EEF li\u1EC7u ng\u1EA7m. Vui l\xF2ng t\u1EA3i l\u1EA1i trang sau 1-2 ph\xFAt."
-        });
-      }
-      const bgShopIds = shopIds;
-      const bgUsername = username;
-      Promise.resolve().then(async () => {
-        try {
-          console.log(
-            `[MANUAL SYNC BACKGROUND] start user=${bgUsername || "(anon)"} shop_id${bgShopIds?.length ? `: [${bgShopIds.join(",")}]` : ": all"} lookbackSec=${QUICK_SYNC_LOOKBACK_SEC}`
-          );
-          const result = await deps16.runManualQuickSync3h({
-            lookbackSec: QUICK_SYNC_LOOKBACK_SEC,
-            shopIds: bgShopIds?.length ? bgShopIds : void 0
-          });
-          console.log(
-            `[MANUAL SYNC BACKGROUND] done scanned=${result?.scanned || 0} pulled=${result?.pulled || 0} +${result?.added || 0}/~${result?.updated || 0} msg=${result?.message || ""}`
-          );
-        } catch (err) {
-          console.error("[MANUAL SYNC ERROR DETAIL]:", err.response?.data || err.message);
-          console.error("[MANUAL SYNC BACKGROUND ERROR]", err?.stack || err);
-        }
-      });
+      await respondManualQuickSync3h(req, res, { shopIds, username, lookbackSec });
       return;
     }
-    if (typeof deps16.isOrdersPullLocked === "function" && deps16.isOrdersPullLocked()) {
-      sendJson(res, 200, {
-        status: 200,
-        success: true,
-        warning: true,
-        background: true,
-        message: "H\u1EC7 th\u1ED1ng \u0111ang trong qu\xE1 tr\xECnh \u0111\u1ED3ng b\u1ED9 ng\u1EA7m. Vui l\xF2ng \u0111\u1EE3i trong gi\xE2y l\xE1t",
-        shopee_response: { skipped: true, reason: "pull_in_flight" }
-      });
-      return;
-    }
-    sendJson(res, 200, {
-      status: 200,
-      success: true,
-      background: true,
-      message: "H\u1EC7 th\u1ED1ng \u0111ang \u0111\u1ED3ng b\u1ED9 ng\u1EA7m",
-      mode: isQuick ? "quick_sync" : "full",
-      lookbackSec
-    });
-    setImmediate(() => {
-      void (async () => {
-        console.log(
-          `=== SYNC-SHOPEE BG START mode=${isQuick ? "quick" : "full"} lookbackSec=${lookbackSec} ===`
-        );
-        try {
-          const result = await runOrdersPull({
-            lookbackSec,
-            shopIds,
-            username,
-            jobType: isQuick ? "shopee_orders_quick_sync" : "shopee_orders_sync",
-            logTag: isQuick ? "Orders Sync-Shopee Quick" : "Orders Sync-Shopee",
-            allowShortLookback: isQuick,
-            // Quick cũng đối soát nhẹ: bắt SHIPPED cho đơn Đã xử lý / Đã giao ĐVVC.
-            reconcileActive: true,
-            skipCancelReturn: false
-          });
-          console.log(
-            `[Sync-Shopee BG] done pulled=${result?.pulled || 0} +${result?.added || 0}/~${result?.updated || 0} msg=${result?.message || ""}`
-          );
-        } catch (bgErr) {
-          console.error("[Sync-Shopee BG] failed:", bgErr?.stack || bgErr?.message || bgErr);
-        }
-      })();
-    });
+    const queued = await enqueueOrderSyncJob({
+      mode: "full",
+      trigger: "manual",
+      lookbackSec,
+      shopIds,
+      username,
+      jobType: "shopee_orders_sync",
+      logTag: "Orders Sync-Shopee",
+      allowShortLookback: false,
+      reconcileActive: true,
+      skipCancelReturn: false
+    }, 10);
+    sendJson(res, 200, { ...queued, success: true, mode: "full", lookbackSec });
     return;
   } catch (err) {
     console.error("[API_SYNC_ERROR] sync-shopee:", err?.stack || err);
@@ -134541,6 +134508,51 @@ async function updateWooCommerceOrderStatus(req, res) {
 // server.ts
 init_wooCommerce();
 
+// services/orderSync/orderWorkLock.js
+var import_node_crypto3 = __toESM(require("node:crypto"), 1);
+var import_mongoose14 = __toESM(require("mongoose"), 1);
+var import_node_os2 = __toESM(require("node:os"), 1);
+var completedOwners = /* @__PURE__ */ new Map();
+async function withOrderWorkLock(shopId, orderSn, work) {
+  if (!/^\d+$/.test(String(shopId)) || !/^[a-zA-Z0-9-]+$/.test(String(orderSn))) {
+    throw new Error("webhook_order_key_invalid");
+  }
+  const db = import_mongoose14.default.connection.db;
+  if (import_mongoose14.default.connection.readyState !== 1 || !db) throw new Error("mongodb_not_ready");
+  const locks = db.collection("shopee_order_work_locks");
+  const key = `${shopId}:${orderSn}`;
+  const owner = import_node_crypto3.default.randomUUID();
+  if (completedOwners.has(key)) {
+    await locks.deleteOne({ _id: key, owner: completedOwners.get(key) });
+    completedOwners.delete(key);
+  }
+  const previous = await locks.findOne({ _id: key });
+  if (previous && isOwnerProcessDead(previous)) {
+    await locks.deleteOne({ _id: key, owner: previous.owner });
+  }
+  try {
+    await locks.insertOne({ _id: key, owner, pid: process.pid, hostname: import_node_os2.default.hostname(), acquiredAt: /* @__PURE__ */ new Date(), heartbeatAt: /* @__PURE__ */ new Date() });
+  } catch (error) {
+    if (error?.code === 11e3) throw new Error("order_work_locked");
+    throw error;
+  }
+  const heartbeat = setInterval(() => {
+    void locks.updateOne({ _id: key, owner }, { $set: { heartbeatAt: /* @__PURE__ */ new Date() } }).catch(() => console.warn("[OrderWorkLock] heartbeat_failed"));
+  }, 3e4);
+  heartbeat.unref?.();
+  try {
+    return await work();
+  } finally {
+    clearInterval(heartbeat);
+    try {
+      await locks.deleteOne({ _id: key, owner });
+    } catch (error) {
+      completedOwners.set(key, owner);
+      throw error;
+    }
+  }
+}
+
 // controllers/shopeeWebhookController.js
 var deps21 = {
   parseShopeePushEvent: () => ({}),
@@ -134605,7 +134617,7 @@ function scheduleWebhookRescuePull(orderSn, shopId, reason = "webhook_detail_fai
   } catch (err) {
     console.warn(
       `[Shopee Webhook] scheduleWebhookRescuePull failed reason=${reason} order_sn=${sn}:`,
-      err?.message || err
+      safeError(err)
     );
   }
 }
@@ -134631,7 +134643,7 @@ async function loadWorkingOrdersForWebhook(orderSn) {
     } catch (err) {
       console.warn(
         `[Shopee Webhook] loadOrdersFromStore ${sn}:`,
-        err?.message || err
+        safeError(err)
       );
     }
   }
@@ -134641,21 +134653,21 @@ async function loadWorkingOrdersForWebhook(orderSn) {
       if (String(row?.orderSn || "").trim() === sn) pushUnique(row);
     }
   } catch (err) {
-    console.warn(`[Shopee Webhook] loadOrders JSON ${sn}:`, err?.message || err);
+    console.warn(`[Shopee Webhook] loadOrders JSON ${sn}:`, safeError(err));
   }
   return orders;
 }
 async function upsertOrderToDb(order, label = "") {
   if (!order?.orderSn) {
     console.log("\u{1F4BE} K\u1EBFt qu\u1EA3 l\u01B0u DB:", "th\u1EA5t b\u1EA1i \u2014 thi\u1EBFu orderSn");
-    return false;
+    throw new Error("webhook_order_sn_missing");
   }
   if (!deps21.isMongoReady()) {
     console.warn(
       `[Shopee Webhook] Mongo ch\u01B0a s\u1EB5n s\xE0ng \u2014 b\u1ECF qua upsert order_sn=${order.orderSn}`
     );
     console.log("\u{1F4BE} K\u1EBFt qu\u1EA3 l\u01B0u DB:", `th\u1EA5t b\u1EA1i \u2014 Mongo ch\u01B0a s\u1EB5n s\xE0ng (order_sn=${order.orderSn})`);
-    return false;
+    throw new Error("mongodb_not_ready");
   }
   try {
     await deps21.bulkUpsertOrdersToStore([order]);
@@ -134682,14 +134694,14 @@ async function upsertOrderToDb(order, label = "") {
   } catch (mongoErr) {
     console.error(
       `[Shopee Webhook] Mongo upsert FAILED order_sn=${order.orderSn}:`,
-      mongoErr?.message || mongoErr,
-      mongoErr?.stack || ""
+      safeError(mongoErr),
+      safeError(mongoErr)
     );
     console.log(
       "\u{1F4BE} K\u1EBFt qu\u1EA3 l\u01B0u DB:",
-      `l\u1ED7i \u2014 order_sn=${order.orderSn}: ${mongoErr?.message || mongoErr}`
+      `l\u1ED7i \u2014 order_sn=${order.orderSn}: ${safeError(mongoErr)}`
     );
-    return false;
+    throw mongoErr;
   }
 }
 function unwrapPushData(body) {
@@ -134806,7 +134818,7 @@ async function resolveWebhookShopAuth(shopId) {
       } catch (refreshErr) {
         console.error(
           `\u{1F511} Refresh Token TH\u1EA4T B\u1EA0I shop_id=${key}:`,
-          refreshErr?.message || refreshErr
+          safeError(refreshErr)
         );
         if (refreshErr instanceof ShopeeRefreshTokenExpiredError) {
           return {
@@ -134853,7 +134865,7 @@ async function resolveWebhookShopAuth(shopId) {
       refreshed
     };
   } catch (err) {
-    console.error(`\u{1F511} L\u1ED7i resolve token shop_id=${key}:`, err?.message || err);
+    console.error(`\u{1F511} L\u1ED7i resolve token shop_id=${key}:`, safeError(err));
     return {
       ok: false,
       message: err?.message || String(err),
@@ -134888,7 +134900,7 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
     } catch (listErr) {
       console.warn(
         "[Shopee Webhook] listShopeeOAuthShopIds failed:",
-        listErr?.message || listErr
+        safeError(listErr)
       );
     }
   }
@@ -134953,26 +134965,26 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
         } catch (retryRefreshErr) {
           console.error(
             `\u{1F511} Force refresh sau get_order_detail fail:`,
-            retryRefreshErr?.message || retryRefreshErr
+            safeError(retryRefreshErr)
           );
         }
       }
     } catch (detailErr) {
-      console.error("[GET DETAIL ERROR] cho m\xE3:", orderSn, detailErr);
+      console.error("[GET DETAIL ERROR] cho m\xE3:", orderSn, safeError(detailErr));
       console.error(
         `[Shopee Webhook] get_order_detail EXCEPTION order_sn=${orderSn} shop=${shopId}:`,
-        detailErr?.message || detailErr,
-        detailErr?.stack || ""
+        safeError(detailErr),
+        safeError(detailErr)
       );
       console.log(
         "\u{1F4E5} K\u1EBFt qu\u1EA3 g\u1ECDi API get_order_detail:",
-        `l\u1ED7i exception \u2014 order_sn=${orderSn} shop=${shopId}: ${detailErr?.message || detailErr}`
+        `l\u1ED7i exception \u2014 order_sn=${orderSn} shop=${shopId}: ${safeError(detailErr)}`
       );
       return null;
     }
     if (!normalized?.length) {
-      const errMsg = errors?.[0] ? `${errors[0].error || ""} ${errors[0].message || ""}`.trim() : "response r\u1ED7ng";
-      console.error("[GET DETAIL ERROR] cho m\xE3:", orderSn, errors?.[0] || errMsg);
+      const errMsg = errors?.[0] ? safeError(errors[0]) : "response_empty";
+      console.error("[GET DETAIL ERROR] cho m\xE3:", orderSn, "detail_failed");
       console.warn(
         `[Shopee Webhook] get_order_detail r\u1ED7ng order_sn=${orderSn} shop=${shopId}`,
         errMsg
@@ -135014,8 +135026,8 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
     } catch (persistErr) {
       console.error(
         `[Shopee Webhook] persistShopeeOrderChunk FAILED order_sn=${orderSn}:`,
-        persistErr?.message || persistErr,
-        persistErr?.stack || ""
+        safeError(persistErr),
+        safeError(persistErr)
       );
       const row = normalized[0];
       const idx = orders.findIndex((o) => String(o.orderSn) === String(row.orderSn));
@@ -135037,8 +135049,8 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
     } catch (shopLoopErr) {
       console.error(
         `[Shopee Webhook] fetchDetailAndUpsert EXCEPTION order_sn=${orderSn} shop=${shopId}:`,
-        shopLoopErr?.message || shopLoopErr,
-        shopLoopErr?.stack || ""
+        safeError(shopLoopErr),
+        safeError(shopLoopErr)
       );
     }
   }
@@ -135061,7 +135073,7 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
       } catch (fbErr) {
         console.error(
           `[Shopee Webhook] Fallback EXCEPTION shop=${shopId}:`,
-          fbErr?.message || fbErr
+          safeError(fbErr)
         );
       }
     }
@@ -135082,10 +135094,6 @@ async function processShopeeWebhookPayloadInner(body) {
     console.warn("[Shopee Webhook] processShopeeWebhookPayload \u2014 body kh\xF4ng ph\u1EA3i object");
     return { ok: true, skipped: true };
   }
-  console.log(
-    "[WEBHOOK RECEIVED] processShopeeWebhookPayload payload:",
-    JSON.stringify(body)
-  );
   if (String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "1").trim() === "0") {
     const peek = deps21.parseShopeePushEvent(body);
     console.log(
@@ -135138,7 +135146,7 @@ async function processShopeeWebhookPayloadInner(body) {
       } catch (tokenErr) {
         console.warn(
           `[Shopee Webhook] resolveWebhookShopAuth sau detail:`,
-          tokenErr?.message || tokenErr
+          safeError(tokenErr)
         );
       }
     }
@@ -135152,12 +135160,12 @@ async function processShopeeWebhookPayloadInner(body) {
       } catch (shallowErr) {
         console.error(
           `[Shopee Webhook] upsertShopeeWebhookShallow FAILED:`,
-          shallowErr?.message || shallowErr,
-          shallowErr?.stack || ""
+          safeError(shallowErr),
+          safeError(shallowErr)
         );
         console.log(
           "\u{1F4BE} K\u1EBFt qu\u1EA3 l\u01B0u DB:",
-          `shallow fallback l\u1ED7i \u2014 ${shallowErr?.message || shallowErr}`
+          `shallow fallback l\u1ED7i \u2014 ${safeError(shallowErr)}`
         );
       }
       scheduleWebhookRescuePull(orderSn, shopId, "webhook_detail_fail");
@@ -135167,7 +135175,7 @@ async function processShopeeWebhookPayloadInner(body) {
       try {
         await deps21.upsertShopeeWebhookShallow(body, orders);
       } catch (err) {
-        console.error("[WEBHOOK DB ERROR]:", err);
+        console.error("[WEBHOOK DB ERROR]:", safeError(err));
       }
       idx = orders.findIndex((o) => String(o.orderSn) === orderSn);
     }
@@ -135177,13 +135185,16 @@ async function processShopeeWebhookPayloadInner(body) {
       );
       const pushStatusUp = String(parsed.status || "").trim().toUpperCase();
       const detailRawUp = String(orders[idx].shopee_order_status || "").trim().toUpperCase();
-      const pushFields = fetchedDetail && pushStatusUp && !pushAdvancesDetail(detailRawUp, pushStatusUp) ? { ...parsed, status: "" } : parsed;
+      const eventAt = webhookEventTime(body);
+      const detailAt = new Date(orders[idx].last_shopee_update_at || 0).getTime();
+      const olderPush = eventAt != null && Number.isFinite(detailAt) && detailAt > eventAt;
+      const pushFields = olderPush ? { ...parsed, status: "", logisticsStatus: "" } : fetchedDetail && pushStatusUp && !pushAdvancesDetail(detailRawUp, pushStatusUp) ? { ...parsed, status: "" } : parsed;
       try {
         deps21.applyShopeePushFieldsToOrder(orders[idx], pushFields);
       } catch (applyErr) {
         console.warn(
           `[Shopee Webhook] applyShopeePushFieldsToOrder:`,
-          applyErr?.message || applyErr
+          safeError(applyErr)
         );
       }
       console.log(
@@ -135221,7 +135232,7 @@ async function processShopeeWebhookPayloadInner(body) {
       } catch (retErr) {
         console.warn(
           `[Shopee Webhook] applyWebhookReturnFallback:`,
-          retErr?.message || retErr
+          safeError(retErr)
         );
       }
     }
@@ -135235,12 +135246,12 @@ async function processShopeeWebhookPayloadInner(body) {
   } catch (processErr) {
     console.error(
       `[Shopee Webhook] processShopeeWebhookPayloadInner EXCEPTION order_sn=${orderSn}:`,
-      processErr?.message || processErr,
-      processErr?.stack || ""
+      safeError(processErr),
+      safeError(processErr)
     );
     console.log(
       "\u{1F4BE} K\u1EBFt qu\u1EA3 l\u01B0u DB:",
-      `exception \u2014 ${processErr?.message || processErr}`
+      `exception \u2014 ${safeError(processErr)}`
     );
     return { ok: false, reason: processErr?.message || "webhook_exception" };
   }
@@ -135256,31 +135267,22 @@ async function handleWebhookQueueOverflow(body) {
     `[Shopee Webhook] Queue overflow \u2014 persist minimal order_sn=${orderSn || "?"} shop_id=${shopId || "?"}`
   );
   if (!orderSn) return;
-  try {
-    const orders = await loadWorkingOrdersForWebhook(orderSn);
-    await deps21.upsertShopeeWebhookShallow(body, orders);
-    console.log(
-      `[Shopee Webhook] Queue overflow shallow persist OK order_sn=${orderSn} shop_id=${shopId || "?"}`
-    );
-  } catch (err) {
-    console.error(
-      `[Shopee Webhook] Queue overflow shallow persist FAILED order_sn=${orderSn}:`,
-      err?.message || err
-    );
-  }
   scheduleWebhookRescuePull(orderSn, shopId, "webhook_queue_overflow");
 }
 async function processShopeeWebhookPayload(body) {
   try {
-    const result = await processShopeeWebhookPayloadInner(body);
+    const eventAt = webhookEventTime(body);
+    if (eventAt != null && Date.now() - eventAt > 15 * 6e4) throw new Error("stale_webhook_event");
+    const key = extractOrderSnAndShopId(body, deps21.parseShopeePushEvent(body));
+    const result = await withOrderWorkLock(key.shopId, key.orderSn, () => processShopeeWebhookPayloadInner(body));
     if (result && result.ok === false) {
       throw new Error(result.reason || "webhook_job_failed");
     }
   } catch (error) {
     console.error(
       "[Shopee Webhook] Async processing error:",
-      error?.message || error,
-      error?.stack || ""
+      safeError(error),
+      safeError(error)
     );
     throw error;
   }
@@ -135290,7 +135292,7 @@ async function processShopeeWebhookPayload(body) {
 init_appPaths();
 
 // services/orderChangeStream.js
-var import_mongoose14 = __toESM(require("mongoose"), 1);
+var import_mongoose15 = __toESM(require("mongoose"), 1);
 var NEW_ORDER_FLUSH_MS = 300;
 var UPDATED_FLUSH_MS = 3e3;
 var STATUS_FLUSH_MS = 300;
@@ -135512,8 +135514,8 @@ function closeCurrentStream() {
 }
 function openStream() {
   if (stopped || unsupported) return;
-  const db = import_mongoose14.default.connection?.db;
-  if (import_mongoose14.default.connection?.readyState !== 1 || !db) {
+  const db = import_mongoose15.default.connection?.db;
+  if (import_mongoose15.default.connection?.readyState !== 1 || !db) {
     scheduleReconnect("mongo ch\u01B0a s\u1EB5n s\xE0ng");
     return;
   }
@@ -136314,7 +136316,6 @@ var READY_TO_SHIP_BACKFILL_LOOKBACK_SEC = 7 * 24 * 60 * 60;
 var SHOPEE_SHIPPED_LOOKBACK_SEC = 3 * 24 * 60 * 60;
 var SHOPEE_COMPLETED_LOOKBACK_SEC = 15 * 24 * 60 * 60;
 var FORCE_RESCUE_SHOPEE_ORDER_SNS = ["26081391A7VTJ7", "26081391Q3V4JV"];
-var ORDERS_PULL_LOCK_TIMEOUT_MS = 9e4;
 var ordersPullInFlight = false;
 var ordersPullStartedAt = 0;
 var ordersPullLockToken = 0;
@@ -136432,14 +136433,7 @@ function releaseOrdersPullLock(reason = "finally", token) {
   ordersPullStartedAt = 0;
 }
 function isOrdersPullLocked() {
-  if (!ordersPullInFlight) return false;
-  const elapsed = ordersPullStartedAt > 0 ? Date.now() - ordersPullStartedAt : Number.POSITIVE_INFINITY;
-  if (elapsed < ORDERS_PULL_LOCK_TIMEOUT_MS) return true;
-  console.warn(
-    `[Orders Pull] Lock STALE (elapsed=${Number.isFinite(elapsed) ? elapsed : "no_timestamp"}ms >= ${ORDERS_PULL_LOCK_TIMEOUT_MS}ms) \u2014 force unlock failsafe`
-  );
-  releaseOrdersPullLock("stale_timeout");
-  return false;
+  return ordersPullInFlight;
 }
 function tryAcquireOrdersPullLock() {
   if (isOrdersPullLocked()) return false;
@@ -136451,7 +136445,6 @@ function tryAcquireOrdersPullLock() {
 }
 var ORDERS_PULL_IN_FLIGHT_SOFT_MESSAGE = "H\u1EC7 th\u1ED1ng \u0111ang trong qu\xE1 tr\xECnh \u0111\u1ED3ng b\u1ED9 ng\u1EA7m. Vui l\xF2ng \u0111\u1EE3i trong gi\xE2y l\xE1t";
 var MANUAL_QUICK_SYNC_LOOKBACK_SEC = 3 * 60 * 60;
-var MANUAL_SYNC_LOCK_TIMEOUT_MS = 18e4;
 var MANUAL_SYNC_SHOP_DEADLINE_MS = 12e4;
 var manualSyncInFlight = false;
 var manualSyncStartedAt = 0;
@@ -136471,14 +136464,7 @@ function releaseManualSyncLock(reason = "finally", token) {
   manualSyncStartedAt = 0;
 }
 function isManualSyncLocked() {
-  if (!manualSyncInFlight) return false;
-  const elapsed = manualSyncStartedAt > 0 ? Date.now() - manualSyncStartedAt : Number.POSITIVE_INFINITY;
-  if (elapsed < MANUAL_SYNC_LOCK_TIMEOUT_MS) return true;
-  console.warn(
-    `[Manual Sync 3h] Lock STALE (elapsed=${Number.isFinite(elapsed) ? elapsed : "no_timestamp"}ms) \u2014 force unlock`
-  );
-  releaseManualSyncLock("stale_timeout");
-  return false;
+  return manualSyncInFlight;
 }
 function tryAcquireManualSyncLock() {
   if (isManualSyncLocked()) return false;
@@ -139163,8 +139149,8 @@ async function debugForceSyncHandedOverOrders(opts) {
     }));
     if (candidates.length === 0) {
       try {
-        const { default: mongoose15 } = await import("mongoose");
-        const col = mongoose15.connection?.db?.collection("orders");
+        const { default: mongoose16 } = await import("mongoose");
+        const col = mongoose16.connection?.db?.collection("orders");
         if (col) {
           const rawHanded = await col.countDocuments({
             $or: [
@@ -145656,7 +145642,7 @@ async function enrichShopeeOrdersEscrowFinance(shopId, accessToken, orders) {
       });
       console.warn(`[Shopee Finance] escrow ${order.orderSn} failed:`, err);
     }
-    if (i2 < targets.length - 1) await delay(ORDER_SYNC_SAVE_DELAY_MS);
+    if (i2 < targets.length - 1) await delay2(ORDER_SYNC_SAVE_DELAY_MS);
   }
 }
 function findLinkedProductIdForShopeeLine(listings, shopId, productId, modelId) {
@@ -147796,7 +147782,9 @@ function scheduleAutoIncrementalOrdersSyncSafe() {
 }
 function scheduleReadyToShipBackfillSafe() {
   scheduleReadyToShipBackfill({
-    runSync: (opts) => pullReadyToShipBackfillFromShopee({
+    runSync: (opts) => enqueueOrderSyncJob({
+      mode: "task",
+      task: "rts_backfill",
       lookbackSec: Number(opts?.lookbackSec) || READY_TO_SHIP_BACKFILL_LOOKBACK_SEC,
       trigger: opts?.trigger || "cron"
     }),
@@ -147806,33 +147794,35 @@ function scheduleReadyToShipBackfillSafe() {
 }
 function scheduleShopeeReturnRequestsSyncSafe() {
   scheduleShopeeReturnRequestsSync({
-    runSync: async (opts) => {
-      const result = await syncShopeeReturnRequests({
-        mode: opts?.mode === "full" ? "full" : "incremental"
-      });
-      let retry2 = { attempted: 0, filled: 0, errors: 0 };
-      try {
-        retry2 = await retryPendingReturnTracking({
-          limit: 30,
-          trigger: opts?.trigger || "cron"
-        });
-      } catch (retryErr) {
-        console.warn("[ReturnTracking Retry] tick failed:", retryErr?.message || retryErr);
-      }
-      return {
-        ...result,
-        updated: (result?.updated || 0) + (retry2.filled || 0),
-        retryAttempted: retry2.attempted,
-        retryFilled: retry2.filled,
-        message: `${result?.message || "Return requests"} | retry TN attempted=${retry2.attempted} filled=${retry2.filled}`
-      };
-    },
+    // Cron chỉ xếp job; công việc thực tế do worker gọi.
+    runSync: (opts) => enqueueOrderSyncJob({ mode: "task", task: "return_requests", returnMode: opts?.mode, trigger: opts?.trigger || "cron" }),
     cronExpr: process.env.AUTO_RETURN_REQUESTS_CRON_EXPR || "*/30 * * * *"
   });
 }
+async function runQueuedReturnRequests(opts) {
+  const result = await syncShopeeReturnRequests({
+    mode: opts?.returnMode === "full" ? "full" : "incremental"
+  });
+  let retry2 = { attempted: 0, filled: 0, errors: 0 };
+  try {
+    retry2 = await retryPendingReturnTracking({
+      limit: 30,
+      trigger: opts?.trigger || "cron"
+    });
+  } catch (retryErr) {
+    console.warn("[ReturnTracking Retry] tick failed:", retryErr?.message || retryErr);
+  }
+  return {
+    ...result,
+    updated: (result?.updated || 0) + (retry2.filled || 0),
+    retryAttempted: retry2.attempted,
+    retryFilled: retry2.filled,
+    message: `${result?.message || "Return requests"} | retry TN attempted=${retry2.attempted} filled=${retry2.filled}`
+  };
+}
 function scheduleHandedOverStatusReconcileSafe() {
   scheduleHandedOverStatusReconcile({
-    reconcileHandedOverCarrierStatuses: (opts) => reconcileHandedOverCarrierStatuses({ ...opts, trigger: opts?.trigger || "cron" }),
+    reconcileHandedOverCarrierStatuses: (opts) => enqueueOrderSyncJob({ ...opts, mode: "task", task: "handed_over", trigger: opts?.trigger || "cron" }),
     cronExpr: process.env.AUTO_HANDED_OVER_RECONCILE_CRON_EXPR || "*/5 * * * *",
     intervalMs: Number(process.env.AUTO_HANDED_OVER_RECONCILE_MS) || 5 * 60 * 1e3
   });
@@ -148793,11 +148783,11 @@ async function fetchNormalizeShopeeOrderChunk(apiShopId, accessToken, fileKey, o
               `[Sync Shop ${shopFileKey}] L\u1ED7i: token_refresh order=${orderSn}:`,
               refreshErr?.message || refreshErr
             );
-            await delay(1e3);
+            await delay2(1e3);
           }
         }
         if (isShopeeRateLimited(detailResult?.httpStatus, detailResult)) {
-          await delay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+          await delay2(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
           detailResult = await shopeeGetOrderDetail(shopApiId, tok, [orderSn]);
         }
         if (detailResult?.error) {
@@ -148860,14 +148850,14 @@ async function fetchNormalizeShopeeOrderChunk(apiShopId, accessToken, fileKey, o
             `[Sync Shop ${shopFileKey}] L\u1ED7i: Token refresh sau GetOrderDetail:`,
             refreshErr?.message || refreshErr
           );
-          await delay(1e3);
+          await delay2(1e3);
         }
       }
       if (isShopeeRateLimited(detailResult?.httpStatus, detailResult)) {
         console.warn(
           `[Sync Shop ${shopFileKey}] L\u1ED7i: get_order_detail RATE LIMIT \u2014 ch\u1EDD ${ORDER_DETAIL_BATCH_DELAY_MS * 2}ms r\u1ED3i retry`
         );
-        await delay(ORDER_DETAIL_BATCH_DELAY_MS * 2);
+        await delay2(ORDER_DETAIL_BATCH_DELAY_MS * 2);
         try {
           detailResult = await shopeeGetOrderDetail(shopApiId, accessToken, batch);
         } catch (rlErr) {
@@ -148935,7 +148925,7 @@ async function fetchNormalizeShopeeOrderChunk(apiShopId, accessToken, fileKey, o
       await fetchBatchIndividually(batch, accessToken);
     }
     if (i2 + batchSize < snList.length) {
-      await delay(ORDER_DETAIL_BATCH_DELAY_MS);
+      await delay2(ORDER_DETAIL_BATCH_DELAY_MS);
     }
   }
   if (normalized.length > 0 && !skipEscrow) {
@@ -149325,7 +149315,7 @@ async function syncConfirmedOrdersFromShopee(orders, shipMethod) {
     (o) => o && String(o.orderSn || o.order_sn || "").trim()
   );
   if (!list.length) return;
-  await delay(CONFIRM_SYNC_SHOP_DELAY_MS);
+  await delay2(CONFIRM_SYNC_SHOP_DELAY_MS);
   const byShop = /* @__PURE__ */ new Map();
   for (const o of list) {
     const shopId = String(o.shopId || o.shop_id || "").trim();
@@ -149336,7 +149326,7 @@ async function syncConfirmedOrdersFromShopee(orders, shipMethod) {
   }
   let shopIdx = 0;
   for (const [shopId, shopOrders] of byShop) {
-    if (shopIdx > 0) await delay(CONFIRM_SYNC_SHOP_DELAY_MS);
+    if (shopIdx > 0) await delay2(CONFIRM_SYNC_SHOP_DELAY_MS);
     shopIdx += 1;
     const sns = [
       ...new Set(
@@ -149374,7 +149364,7 @@ async function syncConfirmedOrdersFromShopee(orders, shipMethod) {
           skipTracking: false
         });
       }
-      await delay(CONFIRM_SYNC_SHOP_DELAY_MS);
+      await delay2(CONFIRM_SYNC_SHOP_DELAY_MS);
       await backfillOrderItemsIfDbEmpty(auth.apiShopId, auth.token, sns);
     } catch (err) {
       console.warn(`[Confirm Sync] shopId=${shopId}:`, err?.message || err);
@@ -152206,7 +152196,14 @@ async function startServer() {
     finishSyncJob,
     invalidateOrdersRefreshCache,
     isOrdersPullLocked,
-    listShopIds: listShopeeSyncShopIds
+    listShopIds: listShopeeSyncShopIds,
+    runManualQuickSync3h,
+    runQueuedOrdersPull,
+    syncTasks: {
+      rts_backfill: pullReadyToShipBackfillFromShopee,
+      return_requests: runQueuedReturnRequests,
+      handed_over: reconcileHandedOverCarrierStatuses
+    }
   });
   initShopeeProductsController({
     isProductsDiskMode,

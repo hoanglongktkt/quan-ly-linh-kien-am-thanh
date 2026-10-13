@@ -1,3 +1,4 @@
+import { safeError } from "../../utils/safeProductionLog.js";
 /**
  * Mongo-backed coordinator for Shopee order synchronization.
  *
@@ -8,6 +9,14 @@
  */
 import crypto from "crypto";
 import mongoose from "mongoose";
+import os from "node:os";
+
+/** Chỉ phục hồi khi hệ điều hành xác nhận process trên cùng máy đã chết. */
+export function isOwnerProcessDead(lock) {
+  if (lock?.hostname !== os.hostname() || !Number.isInteger(lock?.pid) || lock.pid <= 0) return false;
+  try { process.kill(lock.pid, 0); return false; }
+  catch (error) { return error?.code === "ESRCH"; }
+}
 
 const LOCK_ID = "shopee_orders_global";
 const LOCK_COLLECTION = "sync_orchestrator_locks";
@@ -64,13 +73,23 @@ export async function acquireShopeeSyncLease(trigger = "unknown") {
   const expiresAt = new Date(now.getTime() + leaseMs());
   try {
     await ensureIndexes();
+    const previous = await db.collection(LOCK_COLLECTION).findOne({ _id: LOCK_ID });
+    if (previous?.owner && isOwnerProcessDead(previous)) {
+      // CAS theo owner cũ: không nhả nhầm khóa của process vừa nhận việc.
+      await db.collection(LOCK_COLLECTION).updateOne(
+        { _id: LOCK_ID, owner: previous.owner },
+        { $set: { owner: null, expiresAt: new Date(0), recoveredAt: now } },
+      );
+      console.warn("[SyncOrchestrator] recovered_dead_process_lock");
+    }
     const result = await db.collection(LOCK_COLLECTION).findOneAndUpdate(
       {
         _id: LOCK_ID,
-        $or: [{ expiresAt: { $lte: now } }, { expiresAt: { $exists: false } }],
+        // Khóa còn owner không bị cướp khi tác vụ kéo dài hoặc DB mất kết nối.
+        $or: [{ owner: null }, { owner: { $exists: false } }, { expiresAt: new Date(0) }],
       },
       {
-        $set: { owner, trigger: String(trigger), acquiredAt: now, expiresAt, heartbeatAt: now },
+        $set: { owner, hostname: os.hostname(), pid: process.pid, trigger: String(trigger), acquiredAt: now, expiresAt, heartbeatAt: now },
       },
       { upsert: false, returnDocument: "after" },
     );
@@ -82,6 +101,8 @@ export async function acquireShopeeSyncLease(trigger = "unknown") {
       await db.collection(LOCK_COLLECTION).insertOne({
         _id: LOCK_ID,
         owner,
+        hostname: os.hostname(),
+        pid: process.pid,
         trigger: String(trigger),
         acquiredAt: now,
         expiresAt,
@@ -93,7 +114,7 @@ export async function acquireShopeeSyncLease(trigger = "unknown") {
       throw insertErr;
     }
   } catch (err) {
-    console.error("[SyncOrchestrator] acquire lease failed:", err?.message || err);
+    console.error("[SyncOrchestrator] acquire lease failed:", safeError(err));
     return { acquired: false, reason: "lease_error" };
   }
 }
@@ -103,7 +124,7 @@ export async function renewShopeeSyncLease(owner) {
   if (!db || !owner) return false;
   const now = new Date();
   const result = await db.collection(LOCK_COLLECTION).updateOne(
-    { _id: LOCK_ID, owner, expiresAt: { $gt: now } },
+    { _id: LOCK_ID, owner },
     { $set: { heartbeatAt: now, expiresAt: new Date(now.getTime() + leaseMs()) } },
   );
   return result.modifiedCount === 1;
@@ -114,7 +135,7 @@ export async function releaseShopeeSyncLease(owner) {
   if (!db || !owner) return;
   await db.collection(LOCK_COLLECTION).updateOne(
     { _id: LOCK_ID, owner },
-    { $set: { expiresAt: new Date(0), releasedAt: new Date() } },
+    { $set: { owner: null, expiresAt: new Date(0), releasedAt: new Date() } },
   );
 }
 
@@ -137,7 +158,7 @@ export async function resolveIncrementalLookbackSec(shopIds, fallbackSec) {
     const elapsed = Math.floor((Date.now() - oldest) / 1000) + overlapSec();
     return numberInRange(elapsed, fallback, overlapSec(), 30 * 24 * 3600);
   } catch (err) {
-    console.warn("[SyncOrchestrator] read watermark failed:", err?.message || err);
+    console.warn("[SyncOrchestrator] read watermark failed:", safeError(err));
     return fallback;
   }
 }
@@ -174,7 +195,9 @@ export async function getShopeeSyncOrchestratorStatus() {
   const lock = await db.collection(LOCK_COLLECTION).findOne({ _id: LOCK_ID });
   return {
     ready: true,
-    locked: Boolean(lock?.expiresAt && new Date(lock.expiresAt).getTime() > Date.now()),
+    locked: Boolean(lock?.owner),
+    // Khóa tồn dư sau crash phải được kiểm tra worker đã dừng trước khi phục hồi.
+    needsInspection: Boolean(lock?.owner && new Date(lock.expiresAt).getTime() <= Date.now()),
     expiresAt: lock?.expiresAt || null,
     trigger: lock?.trigger || null,
   };

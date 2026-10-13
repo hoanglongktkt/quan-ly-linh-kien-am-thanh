@@ -101,7 +101,6 @@ export function verifyShopeeWebhookSignature(
   console.warn("[Shopee Webhook] HMAC mismatch", {
     bodyBytes: Buffer.byteLength(bodyStr, "utf8"),
     urlCandidates: candidates,
-    suppliedPrefix: supplied.slice(0, 12),
   });
   return false;
 }

@@ -17,6 +17,7 @@ import {
 import {
   startWebhookJobDrainer,
   stopWebhookJobDrainer,
+  enqueueOrderSyncJob,
 } from "./services/webhookJobQueue.js";
 import { enrichOrdersFromCatalog } from "./src/utils/orderItemVariation.ts";
 import { inferShippingCarrierLabel } from "./src/utils/shippingCarrier.ts";
@@ -369,6 +370,7 @@ import {
   pullOrders,
   syncOrders,
   quickSyncOrders,
+  runQueuedOrdersPull,
   syncShopee,
   getDiagnostics,
   debugReturnByOrder,
@@ -1537,15 +1539,8 @@ function releaseOrdersPullLock(reason = "finally", token?: number): void {
  * Quá 90s (hoặc cờ true mà không có mốc thời gian) → phá khóa, cho pull tiếp.
  */
 function isOrdersPullLocked(): boolean {
-  if (!ordersPullInFlight) return false;
-  const elapsed =
-    ordersPullStartedAt > 0 ? Date.now() - ordersPullStartedAt : Number.POSITIVE_INFINITY;
-  if (elapsed < ORDERS_PULL_LOCK_TIMEOUT_MS) return true;
-  console.warn(
-    `[Orders Pull] Lock STALE (elapsed=${Number.isFinite(elapsed) ? elapsed : "no_timestamp"}ms >= ${ORDERS_PULL_LOCK_TIMEOUT_MS}ms) — force unlock failsafe`,
-  );
-  releaseOrdersPullLock("stale_timeout");
-  return false;
+  // Không mở khóa do timeout khi Promise của worker chưa kết thúc.
+  return ordersPullInFlight;
 }
 
 /** @returns true nếu chiếm được khóa */
@@ -1588,15 +1583,8 @@ function releaseManualSyncLock(reason = "finally", token?: number): void {
 }
 
 function isManualSyncLocked(): boolean {
-  if (!manualSyncInFlight) return false;
-  const elapsed =
-    manualSyncStartedAt > 0 ? Date.now() - manualSyncStartedAt : Number.POSITIVE_INFINITY;
-  if (elapsed < MANUAL_SYNC_LOCK_TIMEOUT_MS) return true;
-  console.warn(
-    `[Manual Sync 3h] Lock STALE (elapsed=${Number.isFinite(elapsed) ? elapsed : "no_timestamp"}ms) — force unlock`,
-  );
-  releaseManualSyncLock("stale_timeout");
-  return false;
+  // Khóa chỉ nhả sau khi cả hai lượt quét đã dừng.
+  return manualSyncInFlight;
 }
 
 function tryAcquireManualSyncLock(): boolean {
@@ -16656,7 +16644,7 @@ function scheduleAutoIncrementalOrdersSyncSafe(): void {
 function scheduleReadyToShipBackfillSafe(): void {
   scheduleReadyToShipBackfill({
     runSync: (opts: any) =>
-      pullReadyToShipBackfillFromShopee({
+      enqueueOrderSyncJob({ mode: "task", task: "rts_backfill",
         lookbackSec: Number(opts?.lookbackSec) || READY_TO_SHIP_BACKFILL_LOOKBACK_SEC,
         trigger: opts?.trigger || "cron",
       }),
@@ -16668,9 +16656,15 @@ function scheduleReadyToShipBackfillSafe(): void {
 /** Cron đồng bộ Yêu cầu trả hàng (Shopee Return APIs) — mặc định 30 phút. */
 function scheduleShopeeReturnRequestsSyncSafe(): void {
   scheduleShopeeReturnRequestsSync({
-    runSync: async (opts) => {
+    // Cron chỉ xếp job; công việc thực tế do worker gọi.
+    runSync: (opts) => enqueueOrderSyncJob({ mode: "task", task: "return_requests", returnMode: opts?.mode, trigger: opts?.trigger || "cron" }),
+    cronExpr: process.env.AUTO_RETURN_REQUESTS_CRON_EXPR || "*/30 * * * *",
+  });
+}
+
+async function runQueuedReturnRequests(opts: any) {
       const result = await syncShopeeReturnRequests({
-        mode: opts?.mode === "full" ? "full" : "incremental",
+        mode: opts?.returnMode === "full" ? "full" : "incremental",
       });
       let retry = { attempted: 0, filled: 0, errors: 0 };
       try {
@@ -16688,16 +16682,13 @@ function scheduleShopeeReturnRequestsSyncSafe(): void {
         retryFilled: retry.filled,
         message: `${result?.message || "Return requests"} | retry TN attempted=${retry.attempted} filled=${retry.filled}`,
       };
-    },
-    cronExpr: process.env.AUTO_RETURN_REQUESTS_CRON_EXPR || "*/30 * * * *",
-  });
 }
 
 /** Dò SHIPPED cho ĐVVC + READY_TO_SHIP/PROCESSED — cron 5 phút + setInterval. Tắt: AUTO_HANDED_OVER_RECONCILE_CRON=0 */
 function scheduleHandedOverStatusReconcileSafe(): void {
   scheduleHandedOverStatusReconcile({
     reconcileHandedOverCarrierStatuses: (opts) =>
-      reconcileHandedOverCarrierStatuses({ ...opts, trigger: opts?.trigger || "cron" }),
+      enqueueOrderSyncJob({ ...opts, mode: "task", task: "handed_over", trigger: opts?.trigger || "cron" }),
     cronExpr: process.env.AUTO_HANDED_OVER_RECONCILE_CRON_EXPR || "*/5 * * * *",
     intervalMs: Number(process.env.AUTO_HANDED_OVER_RECONCILE_MS) || 5 * 60 * 1000,
   });
@@ -23194,6 +23185,13 @@ async function startServer() {
     invalidateOrdersRefreshCache,
     isOrdersPullLocked,
     listShopIds: listShopeeSyncShopIds,
+    runManualQuickSync3h,
+    runQueuedOrdersPull,
+    syncTasks: {
+      rts_backfill: pullReadyToShipBackfillFromShopee,
+      return_requests: runQueuedReturnRequests,
+      handed_over: reconcileHandedOverCarrierStatuses,
+    },
   });
   initShopeeProductsController({
     isProductsDiskMode,

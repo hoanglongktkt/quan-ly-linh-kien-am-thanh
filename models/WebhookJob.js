@@ -15,9 +15,16 @@ const WebhookJobSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       required: true,
     },
+    // Đồng bộ thủ công và cron dùng chung hàng đợi bền với webhook.
+    kind: { type: String, enum: ["webhook", "sync"], default: "webhook" },
+    priority: { type: Number, default: 0 },
+    orderKey: { type: String, default: "" },
+    claim_token: { type: String, default: "" },
+    // Chỉ một job cron cùng loại đang chờ/chạy/retry; không tạo backlog trùng.
+    active_key: { type: String },
     state: {
       type: String,
-      enum: ["pending", "running", "succeeded", "failed"],
+      enum: ["pending", "running", "succeeded", "failed", "dead-letter"],
       default: "pending",
       required: true,
     },
@@ -44,6 +51,7 @@ const WebhookJobSchema = new mongoose.Schema(
 );
 
 WebhookJobSchema.index({ jobId: 1 }, { unique: true, name: "webhook_jobs_jobId_unique" });
+WebhookJobSchema.index({ active_key: 1 }, { unique: true, sparse: true, name: "webhook_jobs_active_key_unique" });
 WebhookJobSchema.index({ state: 1, next_run_at: 1 }, { name: "webhook_jobs_state_next_run" });
 
 const WebhookJob =

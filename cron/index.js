@@ -60,7 +60,7 @@ export function scheduleAutoIncrementalOrdersSync(deps = {}) {
     return;
   }
 
-  const runIncrementalTick = (trigger) => {
+  const runIncrementalTick = async (trigger) => {
     if (trigger === "interval") {
       console.log("\n--- [CRON INTERVAL START] --- Fetching Shopee orders...");
     }
@@ -74,7 +74,7 @@ export function scheduleAutoIncrementalOrdersSync(deps = {}) {
         });
         return;
       }
-      const ack = triggerBackgroundOrderSync({
+      const ack = await triggerBackgroundOrderSync({
         lookbackSec,
         trigger,
         allowShortLookback: true,

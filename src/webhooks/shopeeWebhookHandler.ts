@@ -1,3 +1,4 @@
+import { safeError } from "../../utils/safeProductionLog.js";
 import express, { type Router } from "express";
 import { parseShopeeJson } from "../../services/shopee/jsonBig.js";
 import { resolveAppBaseUrl } from "../../utils/appPaths.js";
@@ -151,7 +152,7 @@ function parseWebhookBody(reqBody: unknown): Record<string, unknown> | null {
       return coerceWebhookPayload(reqBody as Record<string, unknown>);
     }
   } catch (err) {
-    console.error("[Shopee Webhook] JSON parse failed:", err);
+    console.error("[Shopee Webhook] JSON parse failed:", safeError(err));
   }
   return null;
 }
@@ -281,7 +282,7 @@ async function processShopeeWebhookAsync(
         bodyBytes,
       },
     );
-    console.log("[WEBHOOK RECEIVED] req.body (full):", rawBody.toString("utf8"));
+    // Không ghi raw payload chứa thông tin khách hàng vào log.
 
     const payload = parseWebhookBody(rawBody);
     if (!payload) {
@@ -289,7 +290,7 @@ async function processShopeeWebhookAsync(
       return;
     }
 
-    console.log("[WEBHOOK RECEIVED] req.body (parsed object):", JSON.stringify(payload));
+
 
     const data = unwrapWebhookData(payload);
     const code = Number(payload.code ?? data.code);
@@ -339,14 +340,7 @@ async function processShopeeWebhookAsync(
 
     console.log("[WEBHOOK] Nhận event mới:", orderSn, status || "");
 
-    if (eagerStubOrder) {
-      try {
-        await eagerStubOrder(payload);
-      } catch (stubErr) {
-        console.error("[WEBHOOK DB ERROR]:", stubErr);
-        console.error("Stub order error:", stubErr);
-      }
-    }
+    // Mọi ghi đơn chuyển vào worker có khóa; không ghi stub trước enqueue.
 
     const shopId = String(payload.shop_id ?? data.shop_id ?? "").trim();
     const updateTime = String(
@@ -387,7 +381,7 @@ async function processShopeeWebhookAsync(
     } catch (queueErr) {
       console.error(
         "[WEBHOOK] enqueue webhook_jobs failed:",
-        queueErr instanceof Error ? queueErr.message : queueErr,
+        safeError(queueErr),
       );
       if (onQueueOverflow) {
         try {
@@ -395,7 +389,7 @@ async function processShopeeWebhookAsync(
         } catch (overflowErr) {
           console.error(
             "[WEBHOOK] overflow fallback failed:",
-            overflowErr instanceof Error ? overflowErr.message : overflowErr,
+            safeError(overflowErr),
           );
         }
       }
@@ -403,7 +397,7 @@ async function processShopeeWebhookAsync(
   } catch (error) {
     console.error(
       "[Shopee Webhook] processShopeeWebhookAsync failed after ACK:",
-      error instanceof Error ? error.stack || error.message : error,
+      safeError(error),
     );
   }
 }
@@ -439,7 +433,7 @@ export function createShopeeWebhookRouter(
   });
 
   router.post(paths, (req, res) => {
-    console.log("\n--- [WEBHOOK TRIGGERED] ---", JSON.stringify(req.body));
+    console.log("[WEBHOOK TRIGGERED]");
     console.log(
       "[WEBHOOK TRIGGERED] meta",
       JSON.stringify({
@@ -458,7 +452,8 @@ export function createShopeeWebhookRouter(
         "[WEBHOOK] SILENT? raw body chưa emit end sau 8s — listener có thể gắn sau khi stream đã bị consume. ACK đã gửi nên Shopee không retry.",
       );
     }, 8_000);
-    void rawBodyPromise.finally(() => clearTimeout(rawBodyWatch));
+    // Xử lý cả nhánh reject để tránh unhandled rejection làm process thoát.
+    void rawBodyPromise.then(() => clearTimeout(rawBodyWatch), () => clearTimeout(rawBodyWatch));
 
     // 2) ACK 200 ngay — không chờ HMAC / API Shopee / MongoDB.
     ackShopeeOk(res);
@@ -480,7 +475,7 @@ export function createShopeeWebhookRouter(
       options.eagerStubOrder,
       options.onQueueOverflow,
     ).catch((error) => {
-      console.error("Lỗi xử lý ngầm Webhook Shopee:", error);
+      console.error("Lỗi xử lý ngầm Webhook Shopee:", safeError(error));
     });
   });
 

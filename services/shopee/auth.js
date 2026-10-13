@@ -1,3 +1,4 @@
+import { safeTokenMetadata, safeError } from "../../utils/safeProductionLog.js";
 /**
  * Shopee OAuth / token store / access-token refresh.
  * Phase 6 — tách từ server.ts.
@@ -140,8 +141,8 @@ function maskTokenStoreForLog(tokens) {
       merchant_id_list: record?.merchant_id_list ?? [],
       expire_in: record?.expire_in ?? null,
       obtained_at: record?.obtained_at ?? null,
-      access_token: record?.access_token ? `${String(record.access_token).slice(0, 16)}…` : null,
-      refresh_token: record?.refresh_token ? `${String(record.refresh_token).slice(0, 16)}…` : null,
+      access_token: record?.access_token ? "[REDACTED]" : null,
+      refresh_token: record?.refresh_token ? "[REDACTED]" : null,
     };
   }
   return masked;
@@ -316,7 +317,7 @@ function saveShopeeTokenFromAuth(shopId, authJson, oauthShopId) {
     "DEBUG SAVE: Saving data for shop:",
     key,
     "Full Data:",
-    JSON.stringify(new_token_data),
+    JSON.stringify(safeTokenMetadata(new_token_data)),
   );
 
   const tokensData = normalizeTokenStore(loadShopeeTokens());
@@ -439,7 +440,7 @@ function persistOAuthTokens(authJson, opts) {
 
   for (const id of shopIds) {
     updates[id] = buildShopeeTokenRecord(id, authJson, tokenOwner || id, loadShopeeTokens()[id]);
-    console.log("DEBUG SAVE: Saving data for shop:", id, "Full Data:", JSON.stringify(updates[id]));
+    console.log("DEBUG SAVE: Saving data for shop:", id, "Full Data:", JSON.stringify(safeTokenMetadata(updates[id])));
   }
 
   saveShopeeTokens(updates);
@@ -911,7 +912,8 @@ async function exchangeShopeeCodeForToken(code, opts) {
       message: error?.message || "Không gọi được Shopee token/get",
     };
   }
-  console.log("DEBUG RAW RESPONSE:", rawText);
+  // Không ghi phản hồi token thô vào log.
+  console.log("[Shopee OAuth] response bytes:", Buffer.byteLength(rawText || "", "utf8"));
 
   let json;
   try {
@@ -922,7 +924,7 @@ async function exchangeShopeeCodeForToken(code, opts) {
   }
 
   json = normalizeShopeeTokenResponse(json);
-  console.log("DEBUG NORMALIZED RESPONSE:", JSON.stringify(json));
+  console.log("DEBUG NORMALIZED RESPONSE:", JSON.stringify(safeTokenMetadata(json)));
   console.log(`[Shopee API] POST ${apiPath} (env=${SHOPEE_ENV}) -> HTTP ${res.status}`);
 
   if (json.access_token && json.refresh_token) {
@@ -931,8 +933,8 @@ async function exchangeShopeeCodeForToken(code, opts) {
       JSON.stringify({
         shop_id: shopId || null,
         main_account_id: mainAccountId || null,
-        access_token: `${String(json.access_token).slice(0, 16)}…`,
-        refresh_token: `${String(json.refresh_token).slice(0, 16)}…`,
+        access_token: "[REDACTED]",
+        refresh_token: "[REDACTED]",
         expire_in: json.expire_in,
         shop_id_list: json.shop_id_list || [],
       }),
@@ -981,7 +983,7 @@ async function refreshShopeeToken(shopId, refreshToken) {
     const json = rawText ? parseShopeeJson(rawText) : {};
     console.log(
       `[Shopee API] POST ${apiPath} (refresh shop_id=${key}) -> HTTP ${res.status}:`,
-      JSON.stringify(json),
+      JSON.stringify(safeTokenMetadata(json)),
     );
 
     const normalized = normalizeShopeeTokenResponse(json);
@@ -1417,7 +1419,7 @@ export async function getValidShopeeAccessToken(shopId) {
       console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
       return null;
     }
-    console.error(`[Shopee API] Refresh token thất bại shop_id=${key}:`, err);
+    console.error(`[Shopee API] Refresh token thất bại shop_id=${key}:`, safeError(err));
     console.log(`[Shopee API] shop_id=${key} oauth=${oauth || "-"} cache=miss verified=no`);
     return null;
   }
