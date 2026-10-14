@@ -84,6 +84,8 @@ import aiRoutesImport from "./routes/aiRoutes.js";
 import dashboardRoutesImport from "./routes/dashboardRoutes.js";
 import errorHandler from "./middlewares/errorHandler.js";
 import { authMiddleware } from "./middlewares/auth.js";
+import { loginLimiter, apiLimiter, systemLimiter } from "./middlewares/rateLimiter.js";
+import { requirePermission, requireRole, requireAdmin } from "./middlewares/rbac.js";
 import { warnJwtSecretOnStartup } from "./_lib/jwtSecret.js";
 import corsMiddleware from "./middlewares/cors.js";
 import dbReadyMiddleware from "./middlewares/dbReady.js";
@@ -99,6 +101,8 @@ import {
 } from "./controllers/scanBulkController.js";
 import { initScanBgQueue } from "./services/scanBgQueue.js";
 import { login, verifyAuth } from "./controllers/authController.js";
+import { login as loginEnhanced, verifyAuth as verifyAuthEnhanced, changePassword } from "./controllers/authController.enhanced.js";
+import usersRoutesImport from "./routes/usersRoutes.js";
 import {
   initHealthController,
   getHealth,
@@ -22807,10 +22811,10 @@ async function startServer() {
   startDefaultOperationsHealthMonitor();
   app.use(dbReadyMiddleware);
 
-  // Public — đăng ký TRƯỚC mọi app.use("/api/orders", authMiddleware, ...).
-  app.get("/api/orders/system/heal-corrupted-flags", healCorruptedFlags);
-  app.get("/api/orders/system/migrate-tracking-flag", migrateTrackingFlag);
-  app.get("/api/orders/system/delete-ghost-orders", deleteGhostOrders);
+  // System endpoints - Protected with auth + rate limiting + admin role
+  app.get("/api/orders/system/heal-corrupted-flags", authMiddleware, systemLimiter, requireAdmin, healCorruptedFlags);
+  app.get("/api/orders/system/migrate-tracking-flag", authMiddleware, systemLimiter, requireAdmin, migrateTrackingFlag);
+  app.get("/api/orders/system/delete-ghost-orders", authMiddleware, systemLimiter, requireAdmin, deleteGhostOrders);
 
   /** Phase 1 MVC — Auth / Health / Config / Debug (inject Shopee deps cho /api/health). */
   initHealthController({
@@ -22836,6 +22840,15 @@ async function startServer() {
   });
 
   app.use("/api", authRoutes);
+
+  // Enhanced auth endpoints with rate limiting
+  app.post("/api/auth/login", loginLimiter, loginEnhanced);
+  app.get("/api/auth/verify", authMiddleware, verifyAuthEnhanced);
+  app.post("/api/auth/change-password", authMiddleware, changePassword);
+
+  // User management routes (admin only)
+  app.use("/api/users", usersRoutesImport);
+
   app.use("/api/scan", authMiddleware, scanRoutes);
   app.use("/api", healthRoutes);
 

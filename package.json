@@ -30,8 +30,10 @@
     "@zxing/browser": "0.1.5",
     "@zxing/library": "0.21.3",
     "axios": "^1.19.0",
+    "bcrypt": "^6.0.0",
     "dotenv": "^17.4.2",
     "express": "^4.22.2",
+    "express-rate-limit": "^8.7.1",
     "html5-qrcode": "^2.3.8",
     "ioredis": "^5.11.1",
     "json-bigint": "^1.0.0",
@@ -46,7 +48,8 @@
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "recharts": "^3.10.1",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.14",
