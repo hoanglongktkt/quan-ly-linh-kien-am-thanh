@@ -76401,395 +76401,6 @@ var require_ip_address = __commonJS({
   }
 });
 
-// node_modules/node-gyp-build/node-gyp-build.js
-var require_node_gyp_build = __commonJS({
-  "node_modules/node-gyp-build/node-gyp-build.js"(exports2, module2) {
-    var fs26 = require("fs");
-    var path26 = require("path");
-    var os3 = require("os");
-    var runtimeRequire = typeof __webpack_require__ === "function" ? __non_webpack_require__ : require;
-    var vars = process.config && process.config.variables || {};
-    var prebuildsOnly = !!process.env.PREBUILDS_ONLY;
-    var abi = process.versions.modules;
-    var runtime = isElectron() ? "electron" : isNwjs() ? "node-webkit" : "node";
-    var arch = process.env.npm_config_arch || os3.arch();
-    var platform = process.env.npm_config_platform || os3.platform();
-    var libc = process.env.LIBC || (isAlpine(platform) ? "musl" : "glibc");
-    var armv = process.env.ARM_VERSION || (arch === "arm64" ? "8" : vars.arm_version) || "";
-    var uv = (process.versions.uv || "").split(".")[0];
-    module2.exports = load;
-    function load(dir) {
-      return runtimeRequire(load.resolve(dir));
-    }
-    load.resolve = load.path = function(dir) {
-      dir = path26.resolve(dir || ".");
-      try {
-        var name = runtimeRequire(path26.join(dir, "package.json")).name.toUpperCase().replace(/-/g, "_");
-        if (process.env[name + "_PREBUILD"]) dir = process.env[name + "_PREBUILD"];
-      } catch (err) {
-      }
-      if (!prebuildsOnly) {
-        var release = getFirst(path26.join(dir, "build/Release"), matchBuild);
-        if (release) return release;
-        var debug = getFirst(path26.join(dir, "build/Debug"), matchBuild);
-        if (debug) return debug;
-      }
-      var prebuild = resolve(dir);
-      if (prebuild) return prebuild;
-      var nearby = resolve(path26.dirname(process.execPath));
-      if (nearby) return nearby;
-      var target = [
-        "platform=" + platform,
-        "arch=" + arch,
-        "runtime=" + runtime,
-        "abi=" + abi,
-        "uv=" + uv,
-        armv ? "armv=" + armv : "",
-        "libc=" + libc,
-        "node=" + process.versions.node,
-        process.versions.electron ? "electron=" + process.versions.electron : "",
-        typeof __webpack_require__ === "function" ? "webpack=true" : ""
-        // eslint-disable-line
-      ].filter(Boolean).join(" ");
-      throw new Error("No native build was found for " + target + "\n    loaded from: " + dir + "\n");
-      function resolve(dir2) {
-        var tuples = readdirSync(path26.join(dir2, "prebuilds")).map(parseTuple);
-        var tuple = tuples.filter(matchTuple(platform, arch)).sort(compareTuples)[0];
-        if (!tuple) return;
-        var prebuilds = path26.join(dir2, "prebuilds", tuple.name);
-        var parsed = readdirSync(prebuilds).map(parseTags);
-        var candidates = parsed.filter(matchTags(runtime, abi));
-        var winner = candidates.sort(compareTags(runtime))[0];
-        if (winner) return path26.join(prebuilds, winner.file);
-      }
-    };
-    function readdirSync(dir) {
-      try {
-        return fs26.readdirSync(dir);
-      } catch (err) {
-        return [];
-      }
-    }
-    function getFirst(dir, filter2) {
-      var files = readdirSync(dir).filter(filter2);
-      return files[0] && path26.join(dir, files[0]);
-    }
-    function matchBuild(name) {
-      return /\.node$/.test(name);
-    }
-    function parseTuple(name) {
-      var arr = name.split("-");
-      if (arr.length !== 2) return;
-      var platform2 = arr[0];
-      var architectures = arr[1].split("+");
-      if (!platform2) return;
-      if (!architectures.length) return;
-      if (!architectures.every(Boolean)) return;
-      return { name, platform: platform2, architectures };
-    }
-    function matchTuple(platform2, arch2) {
-      return function(tuple) {
-        if (tuple == null) return false;
-        if (tuple.platform !== platform2) return false;
-        return tuple.architectures.includes(arch2);
-      };
-    }
-    function compareTuples(a, b) {
-      return a.architectures.length - b.architectures.length;
-    }
-    function parseTags(file) {
-      var arr = file.split(".");
-      var extension2 = arr.pop();
-      var tags = { file, specificity: 0 };
-      if (extension2 !== "node") return;
-      for (var i2 = 0; i2 < arr.length; i2++) {
-        var tag = arr[i2];
-        if (tag === "node" || tag === "electron" || tag === "node-webkit") {
-          tags.runtime = tag;
-        } else if (tag === "napi") {
-          tags.napi = true;
-        } else if (tag.slice(0, 3) === "abi") {
-          tags.abi = tag.slice(3);
-        } else if (tag.slice(0, 2) === "uv") {
-          tags.uv = tag.slice(2);
-        } else if (tag.slice(0, 4) === "armv") {
-          tags.armv = tag.slice(4);
-        } else if (tag === "glibc" || tag === "musl") {
-          tags.libc = tag;
-        } else {
-          continue;
-        }
-        tags.specificity++;
-      }
-      return tags;
-    }
-    function matchTags(runtime2, abi2) {
-      return function(tags) {
-        if (tags == null) return false;
-        if (tags.runtime && tags.runtime !== runtime2 && !runtimeAgnostic(tags)) return false;
-        if (tags.abi && tags.abi !== abi2 && !tags.napi) return false;
-        if (tags.uv && tags.uv !== uv) return false;
-        if (tags.armv && tags.armv !== armv) return false;
-        if (tags.libc && tags.libc !== libc) return false;
-        return true;
-      };
-    }
-    function runtimeAgnostic(tags) {
-      return tags.runtime === "node" && tags.napi;
-    }
-    function compareTags(runtime2) {
-      return function(a, b) {
-        if (a.runtime !== b.runtime) {
-          return a.runtime === runtime2 ? -1 : 1;
-        } else if (a.abi !== b.abi) {
-          return a.abi ? -1 : 1;
-        } else if (a.specificity !== b.specificity) {
-          return a.specificity > b.specificity ? -1 : 1;
-        } else {
-          return 0;
-        }
-      };
-    }
-    function isNwjs() {
-      return !!(process.versions && process.versions.nw);
-    }
-    function isElectron() {
-      if (process.versions && process.versions.electron) return true;
-      if (process.env.ELECTRON_RUN_AS_NODE) return true;
-      return typeof window !== "undefined" && window.process && window.process.type === "renderer";
-    }
-    function isAlpine(platform2) {
-      return platform2 === "linux" && fs26.existsSync("/etc/alpine-release");
-    }
-    load.parseTags = parseTags;
-    load.matchTags = matchTags;
-    load.compareTags = compareTags;
-    load.parseTuple = parseTuple;
-    load.matchTuple = matchTuple;
-    load.compareTuples = compareTuples;
-  }
-});
-
-// node_modules/node-gyp-build/index.js
-var require_node_gyp_build2 = __commonJS({
-  "node_modules/node-gyp-build/index.js"(exports2, module2) {
-    var runtimeRequire = typeof __webpack_require__ === "function" ? __non_webpack_require__ : require;
-    if (typeof runtimeRequire.addon === "function") {
-      module2.exports = runtimeRequire.addon.bind(runtimeRequire);
-    } else {
-      module2.exports = require_node_gyp_build();
-    }
-  }
-});
-
-// node_modules/bcrypt/promises.js
-var require_promises = __commonJS({
-  "node_modules/bcrypt/promises.js"(exports2, module2) {
-    var Promise2 = global.Promise;
-    function promise(fn, context, args) {
-      if (!Array.isArray(args)) {
-        args = Array.prototype.slice.call(args);
-      }
-      if (typeof fn !== "function") {
-        return Promise2.reject(new Error("fn must be a function"));
-      }
-      return new Promise2((resolve, reject2) => {
-        args.push((err, data) => {
-          if (err) {
-            reject2(err);
-          } else {
-            resolve(data);
-          }
-        });
-        fn.apply(context, args);
-      });
-    }
-    function reject(err) {
-      return Promise2.reject(err);
-    }
-    function use(promise2) {
-      Promise2 = promise2;
-    }
-    module2.exports = {
-      promise,
-      reject,
-      use
-    };
-  }
-});
-
-// node_modules/bcrypt/bcrypt.js
-var require_bcrypt = __commonJS({
-  "node_modules/bcrypt/bcrypt.js"(exports2, module2) {
-    var path26 = require("path");
-    var bindings = require_node_gyp_build2()(path26.resolve(__dirname));
-    var crypto13 = require("crypto");
-    var promises = require_promises();
-    function genSaltSync(rounds, minor) {
-      if (!rounds) {
-        rounds = 10;
-      } else if (typeof rounds !== "number") {
-        throw new Error("rounds must be a number");
-      }
-      if (!minor) {
-        minor = "b";
-      } else if (minor !== "b" && minor !== "a") {
-        throw new Error('minor must be either "a" or "b"');
-      }
-      return bindings.gen_salt_sync(minor, rounds, crypto13.randomBytes(16));
-    }
-    function genSalt(rounds, minor, cb) {
-      let error;
-      if (typeof arguments[0] === "function") {
-        cb = arguments[0];
-        rounds = 10;
-        minor = "b";
-      } else if (typeof arguments[1] === "function") {
-        cb = arguments[1];
-        minor = "b";
-      }
-      if (!cb) {
-        return promises.promise(genSalt, this, [rounds, minor]);
-      }
-      if (!rounds) {
-        rounds = 10;
-      } else if (typeof rounds !== "number") {
-        error = new Error("rounds must be a number");
-        return process.nextTick(function() {
-          cb(error);
-        });
-      }
-      if (!minor) {
-        minor = "b";
-      } else if (minor !== "b" && minor !== "a") {
-        error = new Error('minor must be either "a" or "b"');
-        return process.nextTick(function() {
-          cb(error);
-        });
-      }
-      crypto13.randomBytes(16, function(error2, randomBytes) {
-        if (error2) {
-          cb(error2);
-          return;
-        }
-        bindings.gen_salt(minor, rounds, randomBytes, cb);
-      });
-    }
-    function hashSync(data, salt) {
-      if (data == null || salt == null) {
-        throw new Error("data and salt arguments required");
-      }
-      if (!(typeof data === "string" || data instanceof Buffer) || typeof salt !== "string" && typeof salt !== "number") {
-        throw new Error("data must be a string or Buffer and salt must either be a salt string or a number of rounds");
-      }
-      if (typeof salt === "number") {
-        salt = module2.exports.genSaltSync(salt);
-      }
-      return bindings.encrypt_sync(data, salt);
-    }
-    function hash(data, salt, cb) {
-      let error;
-      if (typeof data === "function") {
-        error = new Error("data must be a string or Buffer and salt must either be a salt string or a number of rounds");
-        return process.nextTick(function() {
-          data(error);
-        });
-      }
-      if (typeof salt === "function") {
-        error = new Error("data must be a string or Buffer and salt must either be a salt string or a number of rounds");
-        return process.nextTick(function() {
-          salt(error);
-        });
-      }
-      if (cb && typeof cb !== "function") {
-        return promises.reject(new Error("cb must be a function or null to return a Promise"));
-      }
-      if (!cb) {
-        return promises.promise(hash, this, [data, salt]);
-      }
-      if (data == null || salt == null) {
-        error = new Error("data and salt arguments required");
-        return process.nextTick(function() {
-          cb(error);
-        });
-      }
-      if (!(typeof data === "string" || data instanceof Buffer) || typeof salt !== "string" && typeof salt !== "number") {
-        error = new Error("data must be a string or Buffer and salt must either be a salt string or a number of rounds");
-        return process.nextTick(function() {
-          cb(error);
-        });
-      }
-      if (typeof salt === "number") {
-        return module2.exports.genSalt(salt, function(err, salt2) {
-          return bindings.encrypt(data, salt2, cb);
-        });
-      }
-      return bindings.encrypt(data, salt, cb);
-    }
-    function compareSync(data, hash2) {
-      if (data == null || hash2 == null) {
-        throw new Error("data and hash arguments required");
-      }
-      if (!(typeof data === "string" || data instanceof Buffer) || typeof hash2 !== "string") {
-        throw new Error("data must be a string or Buffer and hash must be a string");
-      }
-      return bindings.compare_sync(data, hash2);
-    }
-    function compare(data, hash2, cb) {
-      let error;
-      if (typeof data === "function") {
-        error = new Error("data and hash arguments required");
-        return process.nextTick(function() {
-          data(error);
-        });
-      }
-      if (typeof hash2 === "function") {
-        error = new Error("data and hash arguments required");
-        return process.nextTick(function() {
-          hash2(error);
-        });
-      }
-      if (cb && typeof cb !== "function") {
-        return promises.reject(new Error("cb must be a function or null to return a Promise"));
-      }
-      if (!cb) {
-        return promises.promise(compare, this, [data, hash2]);
-      }
-      if (data == null || hash2 == null) {
-        error = new Error("data and hash arguments required");
-        return process.nextTick(function() {
-          cb(error);
-        });
-      }
-      if (!(typeof data === "string" || data instanceof Buffer) || typeof hash2 !== "string") {
-        error = new Error("data and hash must be strings");
-        return process.nextTick(function() {
-          cb(error);
-        });
-      }
-      return bindings.compare(data, hash2, cb);
-    }
-    function getRounds(hash2) {
-      if (hash2 == null) {
-        throw new Error("hash argument required");
-      }
-      if (typeof hash2 !== "string") {
-        throw new Error("hash must be a string");
-      }
-      return bindings.get_rounds(hash2);
-    }
-    module2.exports = {
-      genSaltSync,
-      genSalt,
-      hashSync,
-      hash,
-      compareSync,
-      compare,
-      getRounds
-    };
-  }
-});
-
 // services/tiktok/client.js
 function signTiktokRequest(appSecret, apiPath, queryParams, bodyString = "") {
   const secret = String(appSecret || "");
@@ -126089,7 +125700,7 @@ var loginLimiter = rate_limit_default({
   skipSuccessfulRequests: true,
   // Use IP + username for more granular limiting
   keyGenerator: (req) => {
-    const ip = req.ip || req.connection.remoteAddress || "unknown";
+    const ip = ipKeyGenerator(req.ip || req.connection.remoteAddress || "unknown");
     const username = req.body?.username || "anonymous";
     return `${ip}:${username}`;
   },
@@ -127522,7 +127133,7 @@ try {
 }
 
 // utils/passwordHash.js
-var import_bcrypt = __toESM(require_bcrypt(), 1);
+var import_bcrypt = __toESM(require("bcrypt"), 1);
 var BCRYPT_ROUNDS = parseInt(process.env.BCRYPT_ROUNDS || "12", 10);
 async function hashPassword(plainPassword) {
   if (!plainPassword || typeof plainPassword !== "string") {
@@ -127572,7 +127183,7 @@ function validatePasswordStrength(password) {
   };
 }
 
-// controllers/authController.enhanced.js
+// controllers/authController.legacy.js
 async function login2(req, res) {
   const { username, password } = req.body;
   if (!username || !password) {
@@ -127581,17 +127192,28 @@ async function login2(req, res) {
     });
   }
   try {
+    const expectedUsername = process.env.ADMIN_USERNAME || "admin";
+    const expectedPassword = process.env.ADMIN_PASSWORD;
+    if (expectedPassword && username === expectedUsername && password === expectedPassword) {
+      const token = signAdminToken(username, "admin", ["*"]);
+      console.log(`[Auth] Legacy admin login: ${username}`);
+      return res.json({
+        token,
+        username,
+        role: "admin",
+        permissions: ["*"],
+        legacy: true
+      });
+    }
     const user = await User_default.findOne({ username: username.toLowerCase().trim() });
     if (user) {
       if (user.isLocked) {
         const lockMinutes = Math.ceil((user.lockUntil - Date.now()) / 6e4);
-        console.warn(`[Auth] Login attempt on locked account: ${username}`);
         return res.status(403).json({
-          error: `T\xE0i kho\u1EA3n \u0111\xE3 b\u1ECB kh\xF3a do \u0111\u0103ng nh\u1EADp sai qu\xE1 nhi\u1EC1u l\u1EA7n. Th\u1EED l\u1EA1i sau ${lockMinutes} ph\xFAt.`
+          error: `T\xE0i kho\u1EA3n \u0111\xE3 b\u1ECB kh\xF3a. Th\u1EED l\u1EA1i sau ${lockMinutes} ph\xFAt.`
         });
       }
       if (!user.isActive) {
-        console.warn(`[Auth] Login attempt on inactive account: ${username}`);
         return res.status(403).json({
           error: "T\xE0i kho\u1EA3n \u0111\xE3 b\u1ECB v\xF4 hi\u1EC7u h\xF3a."
         });
@@ -127600,7 +127222,7 @@ async function login2(req, res) {
       if (isValidPassword) {
         await user.resetLoginAttempts();
         const token = signAdminToken(username, user.role, user.permissions);
-        console.log(`[Auth] Login successful: ${username} (${user.role})`);
+        console.log(`[Auth] MongoDB user login: ${username} (${user.role})`);
         return res.json({
           token,
           username: user.username,
@@ -127609,31 +127231,12 @@ async function login2(req, res) {
         });
       } else {
         await user.incLoginAttempts();
-        console.warn(`[Auth] Invalid password for user: ${username}`);
         return res.status(401).json({
           error: "T\xEAn \u0111\u0103ng nh\u1EADp ho\u1EB7c m\u1EADt kh\u1EA9u kh\xF4ng ch\xEDnh x\xE1c."
         });
       }
     }
-    const expectedUsername = process.env.ADMIN_USERNAME || "admin";
-    const expectedPassword = process.env.ADMIN_PASSWORD;
-    if (!expectedPassword || expectedPassword === "password123" || expectedPassword === "CHANGE_ME_MINIMUM_16_CHARACTERS") {
-      console.error("[Auth] CRITICAL: ADMIN_PASSWORD not set or using default weak password!");
-      return res.status(503).json({
-        error: "C\u1EA5u h\xECnh b\u1EA3o m\u1EADt ch\u01B0a ho\xE0n t\u1EA5t. Li\xEAn h\u1EC7 qu\u1EA3n tr\u1ECB vi\xEAn."
-      });
-    }
-    if (username === expectedUsername && password === expectedPassword) {
-      const token = signAdminToken(username, "admin", ["*"]);
-      console.warn(`[Auth] Legacy admin login (migrate to database): ${username}`);
-      return res.json({
-        token,
-        username,
-        role: "admin",
-        legacy: true
-      });
-    }
-    console.warn(`[Auth] Login failed for non-existent user: ${username}`);
+    console.warn(`[Auth] Login failed: ${username}`);
     return res.status(401).json({
       error: "T\xEAn \u0111\u0103ng nh\u1EADp ho\u1EB7c m\u1EADt kh\u1EA9u kh\xF4ng ch\xEDnh x\xE1c."
     });
@@ -127646,7 +127249,7 @@ async function login2(req, res) {
 }
 async function verifyAuth2(req, res) {
   if (!req.user || !req.user.username) {
-    return res.status(401).json({ error: "Token kh\xF4ng h\u1EE3p l\u1EC7 ho\u1EB7c \u0111\xE3 h\u1EBFt h\u1EA1n." });
+    return res.status(401).json({ error: "Token kh\xF4ng h\u1EE3p l\u1EC7." });
   }
   try {
     const user = await User_default.findOne({ username: req.user.username });
@@ -127668,6 +127271,7 @@ async function verifyAuth2(req, res) {
       valid: true,
       username: req.user.username,
       role: req.user.role || "admin",
+      permissions: req.user.permissions || ["*"],
       legacy: true
     });
   } catch (err) {
@@ -127675,10 +127279,13 @@ async function verifyAuth2(req, res) {
     res.json({
       valid: true,
       username: req.user.username,
-      role: req.user.role || "admin"
+      role: req.user.role || "admin",
+      permissions: req.user.permissions || ["*"]
     });
   }
 }
+
+// controllers/authController.enhanced.js
 async function changePassword(req, res) {
   if (!req.user || !req.user.username) {
     return res.status(401).json({ error: "Ch\u01B0a x\xE1c th\u1EF1c." });

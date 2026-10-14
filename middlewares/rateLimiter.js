@@ -1,7 +1,7 @@
 /**
  * Rate limiting middleware để chống brute force attacks
  */
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 
 /**
  * Login rate limiter - 5 attempts per 15 minutes
@@ -19,7 +19,8 @@ export const loginLimiter = rateLimit({
   skipSuccessfulRequests: true,
   // Use IP + username for more granular limiting
   keyGenerator: (req) => {
-    const ip = req.ip || req.connection.remoteAddress || 'unknown';
+    // Chuẩn hóa IPv4/IPv6 để không thể né giới hạn bằng nhiều địa chỉ IPv6 cùng subnet.
+    const ip = ipKeyGenerator(req.ip || req.connection.remoteAddress || 'unknown');
     const username = req.body?.username || 'anonymous';
     return `${ip}:${username}`;
   },

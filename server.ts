@@ -101,7 +101,8 @@ import {
 } from "./controllers/scanBulkController.js";
 import { initScanBgQueue } from "./services/scanBgQueue.js";
 import { login, verifyAuth } from "./controllers/authController.js";
-import { login as loginEnhanced, verifyAuth as verifyAuthEnhanced, changePassword } from "./controllers/authController.enhanced.js";
+import { login as loginLegacy, verifyAuth as verifyAuthLegacy } from "./controllers/authController.legacy.js";
+import { changePassword } from "./controllers/authController.enhanced.js";
 import usersRoutesImport from "./routes/usersRoutes.js";
 import {
   initHealthController,
@@ -22841,9 +22842,9 @@ async function startServer() {
 
   app.use("/api", authRoutes);
 
-  // Enhanced auth endpoints with rate limiting
-  app.post("/api/auth/login", loginLimiter, loginEnhanced);
-  app.get("/api/auth/verify", authMiddleware, verifyAuthEnhanced);
+  // Legacy auth with rate limiting (ENV credentials priority)
+  app.post("/api/auth/login", loginLimiter, loginLegacy);
+  app.get("/api/auth/verify", authMiddleware, verifyAuthLegacy);
   app.post("/api/auth/change-password", authMiddleware, changePassword);
 
   // User management routes (admin only)
