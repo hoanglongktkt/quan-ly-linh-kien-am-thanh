@@ -7,12 +7,9 @@ export { getJwtSecret };
  * Xác thực Bearer JWT.
  */
 export function authMiddleware(req, res, next) {
-  const pathOnly = String(req.originalUrl || req.url || "")
-    .split("?")[0]
-    .replace(/\/+$/, "");
-  if (pathOnly === "/api/orders/system/heal-corrupted-flags") {
-    return next();
-  }
+  // ⚠️ SECURITY FIX: Removed unprotected system endpoint bypass
+  // All system endpoints now require authentication
+
   const authHeader = req.headers.authorization;
   let token = "";
   if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -27,13 +24,31 @@ export function authMiddleware(req, res, next) {
     req.user = decoded;
     return next();
   } catch (err) {
-    return res.status(401).json({ error: 'Token không hợp lệ hoặc đã hết hạn.' });
+    if (err.name === 'TokenExpiredError') {
+      return res.status(401).json({
+        error: 'Token đã hết hạn.',
+        code: 'TOKEN_EXPIRED'
+      });
+    }
+    return res.status(401).json({
+      error: 'Token không hợp lệ.',
+      code: 'INVALID_TOKEN'
+    });
   }
 }
 
-/** Đăng nhập admin — JWT stateless, không refresh token (Phase B.2: 7 ngày). */
-export function signAdminToken(username) {
-  return jwt.sign({ username }, getJwtSecret(), { expiresIn: "7d" });
+/**
+ * Đăng nhập admin — JWT stateless, không refresh token (Phase B.2: 7 ngày).
+ * Enhanced: Include role and permissions in JWT payload
+ */
+export function signAdminToken(username, role = 'admin', permissions = ['*']) {
+  const payload = {
+    username,
+    role,
+    permissions: Array.isArray(permissions) ? permissions : ['*'],
+    iat: Math.floor(Date.now() / 1000)
+  };
+  return jwt.sign(payload, getJwtSecret(), { expiresIn: "7d" });
 }
 
 export default authMiddleware;
