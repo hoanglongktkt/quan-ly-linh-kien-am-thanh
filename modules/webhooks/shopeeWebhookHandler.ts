@@ -13,7 +13,7 @@ import { enqueueWebhookJob } from "../jobs/webhookJobQueue.js";
 type WebhookProcessor = (payload: Record<string, unknown>) => Promise<void>;
 type QueueOverflowHandler = (payload: Record<string, unknown>) => void | Promise<void>;
 /** Ghi nông order_sn/shop/status trước khi xếp hàng get_order_detail. Lỗi không được chặn enqueue. */
-type EagerStubHandler = (payload: Record<string, unknown>) => void | Promise<void>;
+type EagerStubHandler = (payload: Record<string, unknown>) => boolean | Promise<boolean>;
 
 type WebhookRequestSnapshot = {
   receivedAt: Date;
@@ -122,7 +122,17 @@ async function processShopeeWebhookAsync(
 
     console.log("[WEBHOOK] Nhận event mới:", orderSn, status || "");
 
-    // Mọi ghi đơn chuyển vào worker có khóa; không ghi stub trước enqueue.
+    // Ghi bản tối thiểu ngay để UI thấy đơn mới; detail đầy đủ vẫn chạy trong worker.
+    let eagerPersistedAt: Date | undefined;
+    if (eagerStubOrder) {
+      try {
+        const persisted = await eagerStubOrder(payload);
+        if (persisted) eagerPersistedAt = new Date();
+      } catch (stubErr) {
+        // Không chặn enqueue: worker còn có thể lấy detail và lưu lại đầy đủ.
+        console.error("[Shopee Webhook] eager stub failed:", safeError(stubErr));
+      }
+    }
 
     const shopId = String(payload.shop_id ?? data.shop_id ?? "").trim();
     const updateTime = String(
@@ -148,7 +158,12 @@ async function processShopeeWebhookAsync(
             : "order_related",
     };
     try {
-      const queued = await enqueueWebhookJob({ jobId, payload, receivedAt: snapshot.receivedAt });
+      const queued = await enqueueWebhookJob({
+        jobId,
+        payload,
+        receivedAt: snapshot.receivedAt,
+        orderPersistedAt: eagerPersistedAt,
+      });
       if (queued.duplicate) {
         console.log(
           "[WEBHOOK] idempotent skip — jobId đã có, ACK thành công:",

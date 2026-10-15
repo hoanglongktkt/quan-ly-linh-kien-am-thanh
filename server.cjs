@@ -79796,18 +79796,26 @@ async function enqueueWebhookJob(input) {
   const shopId = String(payload.shop_id ?? payload.shopId ?? data.shop_id ?? data.shopId ?? "").trim();
   const orderSn = String(data.ordersn ?? data.order_sn ?? data.orderSn ?? payload.order_sn ?? "").trim();
   if (!/^\d+$/.test(shopId) || !/^[a-zA-Z0-9-]+$/.test(orderSn)) throw new Error("webhook_order_key_invalid");
-  const stale = webhookEventTime(payload) != null && Date.now() - webhookEventTime(payload) > STALE_JOB_MAX_AGE_MS;
   const receivedAt = input.receivedAt ?? /* @__PURE__ */ new Date();
   if (!(receivedAt instanceof Date) || !Number.isFinite(receivedAt.getTime()) || receivedAt.getTime() > Date.now()) {
     throw new Error("webhook_received_at_invalid");
+  }
+  const eventAt = webhookEventTime(payload);
+  const stale = eventAt != null && receivedAt.getTime() - eventAt > STALE_JOB_MAX_AGE_MS;
+  const orderPersistedAt = input.orderPersistedAt;
+  if (orderPersistedAt != null && (!(orderPersistedAt instanceof Date) || !Number.isFinite(orderPersistedAt.getTime()))) {
+    throw new Error("webhook_order_persisted_at_invalid");
   }
   try {
     await WebhookJob_default.create({
       jobId,
       payload,
       kind: "webhook",
+      // Webhook mới phải được lấy trước cron/full-sync đang chờ trong queue.
+      priority: 100,
       shopId,
       received_at: receivedAt,
+      ...orderPersistedAt ? { order_persisted_at: orderPersistedAt } : {},
       ...stale ? { finished_at: /* @__PURE__ */ new Date() } : {},
       orderKey: `${shopId}:${orderSn}`,
       state: stale ? "dead-letter" : "pending",
@@ -79860,7 +79868,8 @@ async function sweepStaleJobs() {
   lastStaleSweepAt = now;
   const cutoff = new Date(now - STALE_JOB_MAX_AGE_MS);
   const result = await WebhookJob_default.updateMany(
-    { kind: { $ne: "sync" }, state: { $in: ["pending", "failed"] }, createdAt: { $lt: cutoff } },
+    // Pending mới có thể đang chờ full-sync; chỉ dọn retry lỗi đã quá hạn.
+    { kind: { $ne: "sync" }, state: "failed", createdAt: { $lt: cutoff } },
     { $set: { state: "dead-letter", error_log: STALE_SKIP_LOG, next_run_at: new Date(now), finished_at: new Date(now) } }
   );
   if (result?.modifiedCount) {
@@ -79871,9 +79880,9 @@ async function sweepStaleJobs() {
 }
 function isStaleJob(job) {
   if (job?.kind === "sync") return false;
-  const created = job?.createdAt ? new Date(job.createdAt).getTime() : NaN;
   const eventAt = webhookEventTime(job?.payload);
-  return Number.isFinite(created) && Date.now() - created > STALE_JOB_MAX_AGE_MS || eventAt != null && Date.now() - eventAt > STALE_JOB_MAX_AGE_MS;
+  const receivedAt = job?.received_at ? new Date(job.received_at).getTime() : NaN;
+  return eventAt != null && Number.isFinite(receivedAt) ? receivedAt - eventAt > STALE_JOB_MAX_AGE_MS : false;
 }
 async function markSucceeded(job, note = "") {
   await WebhookJob_default.updateOne(
@@ -81618,6 +81627,15 @@ async function processShopeeWebhookAsync(snapshot, rawBodyPromise, eagerStubOrde
       return;
     }
     console.log("[WEBHOOK] Nh\u1EADn event m\u1EDBi:", orderSn, status || "");
+    let eagerPersistedAt;
+    if (eagerStubOrder) {
+      try {
+        const persisted = await eagerStubOrder(payload);
+        if (persisted) eagerPersistedAt = /* @__PURE__ */ new Date();
+      } catch (stubErr) {
+        console.error("[Shopee Webhook] eager stub failed:", safeError(stubErr));
+      }
+    }
     const shopId = String(payload.shop_id ?? data.shop_id ?? "").trim();
     const updateTime = String(
       data.update_time ?? data.updateTime ?? payload.timestamp ?? data.timestamp ?? "0"
@@ -81633,7 +81651,12 @@ async function processShopeeWebhookAsync(snapshot, rawBodyPromise, eagerStubOrde
       event_type: status === "UNPAID" || status === "READY_TO_SHIP" ? "new_order" : isOrderStatusPush ? "status_change" : "order_related"
     };
     try {
-      const queued = await enqueueWebhookJob({ jobId, payload, receivedAt: snapshot.receivedAt });
+      const queued = await enqueueWebhookJob({
+        jobId,
+        payload,
+        receivedAt: snapshot.receivedAt,
+        orderPersistedAt: eagerPersistedAt
+      });
       if (queued.duplicate) {
         console.log(
           "[WEBHOOK] idempotent skip \u2014 jobId \u0111\xE3 c\xF3, ACK th\xE0nh c\xF4ng:",
@@ -156265,12 +156288,12 @@ async function applyWebhookReturnFallback(shopId, accessToken, orderSn, orders, 
 async function eagerUpsertWebhookStub(body) {
   try {
     const normalized = normalizeShopeeOrder(body);
-    if (!normalized?.orderSn) return;
+    if (!normalized?.orderSn) return false;
     if (!isMongoReady()) {
       console.warn(
         `[Shopee Webhook] eager stub skip \u2014 Mongo ch\u01B0a s\u1EB5n s\xE0ng order_sn=${normalized.orderSn}`
       );
-      return;
+      return false;
     }
     const extractedStatus = extractShopeeWebhookRawStatus(body);
     const stubStatus = extractedStatus || String(normalized.shopee_order_status || "").trim().toUpperCase() || "UNPAID";
@@ -156321,9 +156344,11 @@ async function eagerUpsertWebhookStub(body) {
     console.log(
       `[Shopee Webhook] eager stub OK order_sn=${normalized.orderSn} shop_id=${normalized.shopId || "\u2014"} status=${normalized.status || "\u2014"} raw=${normalized.shopee_order_status || "\u2014"}`
     );
+    return true;
   } catch (err) {
     console.error("[WEBHOOK DB ERROR]:", err);
     console.error("Stub order error:", err);
+    return false;
   }
 }
 async function upsertShopeeWebhookShallow(body, orders) {

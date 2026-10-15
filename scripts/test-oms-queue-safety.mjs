@@ -62,7 +62,7 @@ test("OMS: khóa, job cũ, ưu tiên, retry và idempotency", async (t) => {
     let count = 0;
     for (const job of jobs) {
       const matches = filter.state === "running" ? job.state === "running"
-        : job.kind !== "sync" && filter.state.$in.includes(job.state) && job.createdAt < filter.createdAt.$lt;
+        : job.kind !== "sync" && job.state === filter.state && job.createdAt < filter.createdAt.$lt;
       if (matches) {
         Object.assign(job, update.$set);
         for (const key of Object.keys(update.$unset || {})) delete job[key];
@@ -99,16 +99,34 @@ test("OMS: khóa, job cũ, ưu tiên, retry và idempotency", async (t) => {
     assert.equal((await enqueueWebhookJob({ jobId: "old", payload: push("OLD") })).duplicate, true);
     await assert.rejects(enqueueWebhookJob({ jobId: "bad", payload: { data: { ordersn: "X" } } }));
   });
-  await t.test("job ưu tiên chạy trước webhook và job tồn dư được cách ly", async () => {
+  await t.test("webhook mới chạy trước job đồng bộ và job tồn dư được cách ly", async () => {
     jobs.push({ _id: "orphan", state: "running", jobId: "orphan" });
     await enqueueWebhookJob({ jobId: "fresh", payload: push("FRESH") });
     await enqueueOrderSyncJob({ mode: "quick" }, 10);
     const sequence = [];
     setOrderSyncJobProcessor(async () => { sequence.push("quick"); return { success: true }; });
     await drainOnce(async () => { sequence.push("webhook"); });
-    assert.deepEqual(sequence, ["quick", "webhook"]);
+    assert.deepEqual(sequence, ["webhook", "quick"]);
     assert.equal(jobs.find((j) => j._id === "orphan").state, "dead-letter");
     assert.equal(jobs.find((j) => j.jobId === "fresh").state, "succeeded");
+  });
+  await t.test("webhook mới không bị loại chỉ vì chờ queue quá 15 phút", async () => {
+    const receivedAt = new Date(Date.now() - 20 * 60_000);
+    await enqueueWebhookJob({
+      jobId: "waited-fresh",
+      payload: {
+        shop_id: "123",
+        data: { ordersn: "WAITED", update_time: Math.floor(receivedAt.getTime() / 1000) },
+      },
+      receivedAt,
+      orderPersistedAt: receivedAt,
+    });
+    const waited = jobs.find((j) => j.jobId === "waited-fresh");
+    waited.createdAt = receivedAt;
+    await drainOnce(async () => {});
+    assert.equal(waited.priority, 100);
+    assert.equal(waited.state, "succeeded");
+    assert.equal(waited.order_persisted_at, receivedAt);
   });
   await t.test("khóa quá thời hạn vẫn giữ khi worker đang chạy và heartbeat gia hạn", async () => {
     await enqueueWebhookJob({ jobId: "slow", payload: push("SLOW") });

@@ -89,7 +89,7 @@ function backoffMs(retryCount) {
 }
 
 /**
- * @param {{ jobId: string, payload: Record<string, unknown>, receivedAt?: Date }} input
+ * @param {{ jobId: string, payload: Record<string, unknown>, receivedAt?: Date, orderPersistedAt?: Date }} input
  * @returns {Promise<{ ok: boolean, duplicate: boolean, jobId: string }>}
  */
 export async function enqueueWebhookJob(input) {
@@ -102,18 +102,30 @@ export async function enqueueWebhookJob(input) {
   const shopId = String(payload.shop_id ?? payload.shopId ?? data.shop_id ?? data.shopId ?? "").trim();
   const orderSn = String(data.ordersn ?? data.order_sn ?? data.orderSn ?? payload.order_sn ?? "").trim();
   if (!/^\d+$/.test(shopId) || !/^[a-zA-Z0-9-]+$/.test(orderSn)) throw new Error("webhook_order_key_invalid");
-  const stale = webhookEventTime(payload) != null && Date.now() - webhookEventTime(payload) > STALE_JOB_MAX_AGE_MS;
   const receivedAt = input.receivedAt ?? new Date();
   if (!(receivedAt instanceof Date) || !Number.isFinite(receivedAt.getTime()) || receivedAt.getTime() > Date.now()) {
     throw new Error("webhook_received_at_invalid");
+  }
+  const eventAt = webhookEventTime(payload);
+  // Chỉ loại push vốn đã cũ tại thời điểm nhận; không loại đơn mới vì phải chờ full-sync.
+  const stale = eventAt != null && receivedAt.getTime() - eventAt > STALE_JOB_MAX_AGE_MS;
+  const orderPersistedAt = input.orderPersistedAt;
+  if (
+    orderPersistedAt != null &&
+    (!(orderPersistedAt instanceof Date) || !Number.isFinite(orderPersistedAt.getTime()))
+  ) {
+    throw new Error("webhook_order_persisted_at_invalid");
   }
   try {
     await WebhookJob.create({
       jobId,
       payload,
       kind: "webhook",
+      // Webhook mới phải được lấy trước cron/full-sync đang chờ trong queue.
+      priority: 100,
       shopId,
       received_at: receivedAt,
+      ...(orderPersistedAt ? { order_persisted_at: orderPersistedAt } : {}),
       ...(stale ? { finished_at: new Date() } : {}),
       orderKey: `${shopId}:${orderSn}`,
       state: stale ? "dead-letter" : "pending",
@@ -170,7 +182,8 @@ async function sweepStaleJobs() {
   lastStaleSweepAt = now;
   const cutoff = new Date(now - STALE_JOB_MAX_AGE_MS);
   const result = await WebhookJob.updateMany(
-    { kind: { $ne: "sync" }, state: { $in: ["pending", "failed"] }, createdAt: { $lt: cutoff } },
+    // Pending mới có thể đang chờ full-sync; chỉ dọn retry lỗi đã quá hạn.
+    { kind: { $ne: "sync" }, state: "failed", createdAt: { $lt: cutoff } },
     { $set: { state: "dead-letter", error_log: STALE_SKIP_LOG, next_run_at: new Date(now), finished_at: new Date(now) } },
   );
   if (result?.modifiedCount) {
@@ -182,10 +195,12 @@ async function sweepStaleJobs() {
 
 function isStaleJob(job) {
   if (job?.kind === "sync") return false;
-  const created = job?.createdAt ? new Date(job.createdAt).getTime() : NaN;
   const eventAt = webhookEventTime(job?.payload);
-  return (Number.isFinite(created) && Date.now() - created > STALE_JOB_MAX_AGE_MS)
-    || (eventAt != null && Date.now() - eventAt > STALE_JOB_MAX_AGE_MS);
+  const receivedAt = job?.received_at ? new Date(job.received_at).getTime() : NaN;
+  // Thời gian chờ queue không biến một webhook mới thành webhook cũ.
+  return eventAt != null && Number.isFinite(receivedAt)
+    ? receivedAt - eventAt > STALE_JOB_MAX_AGE_MS
+    : false;
 }
 
 async function markSucceeded(job, note = "") {

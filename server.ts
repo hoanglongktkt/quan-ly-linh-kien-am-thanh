@@ -22569,15 +22569,15 @@ async function applyWebhookReturnFallback(
  * Ghi nông NGAY khi webhook đã qua bước HMAC — trước hàng đợi get_order_detail.
  * Chỉ order_sn, shop_id, status (đã map), update_time. Không gọi tracking/escrow.
  */
-async function eagerUpsertWebhookStub(body: any): Promise<void> {
+async function eagerUpsertWebhookStub(body: any): Promise<boolean> {
   try {
     const normalized = normalizeShopeeOrder(body);
-    if (!normalized?.orderSn) return;
+    if (!normalized?.orderSn) return false;
     if (!isMongoReady()) {
       console.warn(
         `[Shopee Webhook] eager stub skip — Mongo chưa sẵn sàng order_sn=${normalized.orderSn}`,
       );
-      return;
+      return false;
     }
     const extractedStatus = extractShopeeWebhookRawStatus(body);
     const stubStatus =
@@ -22637,9 +22637,11 @@ async function eagerUpsertWebhookStub(body: any): Promise<void> {
         ` status=${normalized.status || "—"}` +
         ` raw=${normalized.shopee_order_status || "—"}`,
     );
+    return true;
   } catch (err) {
     console.error("[WEBHOOK DB ERROR]:", err);
     console.error("Stub order error:", err);
+    return false;
   }
 }
 
