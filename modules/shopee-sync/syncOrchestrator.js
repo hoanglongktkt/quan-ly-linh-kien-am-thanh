@@ -75,13 +75,27 @@ export async function acquireShopeeSyncLease(trigger = "unknown") {
   try {
     await ensureIndexes();
     const previous = await db.collection(LOCK_COLLECTION).findOne({ _id: LOCK_ID });
-    if (previous?.owner && isOwnerProcessDead(previous)) {
-      // CAS theo owner cũ: không nhả nhầm khóa của process vừa nhận việc.
+    const previousExpired =
+      previous?.owner &&
+      Number.isFinite(new Date(previous.expiresAt).getTime()) &&
+      new Date(previous.expiresAt).getTime() <= now.getTime();
+    const previousProcessDead = previous?.owner && isOwnerProcessDead(previous);
+    if (previous?.owner && (previousExpired || previousProcessDead)) {
+      // Khóa là lease: hết hạn hoặc process cũ đã chết thì thu hồi bằng CAS.
+      // CAS theo owner + expiresAt để không nhả nhầm khóa vừa được gia hạn.
       await db.collection(LOCK_COLLECTION).updateOne(
-        { _id: LOCK_ID, owner: previous.owner },
+        {
+          _id: LOCK_ID,
+          owner: previous.owner,
+          ...(previous.expiresAt ? { expiresAt: previous.expiresAt } : {}),
+        },
         { $set: { owner: null, expiresAt: new Date(0), recoveredAt: now } },
       );
-      console.warn("[SyncOrchestrator] recovered_dead_process_lock");
+      console.warn(
+        previousProcessDead
+          ? "[SyncOrchestrator] recovered_dead_process_lock"
+          : "[SyncOrchestrator] recovered_expired_lease",
+      );
     }
     const result = await db.collection(LOCK_COLLECTION).findOneAndUpdate(
       {

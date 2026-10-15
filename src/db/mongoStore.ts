@@ -10163,17 +10163,31 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
         }
       } else {
         const skipListHint = isCancelReturnsTab || isReturnRequestsTab;
-        let listQuery = OrderModel.find(listFilter)
-          .sort({ last_shopee_update_at: -1 })
-          .skip((page - 1) * pageSize)
-          .limit(pageSize)
-          .select(ORDER_LIST_UI_PROJECTION)
-          .lean()
-          .maxTimeMS(4000);
-        if (!skipListHint && !search) {
-          listQuery = listQuery.hint(shopTimeIndexHint(Boolean(shopFilter)));
+        const runListQuery = (maxTimeMS: number) => {
+          let listQuery = OrderModel.find(listFilter)
+            .sort({ last_shopee_update_at: -1 })
+            .skip((page - 1) * pageSize)
+            .limit(pageSize)
+            .select(ORDER_LIST_UI_PROJECTION)
+            .lean()
+            .maxTimeMS(maxTimeMS);
+          if (!skipListHint && !search) {
+            listQuery = listQuery.hint(shopTimeIndexHint(Boolean(shopFilter)));
+          }
+          return listQuery.exec();
+        };
+        try {
+          docs = await runListQuery(4000);
+        } catch (firstFindErr: any) {
+          // Shared hosting có thể chậm nhất thời; thử lại đúng một lần thay vì trả []
+          // khiến tab Tất cả chỉ còn đơn ngoại sàn được ghép phía controller.
+          console.warn(
+            "[MongoDB] queryOrdersPageFromStore retry after first find failed:",
+            firstFindErr?.message || firstFindErr,
+          );
+          await new Promise((resolve) => setTimeout(resolve, 80));
+          docs = await runListQuery(8000);
         }
-        docs = await listQuery.exec();
       }
     } catch (findErr: any) {
       console.error(

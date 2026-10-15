@@ -79619,12 +79619,20 @@ async function acquireShopeeSyncLease(trigger = "unknown") {
   try {
     await ensureIndexes();
     const previous = await db.collection(LOCK_COLLECTION).findOne({ _id: LOCK_ID });
-    if (previous?.owner && isOwnerProcessDead(previous)) {
+    const previousExpired = previous?.owner && Number.isFinite(new Date(previous.expiresAt).getTime()) && new Date(previous.expiresAt).getTime() <= now.getTime();
+    const previousProcessDead = previous?.owner && isOwnerProcessDead(previous);
+    if (previous?.owner && (previousExpired || previousProcessDead)) {
       await db.collection(LOCK_COLLECTION).updateOne(
-        { _id: LOCK_ID, owner: previous.owner },
+        {
+          _id: LOCK_ID,
+          owner: previous.owner,
+          ...previous.expiresAt ? { expiresAt: previous.expiresAt } : {}
+        },
         { $set: { owner: null, expiresAt: /* @__PURE__ */ new Date(0), recoveredAt: now } }
       );
-      console.warn("[SyncOrchestrator] recovered_dead_process_lock");
+      console.warn(
+        previousProcessDead ? "[SyncOrchestrator] recovered_dead_process_lock" : "[SyncOrchestrator] recovered_expired_lease"
+      );
     }
     const result = await db.collection(LOCK_COLLECTION).findOneAndUpdate(
       {
@@ -79725,6 +79733,7 @@ var JOB_GAP_MS = 400;
 var MAX_RETRY = 5;
 var RUNNING_LEASE_MS = 4 * 60 * 1e3;
 var STALE_JOB_MAX_AGE_MS = 15 * 60 * 1e3;
+var PENDING_BACKLOG_MAX_AGE_MS = 60 * 60 * 1e3;
 var STALE_SWEEP_INTERVAL_MS = 6e4;
 var STALE_SKIP_LOG = "stale_job_dead_letter";
 var timer = null;
@@ -79867,6 +79876,7 @@ async function sweepStaleJobs() {
   if (now - lastStaleSweepAt < STALE_SWEEP_INTERVAL_MS) return;
   lastStaleSweepAt = now;
   const cutoff = new Date(now - STALE_JOB_MAX_AGE_MS);
+  const pendingCutoff = new Date(now - PENDING_BACKLOG_MAX_AGE_MS);
   const result = await WebhookJob_default.updateMany(
     // Pending mới có thể đang chờ full-sync; chỉ dọn retry lỗi đã quá hạn.
     { kind: { $ne: "sync" }, state: "failed", createdAt: { $lt: cutoff } },
@@ -79875,6 +79885,26 @@ async function sweepStaleJobs() {
   if (result?.modifiedCount) {
     console.warn(
       `[WebhookJobQueue] stale sweep: b\u1ECF qua ${result.modifiedCount} job c\u0169 h\u01A1n ${STALE_JOB_MAX_AGE_MS / 6e4} ph\xFAt`
+    );
+  }
+  const pendingResult = await WebhookJob_default.updateMany(
+    {
+      kind: "webhook",
+      state: "pending",
+      createdAt: { $lt: pendingCutoff }
+    },
+    {
+      $set: {
+        state: "dead-letter",
+        error_log: "stale_pending_backlog",
+        next_run_at: new Date(now),
+        finished_at: new Date(now)
+      }
+    }
+  );
+  if (pendingResult?.modifiedCount) {
+    console.warn(
+      `[WebhookJobQueue] pending backlog: b\u1ECF qua ${pendingResult.modifiedCount} job c\u0169 h\u01A1n ${PENDING_BACKLOG_MAX_AGE_MS / 6e4} ph\xFAt`
     );
   }
 }
@@ -90834,11 +90864,23 @@ async function queryOrdersPageFromStore(opts) {
         }
       } else {
         const skipListHint = isCancelReturnsTab || isReturnRequestsTab;
-        let listQuery = OrderModel.find(listFilter).sort({ last_shopee_update_at: -1 }).skip((page - 1) * pageSize).limit(pageSize).select(ORDER_LIST_UI_PROJECTION).lean().maxTimeMS(4e3);
-        if (!skipListHint && !search) {
-          listQuery = listQuery.hint(shopTimeIndexHint(Boolean(shopFilter)));
+        const runListQuery = (maxTimeMS) => {
+          let listQuery = OrderModel.find(listFilter).sort({ last_shopee_update_at: -1 }).skip((page - 1) * pageSize).limit(pageSize).select(ORDER_LIST_UI_PROJECTION).lean().maxTimeMS(maxTimeMS);
+          if (!skipListHint && !search) {
+            listQuery = listQuery.hint(shopTimeIndexHint(Boolean(shopFilter)));
+          }
+          return listQuery.exec();
+        };
+        try {
+          docs = await runListQuery(4e3);
+        } catch (firstFindErr) {
+          console.warn(
+            "[MongoDB] queryOrdersPageFromStore retry after first find failed:",
+            firstFindErr?.message || firstFindErr
+          );
+          await new Promise((resolve) => setTimeout(resolve, 80));
+          docs = await runListQuery(8e3);
         }
-        docs = await listQuery.exec();
       }
     } catch (findErr) {
       console.error(

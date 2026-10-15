@@ -21,6 +21,8 @@ const RUNNING_LEASE_MS = 4 * 60 * 1000;
  * kéo lùi đơn đang ở tab khác.
  */
 const STALE_JOB_MAX_AGE_MS = 15 * 60 * 1000;
+/** Backlog pending quá 60 phút đã được incremental sync bù; bỏ để ưu tiên đơn mới. */
+const PENDING_BACKLOG_MAX_AGE_MS = 60 * 60 * 1000;
 const STALE_SWEEP_INTERVAL_MS = 60_000;
 const STALE_SKIP_LOG = "stale_job_dead_letter";
 
@@ -181,6 +183,7 @@ async function sweepStaleJobs() {
   if (now - lastStaleSweepAt < STALE_SWEEP_INTERVAL_MS) return;
   lastStaleSweepAt = now;
   const cutoff = new Date(now - STALE_JOB_MAX_AGE_MS);
+  const pendingCutoff = new Date(now - PENDING_BACKLOG_MAX_AGE_MS);
   const result = await WebhookJob.updateMany(
     // Pending mới có thể đang chờ full-sync; chỉ dọn retry lỗi đã quá hạn.
     { kind: { $ne: "sync" }, state: "failed", createdAt: { $lt: cutoff } },
@@ -189,6 +192,26 @@ async function sweepStaleJobs() {
   if (result?.modifiedCount) {
     console.warn(
       `[WebhookJobQueue] stale sweep: bỏ qua ${result.modifiedCount} job cũ hơn ${STALE_JOB_MAX_AGE_MS / 60000} phút`,
+    );
+  }
+  const pendingResult = await WebhookJob.updateMany(
+    {
+      kind: "webhook",
+      state: "pending",
+      createdAt: { $lt: pendingCutoff },
+    },
+    {
+      $set: {
+        state: "dead-letter",
+        error_log: "stale_pending_backlog",
+        next_run_at: new Date(now),
+        finished_at: new Date(now),
+      },
+    },
+  );
+  if (pendingResult?.modifiedCount) {
+    console.warn(
+      `[WebhookJobQueue] pending backlog: bỏ qua ${pendingResult.modifiedCount} job cũ hơn ${PENDING_BACKLOG_MAX_AGE_MS / 60000} phút`,
     );
   }
 }
