@@ -417,7 +417,7 @@ async function readOrdersForRefresh(limit, opts = {}) {
         const validOrders = orders.filter((order) => Boolean(order?.orderSn || order?.id));
         ordersRefreshCache = {
           orders: validOrders,
-          expiresAt: Date.now() + 1_500,
+          expiresAt: Date.now() + 30_000, // Tăng từ 1.5s → 30s để giảm tải MongoDB
         };
         return validOrders;
       })

@@ -736,12 +736,9 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
     );
 
     if (!isProductsDiskMode()) {
-      try {
-        await ProductModel.syncIndexes();
-        console.log("[MongoDB] Product indexes synced (sku, data.sku, text title/sku, children.sku)");
-      } catch (idxErr) {
-        console.warn("[MongoDB] syncIndexes products:", idxErr);
-      }
+      // Không sync/tạo index lúc khởi động: thao tác này có thể quét toàn collection
+      // và làm CPU/RAM tăng mạnh trên MongoDB/cPanel cấu hình thấp.
+      console.log("[MongoDB] Product indexes: skip sync at startup (audit/apply thủ công khi cần)");
     } else {
       try {
         await maybeMigrateMongoProductsToDisk(productCount);
@@ -4057,8 +4054,28 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
             if (lock.local === "RETURN_RECEIVED") {
               $set.status = "return_received";
               $set["data.status"] = "return_received";
-              $set["data.is_return_received"] = true;
-              $set["data.local_return_status"] = "RETURN_RECEIVED";
+              // Chỉ set cờ hoàn hàng nếu KHÔNG có trong $unset (tránh conflict với đơn cancelled)
+              const unsetBag = item.op?.updateOne?.update?.$unset;
+              const hasUnsetConflict = unsetBag && (
+                unsetBag["data.is_return_received"] === 1 ||
+                unsetBag.is_return_received === 1
+              );
+              if (!hasUnsetConflict) {
+                $set["data.is_return_received"] = true;
+                $set["data.local_return_status"] = "RETURN_RECEIVED";
+              } else {
+                // Nếu đã có $unset, xóa khỏi $unset để ưu tiên $set (đơn hoàn thắng đơn hủy)
+                delete unsetBag["data.is_return_received"];
+                delete unsetBag.is_return_received;
+                delete unsetBag["data.local_return_status"];
+                delete unsetBag.local_return_status;
+                delete unsetBag["data.warehouse_return_received"];
+                delete unsetBag.warehouse_return_received;
+                delete unsetBag["data.isWarehouseReturnReceived"];
+                delete unsetBag.isWarehouseReturnReceived;
+                $set["data.is_return_received"] = true;
+                $set["data.local_return_status"] = "RETURN_RECEIVED";
+              }
             }
             if (
               current.isReturnReceived === true ||
@@ -9872,16 +9889,16 @@ export async function countOrdersByTabsFromStore(opts?: {
 }
 
 /**
- * Search list đơn: $eq (tận dụng index khi nhập đủ mã) + $regex contains (substring).
- * Ví dụ tracking `SPXVN066929466519` khớp từ khóa `66519`.
+ * Tìm đơn bằng exact/prefix trên các trường đã có index.
+ * Không dùng $text hoặc regex contains vì có thể quét toàn collection và tăng CPU.
  */
 function buildOrdersListSearchFilter(search: string): Record<string, unknown> | null {
   const q = String(search || "").trim();
   if (q.length < 2) return null;
   const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const contains = { $regex: escaped, $options: "i" as const };
+  // Regex có dấu ^ cho phép MongoDB dùng index B-tree với mã phân biệt hoa/thường.
+  const startsWith = { $regex: `^${escaped}` };
   const $or: Record<string, unknown>[] = [
-    // Exact — nhanh qua index khi nhập đủ mã đơn / vận đơn
     { orderSn: q },
     { "data.orderSn": q },
     { tracking_no: q },
@@ -9889,30 +9906,19 @@ function buildOrdersListSearchFilter(search: string): Record<string, unknown> | 
     { packageNumber: q },
     { return_tracking_no: q },
     { returnTrackingNumber: q },
-    // Substring — mã đơn, mã vận đơn (đi/hoàn), bưu cục, khách, SĐT
-    { orderSn: contains },
-    { "data.orderSn": contains },
-    { tracking_no: contains },
-    { trackingNumber: contains },
-    { "data.tracking_no": contains },
-    { "data.trackingNumber": contains },
-    { packageNumber: contains },
-    { "data.packageNumber": contains },
-    { return_sn: contains },
-    { "data.return_sn": contains },
-    { return_tracking_no: contains },
-    { returnTrackingNumber: contains },
-    { "data.return_tracking_no": contains },
-    { internalTrackingCode: contains },
-    { "data.internalTrackingCode": contains },
-    { customerName: contains },
-    { customerPhone: contains },
-    { "data.customerName": contains },
-    { "data.customer_name": contains },
-    { "data.customerPhone": contains },
-    { "data.customer_phone": contains },
-    { "data.buyer_username": contains },
   ];
+  // Chỉ tìm prefix khi đủ dài để tránh trả quá nhiều kết quả và làm CPU tăng.
+  if (q.length >= 4) {
+    $or.push(
+      { orderSn: startsWith },
+      { "data.orderSn": startsWith },
+      { tracking_no: startsWith },
+      { trackingNumber: startsWith },
+      { packageNumber: startsWith },
+      { return_tracking_no: startsWith },
+      { returnTrackingNumber: startsWith },
+    );
+  }
   return { $or };
 }
 
