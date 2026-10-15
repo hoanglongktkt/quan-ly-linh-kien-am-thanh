@@ -1940,7 +1940,8 @@ export default function OrderManager({
       const token = localStorage.getItem('admin_token') || '';
       const body: Record<string, unknown> = {
         mode,
-        ...(mode === 'full' ? { lookback_hours: 14 * 24 } : {}),
+        // Full sync lấy 90 ngày; backend tự chia tuần tự thành 6 khoảng × 15 ngày.
+        ...(mode === 'full' ? { lookback_hours: 90 * 24 } : {}),
       };
       const shopIds = shopScopeRef.current.shopIds;
       if (shopIds.length > 0) body.shop_ids = shopIds;

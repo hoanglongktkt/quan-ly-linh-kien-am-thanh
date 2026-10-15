@@ -478,7 +478,16 @@ function ackBackgroundPull(res, meta) {
 }
 
 async function fireOrdersPullInBackground(pullOpts) {
-  return enqueueOrderSyncJob({ ...pullOpts, mode: "full", trigger: "manual" }, 10);
+  return enqueueOrderSyncJob({
+    ...pullOpts,
+    mode: "full",
+    trigger: "manual",
+    // Full sync phải giữ đúng phạm vi người dùng yêu cầu, không rút ngắn theo watermark.
+    useWatermark: false,
+    // Dùng ngân sách của full sync, không đi theo nhánh cron cửa sổ ngắn.
+    allowShortLookback: false,
+    reconcileActive: true,
+  }, 10);
 }
 
 /** POST /api/orders/pull — ACK ngay, kéo đơn chạy nền (không await Shopee). */
@@ -597,7 +606,9 @@ export async function syncShopee(req, res) {
     // Full-sync giữ nguyên worker nhưng thực thi qua hàng đợi chung.
     const queued = await enqueueOrderSyncJob({ mode: "full", trigger: "manual", lookbackSec,
       shopIds, username, jobType: "shopee_orders_sync", logTag: "Orders Sync-Shopee",
-      allowShortLookback: false, reconcileActive: true, skipCancelReturn: false }, 10);
+      allowShortLookback: false, reconcileActive: true, skipCancelReturn: false,
+      // Đồng bộ đầy đủ 90 ngày không dùng watermark của lượt incremental gần nhất.
+      useWatermark: false }, 10);
     sendJson(res, 200, { ...queued, success: true, mode: "full", lookbackSec });
     return;
   } catch (err) {

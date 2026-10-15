@@ -1332,8 +1332,9 @@ const SHOPEE_CANCEL_RETURN_MAX_WINDOWS = 6;
 const SHOPEE_RETURN_LIST_WINDOW_SEC = 15 * 24 * 60 * 60;
 /** Lookback riêng get_return_list — 90 ngày (không dùng 30 ngày của get_order_list). */
 const SHOPEE_RETURN_LIST_LOOKBACK_SEC = 90 * 24 * 60 * 60;
-/** Cứng: đơn thường lùi 30 ngày từ Date.now() — chặn kéo về năm 2000. */
-const SHOPEE_HISTORY_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+/** Trần lịch sử khi người dùng đồng bộ đầy đủ: 90 ngày. */
+const SHOPEE_HISTORY_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000;
+/** Cửa sổ mặc định cho đồng bộ thường vẫn giữ 30 ngày để không tăng tải nền. */
 const SHOPEE_HISTORY_LOOKBACK_SEC = 30 * 24 * 60 * 60;
 /** Ngân sách riêng cho đơn hủy/hoàn + returns — vét đến more=false. */
 const SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS = 10000;
@@ -1375,11 +1376,13 @@ const SHOPEE_ORDER_LIST_INCREMENTAL_SEC = SHOPEE_HISTORY_LOOKBACK_SEC;
 const SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC = 3 * 24 * 60 * 60;
 /** Trần cửa sổ Shopee get_order_list = 15 ngày / 1 request. */
 const SHOPEE_ORDER_LIST_MAX_WINDOW_SEC = 15 * 24 * 60 * 60;
-/** Đồng bộ lịch sử: tối đa đúng 30 ngày (= 2 × 15 ngày chunks). */
-const SHOPEE_ORDER_LIST_MAX_TOTAL_LOOKBACK_SEC = SHOPEE_HISTORY_LOOKBACK_SEC;
+/** Đồng bộ lịch sử thủ công: tối đa 90 ngày (= 6 × 15 ngày). */
+const SHOPEE_ORDER_LIST_MAX_TOTAL_LOOKBACK_SEC = 90 * 24 * 60 * 60;
 /** Deadline mỗi shop (list + detail) — đủ vét more=false, không để shop 2 bị SKIP. */
 const ORDERS_PULL_PER_SHOP_MS = 180_000;
 const ORDERS_PULL_PER_SHOP_LONG_MS = 300_000;
+/** Full sync 90 ngày chạy nền tuần tự; đủ thời gian cho 6 cửa sổ và các mẻ detail. */
+const ORDERS_PULL_PER_SHOP_HISTORY_MS = 10 * 60_000;
 /** Deadline tường toàn phiên — fallback khi chưa biết số shop. */
 const ORDERS_PULL_HARD_DEADLINE_MS = 180_000;
 /** Vét đơn READY_TO_SHIP bị miss webhook — tối thiểu 7 ngày. */
@@ -1417,8 +1420,11 @@ function buildShopeeOrderListTimeChunks(
   const windowSec = Math.max(60, Math.floor(maxWindowSec));
   const chunks: Array<{ timeFrom: number; timeTo: number }> = [];
   let cursorTo = to;
-  // 30 ngày / 15 ngày mỗi request = tối đa 2 chunk. Cấm lùi vô hạn.
-  const maxChunks = 2;
+  // Shopee chỉ cho tối đa 15 ngày/request; full sync 90 ngày chạy tuần tự tối đa 6 chunk.
+  const maxChunks = Math.min(
+    6,
+    Math.max(1, Math.ceil((to - from) / windowSec)),
+  );
   while (cursorTo > from && chunks.length < maxChunks) {
     const cursorFrom = Math.max(from, cursorTo - windowSec);
     chunks.push({ timeFrom: cursorFrom, timeTo: cursorTo });
@@ -1429,7 +1435,7 @@ function buildShopeeOrderListTimeChunks(
   return chunks.length ? chunks : [{ timeFrom: from, timeTo: to }];
 }
 
-/** time_from cứng: Date.now() - 30 ngày (ms → unix seconds). */
+/** time_from cứng: Date.now() - 90 ngày (ms → unix seconds). */
 function shopeeHistoryTimeFromMs(): number {
   return Date.now() - SHOPEE_HISTORY_LOOKBACK_MS;
 }
@@ -1437,12 +1443,12 @@ function shopeeHistoryTimeFromMs(): number {
 function clampShopeeHistoryLookbackSec(raw?: number, allowShort = false): number {
   const n = Number(raw);
   if (allowShort && Number.isFinite(n) && n > 0) {
-    return Math.max(60, Math.min(SHOPEE_HISTORY_LOOKBACK_SEC, n));
+    return Math.max(60, Math.min(SHOPEE_ORDER_LIST_MAX_TOTAL_LOOKBACK_SEC, n));
   }
   if (Number.isFinite(n) && n > 0) {
     return Math.max(
       SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC,
-      Math.min(SHOPEE_HISTORY_LOOKBACK_SEC, n),
+      Math.min(SHOPEE_ORDER_LIST_MAX_TOTAL_LOOKBACK_SEC, n),
     );
   }
   return SHOPEE_HISTORY_LOOKBACK_SEC;
@@ -5377,7 +5383,9 @@ async function pullIncrementalOrdersFromShopee(opts?: {
     lookbackSec = clampShopeeHistoryLookbackSec(rawLookback, shortLookback);
     longLookback = lookbackSec >= 168 * 3600;
     // Mỗi shop có ngân sách riêng — shop 2 không bị SKIP vì shop 1 đã dùng hết 90s chung.
-    perShopBudgetMs = shortLookback
+    perShopBudgetMs = lookbackSec > SHOPEE_HISTORY_LOOKBACK_SEC
+      ? ORDERS_PULL_PER_SHOP_HISTORY_MS
+      : shortLookback
       ? ORDERS_PULL_PER_SHOP_MS
       : longLookback
         ? ORDERS_PULL_PER_SHOP_LONG_MS

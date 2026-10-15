@@ -135152,7 +135152,16 @@ function resolveFullSyncLookbackHours(raw) {
   return Math.min(Math.max(hoursRaw, FULL_SYNC_MIN_LOOKBACK_HOURS), FULL_SYNC_MAX_LOOKBACK_HOURS);
 }
 async function fireOrdersPullInBackground(pullOpts) {
-  return enqueueOrderSyncJob({ ...pullOpts, mode: "full", trigger: "manual" }, 10);
+  return enqueueOrderSyncJob({
+    ...pullOpts,
+    mode: "full",
+    trigger: "manual",
+    // Full sync phải giữ đúng phạm vi người dùng yêu cầu, không rút ngắn theo watermark.
+    useWatermark: false,
+    // Dùng ngân sách của full sync, không đi theo nhánh cron cửa sổ ngắn.
+    allowShortLookback: false,
+    reconcileActive: true
+  }, 10);
 }
 async function pullOrders(req, res) {
   console.log("=== B\u1EAET \u0110\u1EA6U PULL ORDERS (BG) ===");
@@ -135252,7 +135261,9 @@ async function syncShopee(req, res) {
       logTag: "Orders Sync-Shopee",
       allowShortLookback: false,
       reconcileActive: true,
-      skipCancelReturn: false
+      skipCancelReturn: false,
+      // Đồng bộ đầy đủ 90 ngày không dùng watermark của lượt incremental gần nhất.
+      useWatermark: false
     }, 10);
     sendJson(res, 200, { ...queued, success: true, mode: "full", lookbackSec });
     return;
@@ -140869,7 +140880,7 @@ function toShopeeUnixSeconds(raw, fallbackSec) {
 var SHOPEE_CANCEL_RETURN_MAX_WINDOWS = 6;
 var SHOPEE_RETURN_LIST_WINDOW_SEC = 15 * 24 * 60 * 60;
 var SHOPEE_RETURN_LIST_LOOKBACK_SEC = 90 * 24 * 60 * 60;
-var SHOPEE_HISTORY_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1e3;
+var SHOPEE_HISTORY_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1e3;
 var SHOPEE_HISTORY_LOOKBACK_SEC = 30 * 24 * 60 * 60;
 var SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS = 1e4;
 var SHOPEE_RETURN_LIST_PAGE_SIZE = 100;
@@ -140888,8 +140899,10 @@ var SHOPEE_ORDER_LIST_LOOP_SAFETY_CAP = 50;
 var SHOPEE_ORDER_LIST_INCREMENTAL_SEC = SHOPEE_HISTORY_LOOKBACK_SEC;
 var SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC = 3 * 24 * 60 * 60;
 var SHOPEE_ORDER_LIST_MAX_WINDOW_SEC = 15 * 24 * 60 * 60;
+var SHOPEE_ORDER_LIST_MAX_TOTAL_LOOKBACK_SEC = 90 * 24 * 60 * 60;
 var ORDERS_PULL_PER_SHOP_MS = 18e4;
 var ORDERS_PULL_PER_SHOP_LONG_MS = 3e5;
+var ORDERS_PULL_PER_SHOP_HISTORY_MS = 10 * 6e4;
 var ORDERS_PULL_HARD_DEADLINE_MS = 18e4;
 var READY_TO_SHIP_BACKFILL_LOOKBACK_SEC = 7 * 24 * 60 * 60;
 var SHOPEE_SHIPPED_LOOKBACK_SEC = 3 * 24 * 60 * 60;
@@ -140908,7 +140921,10 @@ function buildShopeeOrderListTimeChunks(timeFromSec, timeToSec, maxWindowSec = S
   const windowSec = Math.max(60, Math.floor(maxWindowSec));
   const chunks = [];
   let cursorTo = to;
-  const maxChunks = 2;
+  const maxChunks = Math.min(
+    6,
+    Math.max(1, Math.ceil((to - from) / windowSec))
+  );
   while (cursorTo > from && chunks.length < maxChunks) {
     const cursorFrom = Math.max(from, cursorTo - windowSec);
     chunks.push({ timeFrom: cursorFrom, timeTo: cursorTo });
@@ -140923,12 +140939,12 @@ function shopeeHistoryTimeFromMs() {
 function clampShopeeHistoryLookbackSec(raw, allowShort = false) {
   const n = Number(raw);
   if (allowShort && Number.isFinite(n) && n > 0) {
-    return Math.max(60, Math.min(SHOPEE_HISTORY_LOOKBACK_SEC, n));
+    return Math.max(60, Math.min(SHOPEE_ORDER_LIST_MAX_TOTAL_LOOKBACK_SEC, n));
   }
   if (Number.isFinite(n) && n > 0) {
     return Math.max(
       SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC,
-      Math.min(SHOPEE_HISTORY_LOOKBACK_SEC, n)
+      Math.min(SHOPEE_ORDER_LIST_MAX_TOTAL_LOOKBACK_SEC, n)
     );
   }
   return SHOPEE_HISTORY_LOOKBACK_SEC;
@@ -144079,7 +144095,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
     const shortLookback = opts?.allowShortLookback === true;
     lookbackSec = clampShopeeHistoryLookbackSec(rawLookback, shortLookback);
     longLookback = lookbackSec >= 168 * 3600;
-    perShopBudgetMs = shortLookback ? ORDERS_PULL_PER_SHOP_MS : longLookback ? ORDERS_PULL_PER_SHOP_LONG_MS : ORDERS_PULL_PER_SHOP_MS;
+    perShopBudgetMs = lookbackSec > SHOPEE_HISTORY_LOOKBACK_SEC ? ORDERS_PULL_PER_SHOP_HISTORY_MS : shortLookback ? ORDERS_PULL_PER_SHOP_MS : longLookback ? ORDERS_PULL_PER_SHOP_LONG_MS : ORDERS_PULL_PER_SHOP_MS;
     pullDeadlineMs = perShopBudgetMs * Math.max(1, shopIds.length);
     deadlineAt = startedAt + pullDeadlineMs;
     if (shopIds.length === 0) {
