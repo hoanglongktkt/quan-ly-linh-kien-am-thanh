@@ -78281,9 +78281,17 @@ function saveShopeeTokens(tokensToWrite) {
         SHOPEE_TOKENS_PATH,
         APP_ROOT,
         keys: keysAfter,
-        byteLength: Buffer.byteLength(payload, "utf-8")
+        byteLength: Buffer.byteLength(payload, "utf-8"),
+        cwd: process.cwd(),
+        dataDir: import_path3.default.dirname(absPath),
+        dataDirExists: import_fs2.default.existsSync(import_path3.default.dirname(absPath)),
+        fileExists: import_fs2.default.existsSync(absPath)
       })
     );
+    const dataDir = import_path3.default.dirname(absPath);
+    if (!import_fs2.default.existsSync(dataDir)) {
+      throw new Error(`Th\u01B0 m\u1EE5c data/ kh\xF4ng t\u1ED3n t\u1EA1i: ${dataDir}`);
+    }
     import_fs2.default.writeFileSync(absPath, payload, "utf-8");
     console.log(
       "[Shopee Tokens] fs.writeFileSync \u2014 GHI TH\xC0NH C\xD4NG",
@@ -78292,16 +78300,22 @@ function saveShopeeTokens(tokensToWrite) {
     return true;
   } catch (error) {
     deps.logOAuthSaveError("saveShopeeTokens", error);
+    const errorDetail = {
+      absPath,
+      SHOPEE_TOKENS_PATH,
+      APP_ROOT,
+      cwd: process.cwd(),
+      errorMessage: error?.message || String(error),
+      errorCode: error?.code || null,
+      errorStack: error?.stack || null
+    };
     console.error(
       "[Shopee Tokens] fs.writeFileSync \u2014 L\u1ED6I GHI FILE",
-      JSON.stringify({
-        absPath,
-        SHOPEE_TOKENS_PATH,
-        errorMessage: error?.message || String(error),
-        errorCode: error?.code || null
-      })
+      JSON.stringify(errorDetail)
     );
-    return false;
+    throw new Error(
+      `Kh\xF4ng th\u1EC3 ghi file shopee_tokens.json: ${error?.message || String(error)} (${error?.code || "unknown"})`
+    );
   }
 }
 function normalizeShopIdKey(shopId) {
@@ -78522,14 +78536,32 @@ async function completeShopeeOAuthFlow(code, params) {
   });
   let savedIds = [];
   if (tokenResult.access_token) {
-    savedIds = persistOAuthTokens(tokenResult, {
-      oauthShopId: oauthShopId || void 0,
-      mainAccountId: mainAccountId || void 0,
-      expectedShopId: expected || void 0
-    });
-    tokenResult.saved_shop_ids = savedIds;
-    if (savedIds.length > 0) {
-      deps.syncOAuthShopsToChannelSettings(savedIds, { expectedShopId: expected || void 0 });
+    try {
+      savedIds = persistOAuthTokens(tokenResult, {
+        oauthShopId: oauthShopId || void 0,
+        mainAccountId: mainAccountId || void 0,
+        expectedShopId: expected || void 0
+      });
+      tokenResult.saved_shop_ids = savedIds;
+      if (savedIds.length > 0) {
+        deps.syncOAuthShopsToChannelSettings(savedIds, { expectedShopId: expected || void 0 });
+      }
+    } catch (writeError) {
+      console.error("[Shopee OAuth] L\u1ED7i l\u01B0u token xu\u1ED1ng file:", writeError);
+      return {
+        success: false,
+        oauth_shop_id: oauthShopId || mainAccountId || "",
+        saved_shop_ids: [],
+        verified_in_file: false,
+        error: "file_write_error",
+        message: `L\u01B0u gian h\xE0ng th\u1EA5t b\u1EA1i \u2014 ${writeError.message || "kh\xF4ng ghi \u0111\u01B0\u1EE3c file"}. Ki\u1EC3m tra quy\u1EC1n ghi th\u01B0 m\u1EE5c data/ tr\xEAn server.`,
+        writeErrorDetails: {
+          message: writeError.message,
+          code: writeError.code,
+          tokensPath: SHOPEE_TOKENS_PATH,
+          appRoot: APP_ROOT
+        }
+      };
     }
   }
   const shopMismatch = Boolean(
@@ -86469,8 +86501,23 @@ async function bulkUpsertOrdersToStore(orders) {
             if (lock.local === "RETURN_RECEIVED") {
               $set.status = "return_received";
               $set["data.status"] = "return_received";
-              $set["data.is_return_received"] = true;
-              $set["data.local_return_status"] = "RETURN_RECEIVED";
+              const unsetBag = item.op?.updateOne?.update?.$unset;
+              const hasUnsetConflict = unsetBag && (unsetBag["data.is_return_received"] === 1 || unsetBag.is_return_received === 1);
+              if (!hasUnsetConflict) {
+                $set["data.is_return_received"] = true;
+                $set["data.local_return_status"] = "RETURN_RECEIVED";
+              } else {
+                delete unsetBag["data.is_return_received"];
+                delete unsetBag.is_return_received;
+                delete unsetBag["data.local_return_status"];
+                delete unsetBag.local_return_status;
+                delete unsetBag["data.warehouse_return_received"];
+                delete unsetBag.warehouse_return_received;
+                delete unsetBag["data.isWarehouseReturnReceived"];
+                delete unsetBag.isWarehouseReturnReceived;
+                $set["data.is_return_received"] = true;
+                $set["data.local_return_status"] = "RETURN_RECEIVED";
+              }
             }
             if (current.isReturnReceived === true || current.data?.isReturnReceived === true || current.data?.internal_flags?.isReturnReceived === true || current.internal_flags?.isReturnReceived === true) {
               const keptAt = current.returnReceivedAt || current.data?.returnReceivedAt || current.data?.internal_flags?.returnReceivedAt || current.internal_flags?.returnReceivedAt;

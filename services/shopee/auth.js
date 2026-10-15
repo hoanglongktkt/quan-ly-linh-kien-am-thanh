@@ -188,8 +188,19 @@ export function saveShopeeTokens(tokensToWrite) {
         APP_ROOT,
         keys: keysAfter,
         byteLength: Buffer.byteLength(payload, "utf-8"),
+        cwd: process.cwd(),
+        dataDir: path.dirname(absPath),
+        dataDirExists: fs.existsSync(path.dirname(absPath)),
+        fileExists: fs.existsSync(absPath),
       }),
     );
+
+    // Kiểm tra quyền ghi trước
+    const dataDir = path.dirname(absPath);
+    if (!fs.existsSync(dataDir)) {
+      throw new Error(`Thư mục data/ không tồn tại: ${dataDir}`);
+    }
+
     fs.writeFileSync(absPath, payload, "utf-8");
     console.log(
       "[Shopee Tokens] fs.writeFileSync — GHI THÀNH CÔNG",
@@ -198,16 +209,23 @@ export function saveShopeeTokens(tokensToWrite) {
     return true;
   } catch (error) {
     deps.logOAuthSaveError("saveShopeeTokens", error);
+    const errorDetail = {
+      absPath,
+      SHOPEE_TOKENS_PATH,
+      APP_ROOT,
+      cwd: process.cwd(),
+      errorMessage: error?.message || String(error),
+      errorCode: error?.code || null,
+      errorStack: error?.stack || null,
+    };
     console.error(
       "[Shopee Tokens] fs.writeFileSync — LỖI GHI FILE",
-      JSON.stringify({
-        absPath,
-        SHOPEE_TOKENS_PATH,
-        errorMessage: error?.message || String(error),
-        errorCode: error?.code || null,
-      }),
+      JSON.stringify(errorDetail),
     );
-    return false;
+    // Ném lỗi lên để tầng trên xử lý
+    throw new Error(
+      `Không thể ghi file shopee_tokens.json: ${error?.message || String(error)} (${error?.code || "unknown"})`
+    );
   }
 }
 
@@ -510,14 +528,32 @@ export async function completeShopeeOAuthFlow(code, params) {
   let savedIds = [];
 
   if (tokenResult.access_token) {
-    savedIds = persistOAuthTokens(tokenResult, {
-      oauthShopId: oauthShopId || undefined,
-      mainAccountId: mainAccountId || undefined,
-      expectedShopId: expected || undefined,
-    });
-    tokenResult.saved_shop_ids = savedIds;
-    if (savedIds.length > 0) {
-      deps.syncOAuthShopsToChannelSettings(savedIds, { expectedShopId: expected || undefined });
+    try {
+      savedIds = persistOAuthTokens(tokenResult, {
+        oauthShopId: oauthShopId || undefined,
+        mainAccountId: mainAccountId || undefined,
+        expectedShopId: expected || undefined,
+      });
+      tokenResult.saved_shop_ids = savedIds;
+      if (savedIds.length > 0) {
+        deps.syncOAuthShopsToChannelSettings(savedIds, { expectedShopId: expected || undefined });
+      }
+    } catch (writeError) {
+      console.error("[Shopee OAuth] Lỗi lưu token xuống file:", writeError);
+      return {
+        success: false,
+        oauth_shop_id: oauthShopId || mainAccountId || "",
+        saved_shop_ids: [],
+        verified_in_file: false,
+        error: "file_write_error",
+        message: `Lưu gian hàng thất bại — ${writeError.message || "không ghi được file"}. Kiểm tra quyền ghi thư mục data/ trên server.`,
+        writeErrorDetails: {
+          message: writeError.message,
+          code: writeError.code,
+          tokensPath: SHOPEE_TOKENS_PATH,
+          appRoot: APP_ROOT,
+        },
+      };
     }
   }
 
