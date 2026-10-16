@@ -39,7 +39,8 @@ export function scheduleReadyToShipBackfill(deps = {}) {
     Number(deps.lookbackSec) || 7 * 24 * 60 * 60,
   );
   const cronExpr = String(
-    deps.cronExpr || process.env.AUTO_RTS_BACKFILL_CRON_EXPR || "*/10 * * * *",
+    // Lệch phút 4 khỏi incremental (phút 0/5) và handed-over (phút 2/7).
+    deps.cronExpr || process.env.AUTO_RTS_BACKFILL_CRON_EXPR || "4-59/10 * * * *",
   ).trim();
 
   if (!cron.validate(cronExpr)) {
@@ -90,16 +91,23 @@ export function scheduleReadyToShipBackfill(deps = {}) {
     }
   });
 
-  setTimeout(() => {
+  // Không vét 7 ngày ngay lúc boot; ưu tiên webhook và incremental trước.
+  const bootDelayMs = Math.max(
+    2 * 60_000,
+    Number(process.env.AUTO_RTS_BACKFILL_BOOT_DELAY_MS) || 4 * 60 * 1000,
+  );
+  const bootTimer = setTimeout(() => {
     try {
       void Promise.resolve(deps.runSync({ lookbackSec, trigger: "boot" }));
     } catch {
       /* ignore */
     }
-  }, 28_000);
+  }, bootDelayMs);
+  bootTimer.unref?.();
 
   console.log(
-    `[CRON] READY_TO_SHIP backfill ON — expr="${cronExpr}" lookbackSec=${lookbackSec}`,
+    `[CRON] READY_TO_SHIP backfill ON — expr="${cronExpr}" lookbackSec=${lookbackSec}` +
+      ` bootDelayMs=${bootDelayMs}`,
   );
 }
 

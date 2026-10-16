@@ -36,7 +36,8 @@ export function scheduleShopeeReturnRequestsSync(deps = {}) {
   }
 
   const cronExpr = String(
-    deps.cronExpr || process.env.AUTO_RETURN_REQUESTS_CRON_EXPR || "*/30 * * * *",
+    // Lệch khỏi các nhịp đồng bộ đơn để không tranh CPU/pool Mongo cùng phút.
+    deps.cronExpr || process.env.AUTO_RETURN_REQUESTS_CRON_EXPR || "7,37 * * * *",
   ).trim();
 
   if (!cron.validate(cronExpr)) {
@@ -75,8 +76,12 @@ export function scheduleShopeeReturnRequestsSync(deps = {}) {
     }
   });
 
-  // Boot kick nhẹ — không chờ 30 phút mới có dữ liệu cho tab.
-  setTimeout(() => {
+  // Chạy sau các job nhận đơn quan trọng; tab trả hàng không cần tranh tải lúc boot.
+  const bootDelayMs = Math.max(
+    3 * 60_000,
+    Number(process.env.AUTO_RETURN_REQUESTS_BOOT_DELAY_MS) || 6 * 60 * 1000,
+  );
+  const bootTimer = setTimeout(() => {
     if (returnRequestsInFlight) return;
     returnRequestsInFlight = true;
     try {
@@ -88,9 +93,10 @@ export function scheduleShopeeReturnRequestsSync(deps = {}) {
     } catch {
       returnRequestsInFlight = false;
     }
-  }, 45_000);
+  }, bootDelayMs);
+  bootTimer.unref?.();
 
-  console.log(`[CRON] Return Requests Sync ON — expr="${cronExpr}"`);
+  console.log(`[CRON] Return Requests Sync ON — expr="${cronExpr}" bootDelayMs=${bootDelayMs}`);
 }
 
 export function stopShopeeReturnRequestsSync() {

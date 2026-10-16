@@ -80581,6 +80581,9 @@ function triggerWebhookRescuePull(opts = {}) {
 // modules/shopee-sync/schedulers/orders.js
 var autoIncrementalScheduled = false;
 var cronTask = null;
+var incrementalInterval = null;
+var incrementalBootTimer = null;
+var lastIncrementalTickAt = 0;
 var handedOverReconcileScheduled = false;
 var handedOverReconcileTask = null;
 function scheduleAutoIncrementalOrdersSync(deps23 = {}) {
@@ -80607,7 +80610,20 @@ function scheduleAutoIncrementalOrdersSync(deps23 = {}) {
     console.error(`[CRON] Invalid cron expr="${cronExpr}" \u2014 sync cron NOT started`);
     return;
   }
+  const minTickGapMs = Math.max(
+    6e4,
+    Number(process.env.AUTO_ORDER_SYNC_MIN_GAP_MS) || 4 * 60 * 1e3
+  );
   const runIncrementalTick = async (trigger) => {
+    const now = Date.now();
+    const elapsedMs = now - lastIncrementalTickAt;
+    if (lastIncrementalTickAt > 0 && elapsedMs < minTickGapMs) {
+      console.log(
+        `[CRON] Incremental Sync coalesced trigger=${trigger} \u2014 last tick ${Math.round(elapsedMs / 1e3)}s ago`
+      );
+      return;
+    }
+    lastIncrementalTickAt = now;
     if (trigger === "interval") {
       console.log("\n--- [CRON INTERVAL START] --- Fetching Shopee orders...");
     }
@@ -80653,24 +80669,43 @@ function scheduleAutoIncrementalOrdersSync(deps23 = {}) {
   });
   const intervalMs = Math.max(
     6e4,
-    Number(process.env.AUTO_ORDER_SYNC_INTERVAL_MS) || 2 * 60 * 1e3
+    Number(process.env.AUTO_ORDER_SYNC_INTERVAL_MS) || 5 * 60 * 1e3
   );
-  const incrementalInterval = setInterval(() => {
+  incrementalInterval = setInterval(() => {
     runIncrementalTick("interval");
   }, intervalMs);
   if (typeof incrementalInterval.unref === "function") {
     incrementalInterval.unref();
   }
-  setTimeout(() => {
+  const bootDelayMs = Math.max(
+    3e4,
+    Number(process.env.AUTO_ORDER_SYNC_BOOT_DELAY_MS) || 6e4
+  );
+  incrementalBootTimer = setTimeout(() => {
     runIncrementalTick("boot");
-  }, 2e4);
+  }, bootDelayMs);
+  incrementalBootTimer.unref?.();
   console.log(
-    `[CRON] Auto Incremental Sync ON \u2014 expr="${cronExpr}" intervalMs=${intervalMs} lookbackSec=${lookbackSec} (~${Math.round(lookbackSec / 3600)}h). Boot kick 20s.`
+    `[CRON] Auto Incremental Sync ON \u2014 expr="${cronExpr}" intervalMs=${intervalMs} minGapMs=${minTickGapMs} lookbackSec=${lookbackSec} (~${Math.round(lookbackSec / 3600)}h). Boot kick ${Math.round(bootDelayMs / 1e3)}s.`
   );
 }
 var handedOverReconcileInterval = null;
 var handedOverReconcileBootTimer = null;
+var lastHandedOverTickAt = 0;
 function runHandedOverReconcileTick(deps23, trigger) {
+  const minGapMs = Math.max(
+    6e4,
+    Number(process.env.AUTO_HANDED_OVER_MIN_GAP_MS) || 4 * 60 * 1e3
+  );
+  const now = Date.now();
+  const elapsedMs = now - lastHandedOverTickAt;
+  if (lastHandedOverTickAt > 0 && elapsedMs < minGapMs) {
+    console.log(
+      `[CRON] HandedOver reconcile coalesced trigger=${trigger} \u2014 last tick ${Math.round(elapsedMs / 1e3)}s ago`
+    );
+    return;
+  }
+  lastHandedOverTickAt = now;
   console.log(`[CRON] Tick HandedOver status reconcile (\u0110VVC \u2192 SHIPPED) trigger=${trigger}`);
   try {
     void Promise.resolve(
@@ -80746,14 +80781,18 @@ function scheduleHandedOverStatusReconcile(deps23 = {}) {
     } catch {
     }
   }
+  const handedOverBootDelayMs = Math.max(
+    6e4,
+    Number(process.env.AUTO_HANDED_OVER_BOOT_DELAY_MS) || 2 * 60 * 1e3
+  );
   handedOverReconcileBootTimer = setTimeout(() => {
     runHandedOverReconcileTick(deps23, "boot");
-  }, 2e4);
+  }, handedOverBootDelayMs);
   if (typeof handedOverReconcileBootTimer.unref === "function") {
     handedOverReconcileBootTimer.unref();
   }
   console.log(
-    `[CRON] HandedOver setInterval ON \u2014 every ${Math.round(intervalMs / 1e3)}s + boot kick 20s.`
+    `[CRON] HandedOver setInterval ON \u2014 every ${Math.round(intervalMs / 1e3)}s + boot kick ${Math.round(handedOverBootDelayMs / 1e3)}s.`
   );
 }
 
@@ -80860,7 +80899,8 @@ function scheduleShopeeReturnRequestsSync(deps23 = {}) {
     return;
   }
   const cronExpr = String(
-    deps23.cronExpr || process.env.AUTO_RETURN_REQUESTS_CRON_EXPR || "*/30 * * * *"
+    // Lệch khỏi các nhịp đồng bộ đơn để không tranh CPU/pool Mongo cùng phút.
+    deps23.cronExpr || process.env.AUTO_RETURN_REQUESTS_CRON_EXPR || "7,37 * * * *"
   ).trim();
   if (!import_node_cron2.default.validate(cronExpr)) {
     console.error(`[CRON] Invalid return-requests cron expr="${cronExpr}"`);
@@ -80893,7 +80933,11 @@ function scheduleShopeeReturnRequestsSync(deps23 = {}) {
       console.error("[CRON] Return Requests tick failed:", err?.message || err);
     }
   });
-  setTimeout(() => {
+  const bootDelayMs = Math.max(
+    3 * 6e4,
+    Number(process.env.AUTO_RETURN_REQUESTS_BOOT_DELAY_MS) || 6 * 60 * 1e3
+  );
+  const bootTimer = setTimeout(() => {
     if (returnRequestsInFlight) return;
     returnRequestsInFlight = true;
     try {
@@ -80904,8 +80948,9 @@ function scheduleShopeeReturnRequestsSync(deps23 = {}) {
     } catch {
       returnRequestsInFlight = false;
     }
-  }, 45e3);
-  console.log(`[CRON] Return Requests Sync ON \u2014 expr="${cronExpr}"`);
+  }, bootDelayMs);
+  bootTimer.unref?.();
+  console.log(`[CRON] Return Requests Sync ON \u2014 expr="${cronExpr}" bootDelayMs=${bootDelayMs}`);
 }
 
 // modules/shopee-sync/schedulers/backfill.js
@@ -80932,7 +80977,8 @@ function scheduleReadyToShipBackfill(deps23 = {}) {
     Number(deps23.lookbackSec) || 7 * 24 * 60 * 60
   );
   const cronExpr = String(
-    deps23.cronExpr || process.env.AUTO_RTS_BACKFILL_CRON_EXPR || "*/10 * * * *"
+    // Lệch phút 4 khỏi incremental (phút 0/5) và handed-over (phút 2/7).
+    deps23.cronExpr || process.env.AUTO_RTS_BACKFILL_CRON_EXPR || "4-59/10 * * * *"
   ).trim();
   if (!import_node_cron3.default.validate(cronExpr)) {
     console.error(`[CRON] Invalid RTS backfill cron expr="${cronExpr}"`);
@@ -80977,14 +81023,19 @@ function scheduleReadyToShipBackfill(deps23 = {}) {
       console.error("[CRON] RTS backfill tick failed:", err?.message || err);
     }
   });
-  setTimeout(() => {
+  const bootDelayMs = Math.max(
+    2 * 6e4,
+    Number(process.env.AUTO_RTS_BACKFILL_BOOT_DELAY_MS) || 4 * 60 * 1e3
+  );
+  const bootTimer = setTimeout(() => {
     try {
       void Promise.resolve(deps23.runSync({ lookbackSec, trigger: "boot" }));
     } catch {
     }
-  }, 28e3);
+  }, bootDelayMs);
+  bootTimer.unref?.();
   console.log(
-    `[CRON] READY_TO_SHIP backfill ON \u2014 expr="${cronExpr}" lookbackSec=${lookbackSec}`
+    `[CRON] READY_TO_SHIP backfill ON \u2014 expr="${cronExpr}" lookbackSec=${lookbackSec} bootDelayMs=${bootDelayMs}`
   );
 }
 
@@ -86709,18 +86760,11 @@ async function bulkUpsertOrdersToStore(orders) {
               $set.status = "unprocessed";
               $set["data.status"] = "unprocessed";
             } else if (!forwardProgress && incomingStatus === "unprocessed" && LOCAL_STATUS_NOT_BELOW_PROCESSED.has(existingStatus) && (current?.isPrinted === true || current?.data?.isPrinted === true || current?.is_handed_over === true)) {
-              const isPendingToUnprocessed = existingStatus === "pending_confirm" || existingStatus === "pending_verification";
-              if (isPendingToUnprocessed) {
-                console.log(
-                  `[MongoDB] ALLOW ${existingStatus}\u2192unprocessed (x\xE1c nh\u1EADn \u0111\u01A1n) order_sn=${item.orderSn || item.id}`
-                );
-              } else {
-                delete $set.status;
-                delete $set["data.status"];
-                console.warn(
-                  `[MongoDB] BLOCK downgrade status ${existingStatus}\u2192unprocessed order_sn=${item.orderSn || item.id} printed=${current?.isPrinted === true} handed=${current?.is_handed_over === true}`
-                );
-              }
+              delete $set.status;
+              delete $set["data.status"];
+              console.warn(
+                `[MongoDB] BLOCK downgrade status ${existingStatus}\u2192unprocessed order_sn=${item.orderSn || item.id} printed=${current?.isPrinted === true} handed=${current?.is_handed_over === true}`
+              );
             }
             const storedRawForGuard = String(
               current.shopee_order_status || current.data?.shopee_order_status || ""

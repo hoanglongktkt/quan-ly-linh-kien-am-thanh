@@ -3,6 +3,9 @@ import cron from "node-cron";
 import { triggerBackgroundOrderSync, DEFAULT_INCREMENTAL_LOOKBACK_SEC } from "../orderSyncService.js";
 let autoIncrementalScheduled = false;
 let cronTask = null;
+let incrementalInterval = null;
+let incrementalBootTimer = null;
+let lastIncrementalTickAt = 0;
 let handedOverReconcileScheduled = false;
 let handedOverReconcileTask = null;
 
@@ -46,7 +49,22 @@ export function scheduleAutoIncrementalOrdersSync(deps = {}) {
     return;
   }
 
+  // Chặn cron + interval + boot kích hoạt cùng tác vụ quá sát nhau trên cPanel yếu.
+  const minTickGapMs = Math.max(
+    60_000,
+    Number(process.env.AUTO_ORDER_SYNC_MIN_GAP_MS) || 4 * 60 * 1000,
+  );
+
   const runIncrementalTick = async (trigger) => {
+    const now = Date.now();
+    const elapsedMs = now - lastIncrementalTickAt;
+    if (lastIncrementalTickAt > 0 && elapsedMs < minTickGapMs) {
+      console.log(
+        `[CRON] Incremental Sync coalesced trigger=${trigger} — last tick ${Math.round(elapsedMs / 1000)}s ago`,
+      );
+      return;
+    }
+    lastIncrementalTickAt = now;
     if (trigger === "interval") {
       console.log("\n--- [CRON INTERVAL START] --- Fetching Shopee orders...");
     }
@@ -92,24 +110,31 @@ export function scheduleAutoIncrementalOrdersSync(deps = {}) {
     runIncrementalTick("cron");
   });
 
-  // Passenger làm node-cron không tick khi process idle. setInterval vẫn chạy nếu process sống.
+  // Passenger có thể bỏ node-cron khi idle; interval là lưới an toàn nhưng không chạy dày hơn cron.
   const intervalMs = Math.max(
     60_000,
-    Number(process.env.AUTO_ORDER_SYNC_INTERVAL_MS) || 2 * 60 * 1000,
+    Number(process.env.AUTO_ORDER_SYNC_INTERVAL_MS) || 5 * 60 * 1000,
   );
-  const incrementalInterval = setInterval(() => {
+  incrementalInterval = setInterval(() => {
     runIncrementalTick("interval");
   }, intervalMs);
   if (typeof incrementalInterval.unref === "function") {
     incrementalInterval.unref();
   }
-  setTimeout(() => {
+  // Giãn boot kick để webhook drainer và kết nối Mongo ổn định trước khi pull đơn.
+  const bootDelayMs = Math.max(
+    30_000,
+    Number(process.env.AUTO_ORDER_SYNC_BOOT_DELAY_MS) || 60_000,
+  );
+  incrementalBootTimer = setTimeout(() => {
     runIncrementalTick("boot");
-  }, 20_000);
+  }, bootDelayMs);
+  incrementalBootTimer.unref?.();
 
   console.log(
     `[CRON] Auto Incremental Sync ON — expr="${cronExpr}" intervalMs=${intervalMs}` +
-      ` lookbackSec=${lookbackSec} (~${Math.round(lookbackSec / 3600)}h). Boot kick 20s.`,
+      ` minGapMs=${minTickGapMs} lookbackSec=${lookbackSec}` +
+      ` (~${Math.round(lookbackSec / 3600)}h). Boot kick ${Math.round(bootDelayMs / 1000)}s.`,
   );
 }
 
@@ -125,8 +150,23 @@ export function scheduleAutoIncrementalOrdersSync(deps = {}) {
  */
 let handedOverReconcileInterval = null;
 let handedOverReconcileBootTimer = null;
+let lastHandedOverTickAt = 0;
 
 function runHandedOverReconcileTick(deps, trigger) {
+  // Cron và interval cùng tồn tại để chịu được Passenger idle, nhưng chỉ một nhịp được chạy.
+  const minGapMs = Math.max(
+    60_000,
+    Number(process.env.AUTO_HANDED_OVER_MIN_GAP_MS) || 4 * 60 * 1000,
+  );
+  const now = Date.now();
+  const elapsedMs = now - lastHandedOverTickAt;
+  if (lastHandedOverTickAt > 0 && elapsedMs < minGapMs) {
+    console.log(
+      `[CRON] HandedOver reconcile coalesced trigger=${trigger} — last tick ${Math.round(elapsedMs / 1000)}s ago`,
+    );
+    return;
+  }
+  lastHandedOverTickAt = now;
   console.log(`[CRON] Tick HandedOver status reconcile (ĐVVC → SHIPPED) trigger=${trigger}`);
   try {
     void Promise.resolve(
@@ -212,7 +252,7 @@ export function scheduleHandedOverStatusReconcile(deps = {}) {
     handedOverReconcileInterval.unref();
   }
 
-  // Boot kick ~20s sau khi schedule — xử lý ngay 69 đơn kẹt, không đợi chu kỳ đầu.
+  // Lệch boot kick khỏi incremental/RTS để tránh dồn CPU ngay khi Passenger vừa khởi động.
   if (handedOverReconcileBootTimer) {
     try {
       clearTimeout(handedOverReconcileBootTimer);
@@ -220,15 +260,20 @@ export function scheduleHandedOverStatusReconcile(deps = {}) {
       /* ignore */
     }
   }
+  const handedOverBootDelayMs = Math.max(
+    60_000,
+    Number(process.env.AUTO_HANDED_OVER_BOOT_DELAY_MS) || 2 * 60 * 1000,
+  );
   handedOverReconcileBootTimer = setTimeout(() => {
     runHandedOverReconcileTick(deps, "boot");
-  }, 20_000);
+  }, handedOverBootDelayMs);
   if (typeof handedOverReconcileBootTimer.unref === "function") {
     handedOverReconcileBootTimer.unref();
   }
 
   console.log(
-    `[CRON] HandedOver setInterval ON — every ${Math.round(intervalMs / 1000)}s + boot kick 20s.`,
+    `[CRON] HandedOver setInterval ON — every ${Math.round(intervalMs / 1000)}s` +
+      ` + boot kick ${Math.round(handedOverBootDelayMs / 1000)}s.`,
   );
 }
 
@@ -241,6 +286,15 @@ export function stopAutoIncrementalOrdersSync() {
     }
     cronTask = null;
   }
+  if (incrementalInterval) {
+    clearInterval(incrementalInterval);
+    incrementalInterval = null;
+  }
+  if (incrementalBootTimer) {
+    clearTimeout(incrementalBootTimer);
+    incrementalBootTimer = null;
+  }
+  lastIncrementalTickAt = 0;
   autoIncrementalScheduled = false;
   console.log("[CRON] Auto Incremental Sync stopped.");
 }
@@ -271,5 +325,6 @@ export function stopHandedOverStatusReconcile() {
     handedOverReconcileBootTimer = null;
   }
   handedOverReconcileScheduled = false;
+  lastHandedOverTickAt = 0;
   console.log("[CRON] HandedOver status reconcile stopped.");
 }
