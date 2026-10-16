@@ -151,6 +151,7 @@ async function healBrokenSnippets(conversations) {
 /** POST /api/chat/conversations/:id/read — unread_count = 0 */
 export async function markConversationRead(req, res) {
   let conversationId = "";
+  let shopId = null;
   try {
     conversationId = String(
       req.params?.id || req.params?.conversation_id || req.body?.conversation_id || "",
@@ -164,11 +165,22 @@ export async function markConversationRead(req, res) {
       return res.json({ success: true, unread_count: 0, conversation_id: "" });
     }
 
-    const shopId = parseShopId(req.body?.shop_id ?? req.query?.shop_id);
+    shopId = parseShopId(req.body?.shop_id ?? req.query?.shop_id);
     const filter = { conversation_id: conversationId };
     if (shopId != null) filter.shop_id = shopId;
 
     await Conversation.updateMany(filter, { $set: { unread_count: 0 } });
+
+    // Broadcast real-time khi đánh dấu đã đọc
+    if (shopId != null) {
+      try {
+        const { broadcastConversationRead } = await import("./chatSseController.js");
+        broadcastConversationRead(shopId, conversationId);
+      } catch (err) {
+        console.error("[Chat markConversationRead] SSE broadcast error:", err);
+      }
+    }
+
     return res.json({
       success: true,
       conversation_id: conversationId,
@@ -298,6 +310,70 @@ export async function sendMessage(req, res) {
     return res.status(500).json({
       success: false,
       error: "Không gửi được tin nhắn",
+    });
+  }
+}
+
+/** Cache số tin chưa đọc — key: shop_id hoặc 'all', value: { count, at } */
+const unreadCountCache = new Map();
+const UNREAD_COUNT_CACHE_MS = 10_000;
+
+/**
+ * GET /api/chat/unread-count?shop_id=123
+ * Đếm nhanh số tin chưa đọc — index-only query, cache 10s, timeout 5s.
+ * Tối ưu cho cPanel cấu hình thấp: KHÔNG tải document, chỉ aggregate sum.
+ */
+export async function getUnreadCount(req, res) {
+  try {
+    const shopRaw = req.query?.shop_id;
+    const hasShop = shopRaw != null && String(shopRaw).trim() !== "";
+    const shopId = parseShopId(shopRaw);
+    if (hasShop && shopId == null) {
+      return res.status(400).json({ success: false, error: "shop_id không hợp lệ." });
+    }
+
+    const cacheKey = shopId != null ? String(shopId) : "all";
+    const now = Date.now();
+    const cached = unreadCountCache.get(cacheKey);
+    if (cached && now - cached.at < UNREAD_COUNT_CACHE_MS) {
+      return res.json({ success: true, unreadCount: cached.count, cached: true });
+    }
+
+    const query = {};
+    if (shopId != null) query.shop_id = shopId;
+
+    // Aggregate index-only: sum(unread_count) — KHÔNG đọc document đầy đủ.
+    // Timeout 5s — tránh treo connection khi MongoDB cold-start.
+    const pipeline = [
+      { $match: query },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: "$unread_count" },
+        },
+      },
+    ];
+
+    const result = await Conversation.aggregate(pipeline)
+      .maxTimeMS(5000)
+      .exec();
+
+    const total = result.length > 0 && result[0].total != null ? Math.max(0, Number(result[0].total) || 0) : 0;
+    unreadCountCache.set(cacheKey, { count: total, at: now });
+
+    // Xóa cache cũ hơn 2 phút — giới hạn kích thước Map.
+    const expireAt = now - 120_000;
+    for (const [key, value] of unreadCountCache) {
+      if (value.at < expireAt) unreadCountCache.delete(key);
+    }
+
+    return res.json({ success: true, unreadCount: total, cached: false });
+  } catch (error) {
+    logChatError("[Chat getUnreadCount]", error);
+    return res.status(500).json({
+      success: false,
+      error: "Không đếm được số tin chưa đọc",
+      unreadCount: 0,
     });
   }
 }

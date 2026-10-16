@@ -773,7 +773,7 @@ export default function App() {
   const [customerHistoryPhone, setCustomerHistoryPhone] = useState<string | null>(() =>
     customerHistoryPhoneFromPath(),
   );
-  const { totalUnreadCount } = useChatUnread();
+  const { totalUnreadCount, setTotalUnreadCount } = useChatUnread();
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
@@ -1591,6 +1591,42 @@ export default function App() {
     return resolveOrdersFetchKindFromUrl();
   }, [resolveOrdersFetchTab]);
 
+  // Tải số tin nhắn chưa đọc ngay sau khi đăng nhập — cache 10s backend, không tốn CPU.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const fetchChatUnreadCount = async () => {
+      const token = localStorage.getItem('admin_token');
+      if (!token) return;
+      try {
+        const response = await fetch('/api/chat/unread-count', {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!response.ok) return;
+        const data = await response.json();
+        const count = Number(data?.unreadCount) || 0;
+        setTotalUnreadCount(count);
+      } catch (err) {
+        // Silent fail — không hiện lỗi, chỉ log nền.
+        if (err instanceof Error && err.name !== 'AbortError') {
+          console.warn('[Chat unread count]', err.message);
+        }
+      }
+    };
+
+    // Tải ngay sau auth + mỗi 30s (tab chat sẽ poll 20s riêng khi đang mở).
+    void fetchChatUnreadCount();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
+      if (activeTab === 'chat') return; // ChatManager tự poll
+      void fetchChatUnreadCount();
+    }, 30_000);
+
+    return () => window.clearInterval(timer);
+  }, [isAuthenticated, activeTab, setTotalUnreadCount]);
+
   // Quay lại tab / sáng màn hình → lập tức fetch đơn mới nhất, bỏ qua cache (KHÔNG gọi Shopee).
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -1633,7 +1669,7 @@ export default function App() {
       void refreshFromLocalDb();
     }, 10);
     return unsubscribe;
-  }, [isAuthenticated, activeTab, resolveOrdersFetchTab, resolveOrdersFetchKind]);
+  }, [isAuthenticated, activeTab, resolveOrdersFetchTab, resolveOrdersFetchKind, setTotalUnreadCount]);
 
   // Poll hàng đợi dò ngầm Backend — toast toàn app kể cả khi tắt màn quét / đổi tab.
   useEffect(() => {

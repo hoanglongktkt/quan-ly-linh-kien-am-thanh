@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, Loader2, MessageSquare, Plus, Send, X, Zap } from 'lucide-react';
 import { apiFetch, parseJsonResponse } from '../../utils/apiClient';
 import { useChatUnread } from '../../context/ChatUnreadContext';
+import { useChatSse } from '../../hooks/useChatSse';
 
 type ChatFilter = 'all' | 'unread';
 
@@ -305,9 +306,57 @@ export default function ChatManager({ shops = [] }: ChatManagerProps) {
     setTotalUnreadCount(unreadTotal);
   }, [unreadTotal, setTotalUnreadCount]);
 
+  // SSE real-time: nhận tin nhắn mới và cập nhật badge ngay lập tức
+  useChatSse({
+    shopId: shopId || undefined,
+    enabled: true,
+    onNewMessage: useCallback((data) => {
+      // Cập nhật danh sách hội thoại: tăng unread_count, đẩy lên đầu
+      setConversations((prev) => {
+        const updated = prev.map((row) =>
+          row.conversation_id === data.conversation_id && String(row.shop_id) === String(data.shop_id)
+            ? {
+                ...row,
+                unread_count: (Number(row.unread_count) || 0) + 1,
+                latest_message_snippet: data.snippet || row.latest_message_snippet,
+                last_updated_at: new Date().toISOString(),
+              }
+            : row,
+        );
+        // Sắp xếp lại: hội thoại có tin mới lên đầu
+        return updated.sort((a, b) => {
+          const aTime = new Date(a.last_updated_at || 0).getTime();
+          const bTime = new Date(b.last_updated_at || 0).getTime();
+          return bTime - aTime;
+        });
+      });
+
+      // Nếu đang xem hội thoại này → tải tin nhắn mới
+      if (selectedId === data.conversation_id) {
+        void loadMessages(data.conversation_id);
+      }
+    }, [selectedId, loadMessages]),
+    onConversationRead: useCallback((data) => {
+      // Đồng bộ badge khi có người khác đánh dấu đã đọc (multi-device)
+      setConversations((prev) =>
+        prev.map((row) =>
+          row.conversation_id === data.conversation_id && String(row.shop_id) === String(data.shop_id)
+            ? { ...row, unread_count: 0 }
+            : row,
+        ),
+      );
+    }, []),
+    onConnected: useCallback(() => {
+      console.log('[Chat SSE] Connected');
+    }, []),
+    onError: useCallback((err) => {
+      console.warn('[Chat SSE] Error:', err.message);
+    }, []),
+  });
+
   const active = conversations.find((row) => row.conversation_id === selectedId) ?? null;
 
-  const loadConversations = useCallback(async () => {
+  const loadConversations = useCallback(async (retryCount = 0) => {
     if (listFlight.current) return;
     listFlight.current = true;
     setListLoading(true);
@@ -337,13 +386,26 @@ export default function ChatManager({ shops = [] }: ChatManagerProps) {
       });
       setError('');
     } catch (err) {
+      const isNetworkError = err instanceof TypeError || (err instanceof Error && err.message.includes('fetch'));
+      // Retry tối đa 2 lần với delay 2s, 4s cho lỗi mạng
+      if (isNetworkError && retryCount < 2) {
+        const delayMs = (retryCount + 1) * 2000;
+        window.setTimeout(() => {
+          listFlight.current = false;
+          void loadConversations(retryCount + 1);
+        }, delayMs);
+        return;
+      }
       setError(err instanceof Error ? err.message : 'Không tải được hội thoại');
-      setConversations([]);
+      // Giữ nguyên danh sách cũ thay vì clear về rỗng
+      if (conversations.length === 0) {
+        setConversations([]);
+      }
     } finally {
       listFlight.current = false;
       setListLoading(false);
     }
-  }, [filter, shopId]);
+  }, [filter, shopId, conversations.length]);
 
   const loadMessages = useCallback(async (conversationId: string) => {
     if (!conversationId) {
@@ -495,7 +557,12 @@ export default function ChatManager({ shops = [] }: ChatManagerProps) {
   const handleSelectConversation = (item: ConversationRow) => {
     setSelectedId(item.conversation_id);
     setActiveConversation(item.conversation_id);
-    readClearUntil.current.set(`${String(item.shop_id ?? '')}:${item.conversation_id}`, Date.now() + 25_000);
+
+    // Đánh dấu tạm thời trong cache UI — sẽ rollback nếu API thất bại
+    const cacheKey = `${String(item.shop_id ?? '')}:${item.conversation_id}`;
+    readClearUntil.current.set(cacheKey, Date.now() + 25_000);
+
+    // Optimistic update: giảm badge ngay để UX mượt
     setConversations((prev) =>
       prev.map((row) =>
         row.conversation_id === item.conversation_id && String(row.shop_id) === String(item.shop_id)
@@ -503,6 +570,8 @@ export default function ChatManager({ shops = [] }: ChatManagerProps) {
           : row,
       ),
     );
+
+    // Gọi API đánh dấu đã đọc — chờ kết quả để đồng bộ chắc chắn
     void (async () => {
       try {
         const response = await apiFetch(
@@ -514,10 +583,28 @@ export default function ChatManager({ shops = [] }: ChatManagerProps) {
           },
         );
         if (!response.ok) {
-          console.log('[chat] POST /read', response.status);
+          // Rollback: khôi phục unread_count từ cache nếu API thất bại
+          readClearUntil.current.delete(cacheKey);
+          setConversations((prev) =>
+            prev.map((row) =>
+              row.conversation_id === item.conversation_id && String(row.shop_id) === String(item.shop_id)
+                ? { ...row, unread_count: item.unread_count ?? 0 }
+                : row,
+            ),
+          );
+          console.warn('[chat] POST /read failed, rolled back UI', response.status);
         }
       } catch (err) {
-        console.log('[chat] POST /read', err);
+        // Rollback nếu lỗi mạng
+        readClearUntil.current.delete(cacheKey);
+        setConversations((prev) =>
+          prev.map((row) =>
+            row.conversation_id === item.conversation_id && String(row.shop_id) === String(item.shop_id)
+              ? { ...row, unread_count: item.unread_count ?? 0 }
+              : row,
+          ),
+        );
+        console.warn('[chat] POST /read error, rolled back UI', err);
       }
     })();
   };

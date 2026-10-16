@@ -48125,88 +48125,6 @@ var require_cjs = __commonJS({
   }
 });
 
-// models/DonHoanHuy.js
-var DonHoanHuy_exports = {};
-__export(DonHoanHuy_exports, {
-  default: () => DonHoanHuy_default
-});
-var import_mongoose6, DonHoanHuySchema, DonHoanHuy, DonHoanHuy_default;
-var init_DonHoanHuy = __esm({
-  "models/DonHoanHuy.js"() {
-    import_mongoose6 = __toESM(require("mongoose"), 1);
-    DonHoanHuySchema = new import_mongoose6.default.Schema(
-      {
-        orderSn: {
-          type: String,
-          required: true,
-          trim: true
-        },
-        status: {
-          type: String,
-          default: "scanned",
-          trim: true
-        },
-        scannedAt: {
-          type: Date,
-          default: Date.now
-          // TTL removed — xóa thủ công bằng API
-        },
-        note: {
-          type: String,
-          default: "",
-          trim: true
-        },
-        /** Shopee shop_id — String (uint64-safe), không lưu Number */
-        shopId: {
-          type: String,
-          default: null,
-          trim: true
-        },
-        tracking_no: {
-          type: String,
-          default: null,
-          trim: true
-        },
-        return_tracking_no: {
-          type: String,
-          default: null,
-          trim: true
-        },
-        scan_code: {
-          type: String,
-          default: null,
-          trim: true
-        },
-        type: {
-          type: String,
-          default: null,
-          trim: true
-        },
-        local_status: {
-          type: String,
-          default: null,
-          trim: true
-        }
-      },
-      {
-        collection: "don_hoan_huy",
-        versionKey: false,
-        strict: false
-        // giữ field legacy (local_status, type, ...) nếu đã có trên Atlas
-      }
-    );
-    DonHoanHuySchema.index({ orderSn: 1 }, { unique: true, name: "don_hoan_huy_orderSn_unique" });
-    DonHoanHuySchema.index({ tracking_no: 1 }, { name: "don_hoan_huy_tracking_no" });
-    DonHoanHuySchema.index({ return_tracking_no: 1 }, { name: "don_hoan_huy_return_tracking_no" });
-    DonHoanHuySchema.index({ scan_code: 1 }, { name: "don_hoan_huy_scan_code" });
-    DonHoanHuySchema.index({ scannedAt: -1 }, { name: "don_hoan_huy_scannedAt" });
-    DonHoanHuySchema.index({ type: 1 }, { name: "don_hoan_huy_type" });
-    DonHoanHuySchema.index({ local_status: 1 }, { name: "don_hoan_huy_local_status" });
-    DonHoanHuy = import_mongoose6.default.models.DonHoanHuy || import_mongoose6.default.model("DonHoanHuy", DonHoanHuySchema);
-    DonHoanHuy_default = DonHoanHuy;
-  }
-});
-
 // node_modules/jws/lib/data-stream.js
 var require_data_stream = __commonJS({
   "node_modules/jws/lib/data-stream.js"(exports2, module2) {
@@ -51959,6 +51877,259 @@ var require_jsonwebtoken = __commonJS({
       NotBeforeError: require_NotBeforeError(),
       TokenExpiredError: require_TokenExpiredError()
     };
+  }
+});
+
+// controllers/chatSseController.js
+var chatSseController_exports = {};
+__export(chatSseController_exports, {
+  broadcastConversationRead: () => broadcastConversationRead,
+  broadcastNewMessage: () => broadcastNewMessage,
+  chatSseStream: () => chatSseStream
+});
+function logSse(label, ...args) {
+  try {
+    console.log(`[Chat SSE] ${label}`, ...args);
+  } catch {
+  }
+}
+function getTotalConnections() {
+  let total = 0;
+  for (const clients of sseClients.values()) {
+    total += clients.size;
+  }
+  return total;
+}
+function cleanupSseClient(res, shopId) {
+  try {
+    const clients = sseClients.get(shopId);
+    if (clients) {
+      clients.delete(res);
+      if (clients.size === 0) sseClients.delete(shopId);
+    }
+    const timer2 = sseTimeouts.get(res);
+    if (timer2) {
+      clearTimeout(timer2);
+      sseTimeouts.delete(res);
+    }
+  } catch (err) {
+    logSse("cleanup error", err);
+  }
+}
+function sendSseEvent(res, event, data) {
+  try {
+    if (res.writableEnded || res.destroyed) return false;
+    res.write(`event: ${event}
+`);
+    res.write(`data: ${JSON.stringify(data)}
+
+`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function resetIdleTimeout(res, shopId) {
+  const existing = sseTimeouts.get(res);
+  if (existing) clearTimeout(existing);
+  const timer2 = setTimeout(() => {
+    logSse("idle timeout", `shop_id=${shopId}`);
+    cleanupSseClient(res, shopId);
+    if (!res.writableEnded && !res.destroyed) {
+      sendSseEvent(res, "close", { reason: "idle_timeout" });
+      res.end();
+    }
+  }, SSE_IDLE_TIMEOUT_MS);
+  sseTimeouts.set(res, timer2);
+}
+function chatSseStream(req, res) {
+  const token = String(req.query?.token || "").trim();
+  if (!token) {
+    return res.status(401).json({ success: false, error: "Thi\u1EBFu token x\xE1c th\u1EF1c." });
+  }
+  try {
+    const jwt2 = require_jsonwebtoken();
+    const JWT_SECRET = process.env.JWT_SECRET;
+    if (!JWT_SECRET) {
+      logSse("JWT_SECRET not configured");
+      return res.status(500).json({ success: false, error: "Server ch\u01B0a c\u1EA5u h\xECnh." });
+    }
+    jwt2.verify(token, JWT_SECRET);
+  } catch (err) {
+    return res.status(401).json({ success: false, error: "Token kh\xF4ng h\u1EE3p l\u1EC7 ho\u1EB7c \u0111\xE3 h\u1EBFt h\u1EA1n." });
+  }
+  const shopIdRaw = String(req.query?.shop_id || "").trim();
+  const shopId = shopIdRaw || "all";
+  if (getTotalConnections() >= MAX_SSE_CONNECTIONS) {
+    return res.status(503).json({
+      success: false,
+      error: "Server \u0111ang qu\xE1 t\u1EA3i, vui l\xF2ng th\u1EED l\u1EA1i sau."
+    });
+  }
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no"
+    // Nginx
+  });
+  if (!sseClients.has(shopId)) {
+    sseClients.set(shopId, /* @__PURE__ */ new Set());
+  }
+  sseClients.get(shopId).add(res);
+  resetIdleTimeout(res, shopId);
+  logSse("client connected", `shop_id=${shopId} total=${getTotalConnections()}`);
+  sendSseEvent(res, "connected", { shop_id: shopId, timestamp: Date.now() });
+  const heartbeatTimer = setInterval(() => {
+    const sent = sendSseEvent(res, "ping", { timestamp: Date.now() });
+    if (sent) {
+      resetIdleTimeout(res, shopId);
+    } else {
+      clearInterval(heartbeatTimer);
+      cleanupSseClient(res, shopId);
+    }
+  }, SSE_HEARTBEAT_MS);
+  req.on("close", () => {
+    clearInterval(heartbeatTimer);
+    cleanupSseClient(res, shopId);
+    logSse("client disconnected", `shop_id=${shopId} total=${getTotalConnections()}`);
+  });
+}
+function broadcastNewMessage(shopId, conversationId, messageData) {
+  const key = String(shopId || "all").trim();
+  const clients = sseClients.get(key);
+  if (!clients || clients.size === 0) return;
+  const event = {
+    shop_id: shopId,
+    conversation_id: conversationId,
+    message_id: messageData?.message_id || messageData?.messageId,
+    sender_type: messageData?.sender_type || messageData?.senderType,
+    snippet: messageData?.snippet || "",
+    timestamp: Date.now()
+  };
+  let sent = 0;
+  const dead = [];
+  for (const res of clients) {
+    const ok = sendSseEvent(res, "new_message", event);
+    if (ok) {
+      sent += 1;
+      resetIdleTimeout(res, key);
+    } else {
+      dead.push(res);
+    }
+  }
+  for (const res of dead) {
+    cleanupSseClient(res, key);
+  }
+  if (sent > 0) {
+    logSse("broadcast", `shop_id=${shopId} conversation=${conversationId} sent=${sent}`);
+  }
+}
+function broadcastConversationRead(shopId, conversationId) {
+  const key = String(shopId || "all").trim();
+  const clients = sseClients.get(key);
+  if (!clients || clients.size === 0) return;
+  const event = {
+    shop_id: shopId,
+    conversation_id: conversationId,
+    unread_count: 0,
+    timestamp: Date.now()
+  };
+  for (const res of clients) {
+    const ok = sendSseEvent(res, "conversation_read", event);
+    if (ok) resetIdleTimeout(res, key);
+  }
+}
+var MAX_SSE_CONNECTIONS, SSE_IDLE_TIMEOUT_MS, SSE_HEARTBEAT_MS, sseClients, sseTimeouts;
+var init_chatSseController = __esm({
+  "controllers/chatSseController.js"() {
+    MAX_SSE_CONNECTIONS = 50;
+    SSE_IDLE_TIMEOUT_MS = 3e5;
+    SSE_HEARTBEAT_MS = 3e4;
+    sseClients = /* @__PURE__ */ new Map();
+    sseTimeouts = /* @__PURE__ */ new Map();
+  }
+});
+
+// models/DonHoanHuy.js
+var DonHoanHuy_exports = {};
+__export(DonHoanHuy_exports, {
+  default: () => DonHoanHuy_default
+});
+var import_mongoose6, DonHoanHuySchema, DonHoanHuy, DonHoanHuy_default;
+var init_DonHoanHuy = __esm({
+  "models/DonHoanHuy.js"() {
+    import_mongoose6 = __toESM(require("mongoose"), 1);
+    DonHoanHuySchema = new import_mongoose6.default.Schema(
+      {
+        orderSn: {
+          type: String,
+          required: true,
+          trim: true
+        },
+        status: {
+          type: String,
+          default: "scanned",
+          trim: true
+        },
+        scannedAt: {
+          type: Date,
+          default: Date.now
+          // TTL removed — xóa thủ công bằng API
+        },
+        note: {
+          type: String,
+          default: "",
+          trim: true
+        },
+        /** Shopee shop_id — String (uint64-safe), không lưu Number */
+        shopId: {
+          type: String,
+          default: null,
+          trim: true
+        },
+        tracking_no: {
+          type: String,
+          default: null,
+          trim: true
+        },
+        return_tracking_no: {
+          type: String,
+          default: null,
+          trim: true
+        },
+        scan_code: {
+          type: String,
+          default: null,
+          trim: true
+        },
+        type: {
+          type: String,
+          default: null,
+          trim: true
+        },
+        local_status: {
+          type: String,
+          default: null,
+          trim: true
+        }
+      },
+      {
+        collection: "don_hoan_huy",
+        versionKey: false,
+        strict: false
+        // giữ field legacy (local_status, type, ...) nếu đã có trên Atlas
+      }
+    );
+    DonHoanHuySchema.index({ orderSn: 1 }, { unique: true, name: "don_hoan_huy_orderSn_unique" });
+    DonHoanHuySchema.index({ tracking_no: 1 }, { name: "don_hoan_huy_tracking_no" });
+    DonHoanHuySchema.index({ return_tracking_no: 1 }, { name: "don_hoan_huy_return_tracking_no" });
+    DonHoanHuySchema.index({ scan_code: 1 }, { name: "don_hoan_huy_scan_code" });
+    DonHoanHuySchema.index({ scannedAt: -1 }, { name: "don_hoan_huy_scannedAt" });
+    DonHoanHuySchema.index({ type: 1 }, { name: "don_hoan_huy_type" });
+    DonHoanHuySchema.index({ local_status: 1 }, { name: "don_hoan_huy_local_status" });
+    DonHoanHuy = import_mongoose6.default.models.DonHoanHuy || import_mongoose6.default.model("DonHoanHuy", DonHoanHuySchema);
+    DonHoanHuy_default = DonHoanHuy;
   }
 });
 
@@ -81525,6 +81696,18 @@ async function ingestShopeeChatPush(payload) {
       );
     } catch {
     }
+    if (saved.created && senderType === "customer") {
+      try {
+        const { broadcastNewMessage: broadcastNewMessage2 } = await Promise.resolve().then(() => (init_chatSseController(), chatSseController_exports));
+        broadcastNewMessage2(shopId, conversationId, {
+          message_id: messageId,
+          sender_type: senderType,
+          snippet: snippetFromContent(content, messageType)
+        });
+      } catch (err) {
+        logChatError("[Shopee Chat Webhook] SSE broadcast", err);
+      }
+    }
     return { ok: true, ...saved, senderType, conversationId, shopId };
   } catch (error) {
     logChatError("[Shopee Chat Webhook] ingest failed", error);
@@ -86497,11 +86680,18 @@ async function bulkUpsertOrdersToStore(orders) {
               $set.status = "unprocessed";
               $set["data.status"] = "unprocessed";
             } else if (!forwardProgress && incomingStatus === "unprocessed" && LOCAL_STATUS_NOT_BELOW_PROCESSED.has(existingStatus) && (current?.isPrinted === true || current?.data?.isPrinted === true || current?.is_handed_over === true)) {
-              delete $set.status;
-              delete $set["data.status"];
-              console.warn(
-                `[MongoDB] BLOCK downgrade status ${existingStatus}\u2192unprocessed order_sn=${item.orderSn || item.id} printed=${current?.isPrinted === true} handed=${current?.is_handed_over === true}`
-              );
+              const isPendingToUnprocessed = existingStatus === "pending_confirm" || existingStatus === "pending_verification";
+              if (isPendingToUnprocessed) {
+                console.log(
+                  `[MongoDB] ALLOW ${existingStatus}\u2192unprocessed (x\xE1c nh\u1EADn \u0111\u01A1n) order_sn=${item.orderSn || item.id}`
+                );
+              } else {
+                delete $set.status;
+                delete $set["data.status"];
+                console.warn(
+                  `[MongoDB] BLOCK downgrade status ${existingStatus}\u2192unprocessed order_sn=${item.orderSn || item.id} printed=${current?.isPrinted === true} handed=${current?.is_handed_over === true}`
+                );
+              }
             }
             const storedRawForGuard = String(
               current.shopee_order_status || current.data?.shopee_order_status || ""
@@ -95436,6 +95626,7 @@ async function healBrokenSnippets(conversations) {
 }
 async function markConversationRead(req, res) {
   let conversationId = "";
+  let shopId = null;
   try {
     conversationId = String(
       req.params?.id || req.params?.conversation_id || req.body?.conversation_id || ""
@@ -95447,10 +95638,18 @@ async function markConversationRead(req, res) {
     if (!conversationId) {
       return res.json({ success: true, unread_count: 0, conversation_id: "" });
     }
-    const shopId = parseShopId(req.body?.shop_id ?? req.query?.shop_id);
+    shopId = parseShopId(req.body?.shop_id ?? req.query?.shop_id);
     const filter2 = { conversation_id: conversationId };
     if (shopId != null) filter2.shop_id = shopId;
     await Conversation.updateMany(filter2, { $set: { unread_count: 0 } });
+    if (shopId != null) {
+      try {
+        const { broadcastConversationRead: broadcastConversationRead2 } = await Promise.resolve().then(() => (init_chatSseController(), chatSseController_exports));
+        broadcastConversationRead2(shopId, conversationId);
+      } catch (err) {
+        console.error("[Chat markConversationRead] SSE broadcast error:", err);
+      }
+    }
     return res.json({
       success: true,
       conversation_id: conversationId,
@@ -95569,6 +95768,50 @@ async function sendMessage(req, res) {
     });
   }
 }
+var unreadCountCache = /* @__PURE__ */ new Map();
+var UNREAD_COUNT_CACHE_MS = 1e4;
+async function getUnreadCount(req, res) {
+  try {
+    const shopRaw = req.query?.shop_id;
+    const hasShop = shopRaw != null && String(shopRaw).trim() !== "";
+    const shopId = parseShopId(shopRaw);
+    if (hasShop && shopId == null) {
+      return res.status(400).json({ success: false, error: "shop_id kh\xF4ng h\u1EE3p l\u1EC7." });
+    }
+    const cacheKey = shopId != null ? String(shopId) : "all";
+    const now = Date.now();
+    const cached = unreadCountCache.get(cacheKey);
+    if (cached && now - cached.at < UNREAD_COUNT_CACHE_MS) {
+      return res.json({ success: true, unreadCount: cached.count, cached: true });
+    }
+    const query = {};
+    if (shopId != null) query.shop_id = shopId;
+    const pipeline2 = [
+      { $match: query },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: "$unread_count" }
+        }
+      }
+    ];
+    const result = await Conversation.aggregate(pipeline2).maxTimeMS(5e3).exec();
+    const total = result.length > 0 && result[0].total != null ? Math.max(0, Number(result[0].total) || 0) : 0;
+    unreadCountCache.set(cacheKey, { count: total, at: now });
+    const expireAt = now - 12e4;
+    for (const [key, value] of unreadCountCache) {
+      if (value.at < expireAt) unreadCountCache.delete(key);
+    }
+    return res.json({ success: true, unreadCount: total, cached: false });
+  } catch (error) {
+    logChatError2("[Chat getUnreadCount]", error);
+    return res.status(500).json({
+      success: false,
+      error: "Kh\xF4ng \u0111\u1EBFm \u0111\u01B0\u1EE3c s\u1ED1 tin ch\u01B0a \u0111\u1ECDc",
+      unreadCount: 0
+    });
+  }
+}
 async function getQuickReplies(_req, res) {
   try {
     const quickReplies = await QuickReply.find({}).sort({ shortcut: 1 }).limit(QUICK_REPLY_LIMIT).lean();
@@ -95610,14 +95853,17 @@ async function createQuickReply(req, res) {
 }
 
 // routes/chatRoutes.js
+init_chatSseController();
 var router10 = (0, import_express12.Router)();
 var h3 = asyncHandler;
 router10.get("/conversations", h3(getConversations));
 router10.post("/conversations/:id/read", h3(markConversationRead));
 router10.get("/messages/:conversation_id", h3(getMessages));
 router10.post("/send", h3(sendMessage));
+router10.get("/unread-count", h3(getUnreadCount));
 router10.get("/quick-replies", h3(getQuickReplies));
 router10.post("/quick-replies", h3(createQuickReply));
+router10.get("/sse", chatSseStream);
 var chatRoutes_default = router10;
 
 // routes/importsRoutes.js

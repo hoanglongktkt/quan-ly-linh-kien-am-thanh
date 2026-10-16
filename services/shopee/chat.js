@@ -311,6 +311,21 @@ export async function ingestShopeeChatPush(payload) {
     } catch {
       /* ignore */
     }
+
+    // Broadcast real-time nếu là tin nhắn từ khách hàng (created=true)
+    if (saved.created && senderType === "customer") {
+      try {
+        const { broadcastNewMessage } = await import("../../controllers/chatSseController.js");
+        broadcastNewMessage(shopId, conversationId, {
+          message_id: messageId,
+          sender_type: senderType,
+          snippet: snippetFromContent(content, messageType),
+        });
+      } catch (err) {
+        logChatError("[Shopee Chat Webhook] SSE broadcast", err);
+      }
+    }
+
     return { ok: true, ...saved, senderType, conversationId, shopId };
   } catch (error) {
     logChatError("[Shopee Chat Webhook] ingest failed", error);
