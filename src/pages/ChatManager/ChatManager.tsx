@@ -41,6 +41,13 @@ interface QuickReplyRow {
 
 interface ChatManagerProps {
   shops?: ShopOption[];
+  onNewMessage?: (data: {
+    shop_id: number;
+    conversation_id: string;
+    message_id: string;
+    customer_name: string;
+    snippet: string;
+  }) => void;
 }
 
 const POLL_MS = 20_000;
@@ -264,7 +271,7 @@ function initials(name: string): string {
   return `${parts[0].slice(0, 1)}${parts[parts.length - 1].slice(0, 1)}`.toUpperCase();
 }
 
-export default function ChatManager({ shops = [] }: ChatManagerProps) {
+export default function ChatManager({ shops = [], onNewMessage }: ChatManagerProps) {
   const shopeeShops = useMemo(
     () => shops.filter((shop) => shop.platform === 'shopee' && String(shop.shopId || '').trim()),
     [shops],
@@ -335,7 +342,25 @@ export default function ChatManager({ shops = [] }: ChatManagerProps) {
       if (selectedId === data.conversation_id) {
         void loadMessages(data.conversation_id);
       }
-    }, [selectedId, loadMessages]),
+
+      // Broadcast lên App để hiện popup (khi user ở tab khác)
+      if (onNewMessage) {
+        // Tìm tên khách hàng từ danh sách hội thoại
+        setConversations((prev) => {
+          const conv = prev.find((row) => row.conversation_id === data.conversation_id);
+          if (conv) {
+            onNewMessage({
+              shop_id: data.shop_id,
+              conversation_id: data.conversation_id,
+              message_id: data.message_id,
+              customer_name: customerNameOf(conv),
+              snippet: data.snippet,
+            });
+          }
+          return prev;
+        });
+      }
+    }, [selectedId, loadMessages, onNewMessage]),
     onConversationRead: useCallback((data) => {
       // Đồng bộ badge khi có người khác đánh dấu đã đọc (multi-device)
       setConversations((prev) =>

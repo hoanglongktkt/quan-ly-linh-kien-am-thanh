@@ -19,7 +19,6 @@ import VipCustomersPage from './components/VipCustomersPage';
 import CustomerOrderHistoryPage from './components/CustomerOrderHistoryPage';
 import ChatManager from './pages/ChatManager/ChatManager';
 import { useChatUnread } from './context/ChatUnreadContext';
-import { useChatSse } from './hooks/useChatSse';
 import { ChatNotificationContainer, type ChatNotification } from './components/ChatNotificationPopup';
 import LoginPage from './components/LoginPage';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -814,39 +813,38 @@ export default function App() {
     // ChatManager sẽ tự động mở conversationId nếu có trong state
   }, []);
 
-  // SSE toàn app — chỉ lắng nghe khi KHÔNG ở tab Chat (ChatManager tự quản lý SSE riêng)
-  useChatSse({
-    enabled: isAuthenticated && activeTab !== 'chat',
-    onNewMessage: useCallback((data) => {
-      // Tăng badge
-      setTotalUnreadCount((prev) => prev + 1);
+  // Callback từ ChatManager khi có tin nhắn mới (thay SSE riêng)
+  const handleNewChatMessage = useCallback((data: {
+    shop_id: number;
+    conversation_id: string;
+    message_id: string;
+    customer_name: string;
+    snippet: string;
+  }) => {
+    // Chỉ hiện popup khi KHÔNG ở tab Chat
+    if (activeTab === 'chat') return;
 
-      // Hiện popup notification
-      const notification: ChatNotification = {
-        id: `notif-${data.message_id}-${Date.now()}`,
-        shopId: data.shop_id,
-        conversationId: data.conversation_id,
-        customerName: 'Khách hàng', // SSE không gửi tên, sẽ hiện "Khách hàng"
-        snippet: data.snippet || 'Tin nhắn mới',
-        timestamp: Date.now(),
-      };
-      addChatNotification(notification);
+    const notification: ChatNotification = {
+      id: `notif-${data.message_id}-${Date.now()}`,
+      shopId: data.shop_id,
+      conversationId: data.conversation_id,
+      customerName: data.customer_name || 'Khách hàng',
+      snippet: data.snippet || 'Tin nhắn mới',
+      timestamp: Date.now(),
+    };
+    addChatNotification(notification);
 
-      // Phát âm thanh nhẹ (optional)
-      try {
-        const audio = new Audio('/assets/tientien_1.mp3');
-        audio.volume = 0.3;
-        audio.play().catch(() => {
-          // Trình duyệt chặn autoplay — bỏ qua
-        });
-      } catch {
-        // Không có file âm thanh hoặc lỗi — bỏ qua
-      }
-    }, [setTotalUnreadCount, addChatNotification]),
-    onConversationRead: useCallback((data) => {
-      // Không làm gì — tab Chat tự xử lý
-    }, []),
-  });
+    // Phát âm thanh nhẹ (optional)
+    try {
+      const audio = new Audio('/assets/tientien_1.mp3');
+      audio.volume = 0.3;
+      audio.play().catch(() => {
+        // Trình duyệt chặn autoplay — bỏ qua
+      });
+    } catch {
+      // Không có file âm thanh hoặc lỗi — bỏ qua
+    }
+  }, [activeTab, addChatNotification]);
 
   /** Mở Quét mã: nếu list tab đang rỗng nhưng hydrate còn data → khôi phục pool fallback (không đụng filter list). */
   useEffect(() => {
@@ -3245,7 +3243,10 @@ export default function App() {
 
           {activeTab === 'chat' && (
             <ErrorBoundary label="Trả lời tin nhắn khách">
-              <ChatManager shops={settings.shops || []} />
+              <ChatManager
+                shops={settings.shops || []}
+                onNewMessage={handleNewChatMessage}
+              />
             </ErrorBoundary>
           )}
 
