@@ -51902,11 +51902,13 @@ function getTotalConnections() {
 }
 function cleanupSseClient(res, shopId) {
   try {
-    const clients = sseClients.get(shopId);
+    const clientKey = sseClientKeys.get(res) || shopId;
+    const clients = sseClients.get(clientKey);
     if (clients) {
       clients.delete(res);
-      if (clients.size === 0) sseClients.delete(shopId);
+      if (clients.size === 0) sseClients.delete(clientKey);
     }
+    sseClientKeys.delete(res);
     const timer2 = sseTimeouts.get(res);
     if (timer2) {
       clearTimeout(timer2);
@@ -51941,6 +51943,16 @@ function resetIdleTimeout(res, shopId) {
     }
   }, SSE_IDLE_TIMEOUT_MS);
   sseTimeouts.set(res, timer2);
+}
+function getBroadcastClients(shopId) {
+  const keys = [String(shopId || "all").trim(), "all"];
+  const clients = /* @__PURE__ */ new Set();
+  for (const key of keys) {
+    const group = sseClients.get(key);
+    if (!group) continue;
+    for (const res of group) clients.add(res);
+  }
+  return clients;
 }
 function chatSseStream(req, res) {
   const token = String(req.query?.token || "").trim();
@@ -51977,6 +51989,7 @@ function chatSseStream(req, res) {
     sseClients.set(shopId, /* @__PURE__ */ new Set());
   }
   sseClients.get(shopId).add(res);
+  sseClientKeys.set(res, shopId);
   resetIdleTimeout(res, shopId);
   logSse("client connected", `shop_id=${shopId} total=${getTotalConnections()}`);
   sendSseEvent(res, "connected", { shop_id: shopId, timestamp: Date.now() });
@@ -51997,8 +52010,8 @@ function chatSseStream(req, res) {
 }
 function broadcastNewMessage(shopId, conversationId, messageData) {
   const key = String(shopId || "all").trim();
-  const clients = sseClients.get(key);
-  if (!clients || clients.size === 0) return;
+  const clients = getBroadcastClients(shopId);
+  if (clients.size === 0) return;
   const event = {
     shop_id: shopId,
     conversation_id: conversationId,
@@ -52013,7 +52026,7 @@ function broadcastNewMessage(shopId, conversationId, messageData) {
     const ok = sendSseEvent(res, "new_message", event);
     if (ok) {
       sent += 1;
-      resetIdleTimeout(res, key);
+      resetIdleTimeout(res, sseClientKeys.get(res) || key);
     } else {
       dead.push(res);
     }
@@ -52027,8 +52040,8 @@ function broadcastNewMessage(shopId, conversationId, messageData) {
 }
 function broadcastConversationRead(shopId, conversationId) {
   const key = String(shopId || "all").trim();
-  const clients = sseClients.get(key);
-  if (!clients || clients.size === 0) return;
+  const clients = getBroadcastClients(shopId);
+  if (clients.size === 0) return;
   const event = {
     shop_id: shopId,
     conversation_id: conversationId,
@@ -52037,10 +52050,10 @@ function broadcastConversationRead(shopId, conversationId) {
   };
   for (const res of clients) {
     const ok = sendSseEvent(res, "conversation_read", event);
-    if (ok) resetIdleTimeout(res, key);
+    if (ok) resetIdleTimeout(res, sseClientKeys.get(res) || key);
   }
 }
-var MAX_SSE_CONNECTIONS, SSE_IDLE_TIMEOUT_MS, SSE_HEARTBEAT_MS, sseClients, sseTimeouts;
+var MAX_SSE_CONNECTIONS, SSE_IDLE_TIMEOUT_MS, SSE_HEARTBEAT_MS, sseClients, sseTimeouts, sseClientKeys;
 var init_chatSseController = __esm({
   "controllers/chatSseController.js"() {
     MAX_SSE_CONNECTIONS = 50;
@@ -52048,6 +52061,7 @@ var init_chatSseController = __esm({
     SSE_HEARTBEAT_MS = 3e4;
     sseClients = /* @__PURE__ */ new Map();
     sseTimeouts = /* @__PURE__ */ new Map();
+    sseClientKeys = /* @__PURE__ */ new Map();
   }
 });
 
@@ -95665,6 +95679,33 @@ async function markConversationRead(req, res) {
     });
   }
 }
+async function markAllConversationsRead(req, res) {
+  try {
+    const shopRaw = req.body?.shop_id ?? req.query?.shop_id;
+    const hasShop = shopRaw != null && String(shopRaw).trim() !== "";
+    const shopId = parseShopId(shopRaw);
+    if (hasShop && shopId == null) {
+      return res.status(400).json({ success: false, error: "shop_id kh\xF4ng h\u1EE3p l\u1EC7." });
+    }
+    const filter2 = { unread_count: { $gt: 0 } };
+    if (shopId != null) filter2.shop_id = shopId;
+    const result = await Conversation.updateMany(filter2, { $set: { unread_count: 0 } });
+    unreadCountCache.clear();
+    return res.json({
+      success: true,
+      unread_count: 0,
+      matched_count: Number(result?.matchedCount) || 0,
+      modified_count: Number(result?.modifiedCount) || 0,
+      shop_id: shopId
+    });
+  } catch (error) {
+    logChatError2("[Chat markAllConversationsRead]", error);
+    return res.status(500).json({
+      success: false,
+      error: "Kh\xF4ng \u0111\xE1nh d\u1EA5u \u0111\u01B0\u1EE3c t\u1EA5t c\u1EA3 h\u1ED9i tho\u1EA1i \u0111\xE3 \u0111\u1ECDc."
+    });
+  }
+}
 async function getMessages(req, res) {
   try {
     const conversationId = String(
@@ -95863,6 +95904,7 @@ init_chatSseController();
 var router10 = (0, import_express12.Router)();
 var h3 = asyncHandler;
 router10.get("/conversations", h3(getConversations));
+router10.post("/conversations/read-all", h3(markAllConversationsRead));
 router10.post("/conversations/:id/read", h3(markConversationRead));
 router10.get("/messages/:conversation_id", h3(getMessages));
 router10.post("/send", h3(sendMessage));

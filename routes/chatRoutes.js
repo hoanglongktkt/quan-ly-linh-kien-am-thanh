@@ -4,6 +4,7 @@ import {
   getMessages,
   sendMessage,
   markConversationRead,
+  markAllConversationsRead,
   getUnreadCount,
   getQuickReplies,
   createQuickReply,
@@ -15,6 +16,7 @@ const router = Router();
 const h = asyncHandler;
 
 router.get("/conversations", h(getConversations));
+router.post("/conversations/read-all", h(markAllConversationsRead));
 router.post("/conversations/:id/read", h(markConversationRead));
 router.get("/messages/:conversation_id", h(getMessages));
 router.post("/send", h(sendMessage));

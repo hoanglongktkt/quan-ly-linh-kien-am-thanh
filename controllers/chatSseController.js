@@ -14,6 +14,9 @@ const sseClients = new Map();
 /** Map<response, timeout> — timer để đóng kết nối idle. */
 const sseTimeouts = new Map();
 
+/** Map<response, shop_id> — giữ đúng nhóm khi broadcast tới client "all". */
+const sseClientKeys = new Map();
+
 function logSse(label, ...args) {
   try {
     console.log(`[Chat SSE] ${label}`, ...args);
@@ -32,11 +35,13 @@ function getTotalConnections() {
 
 function cleanupSseClient(res, shopId) {
   try {
-    const clients = sseClients.get(shopId);
+    const clientKey = sseClientKeys.get(res) || shopId;
+    const clients = sseClients.get(clientKey);
     if (clients) {
       clients.delete(res);
-      if (clients.size === 0) sseClients.delete(shopId);
+      if (clients.size === 0) sseClients.delete(clientKey);
     }
+    sseClientKeys.delete(res);
     const timer = sseTimeouts.get(res);
     if (timer) {
       clearTimeout(timer);
@@ -70,6 +75,18 @@ function resetIdleTimeout(res, shopId) {
     }
   }, SSE_IDLE_TIMEOUT_MS);
   sseTimeouts.set(res, timer);
+}
+
+/** Lấy client của shop cụ thể và client đang nghe tất cả shop, không gửi trùng. */
+function getBroadcastClients(shopId) {
+  const keys = [String(shopId || 'all').trim(), 'all'];
+  const clients = new Set();
+  for (const key of keys) {
+    const group = sseClients.get(key);
+    if (!group) continue;
+    for (const res of group) clients.add(res);
+  }
+  return clients;
 }
 
 /**
@@ -122,6 +139,7 @@ export function chatSseStream(req, res) {
     sseClients.set(shopId, new Set());
   }
   sseClients.get(shopId).add(res);
+  sseClientKeys.set(res, shopId);
   resetIdleTimeout(res, shopId);
 
   logSse('client connected', `shop_id=${shopId} total=${getTotalConnections()}`);
@@ -154,8 +172,8 @@ export function chatSseStream(req, res) {
  */
 export function broadcastNewMessage(shopId, conversationId, messageData) {
   const key = String(shopId || 'all').trim();
-  const clients = sseClients.get(key);
-  if (!clients || clients.size === 0) return;
+  const clients = getBroadcastClients(shopId);
+  if (clients.size === 0) return;
 
   const event = {
     shop_id: shopId,
@@ -172,7 +190,7 @@ export function broadcastNewMessage(shopId, conversationId, messageData) {
     const ok = sendSseEvent(res, 'new_message', event);
     if (ok) {
       sent += 1;
-      resetIdleTimeout(res, key);
+      resetIdleTimeout(res, sseClientKeys.get(res) || key);
     } else {
       dead.push(res);
     }
@@ -193,8 +211,8 @@ export function broadcastNewMessage(shopId, conversationId, messageData) {
  */
 export function broadcastConversationRead(shopId, conversationId) {
   const key = String(shopId || 'all').trim();
-  const clients = sseClients.get(key);
-  if (!clients || clients.size === 0) return;
+  const clients = getBroadcastClients(shopId);
+  if (clients.size === 0) return;
 
   const event = {
     shop_id: shopId,
@@ -205,6 +223,6 @@ export function broadcastConversationRead(shopId, conversationId) {
 
   for (const res of clients) {
     const ok = sendSseEvent(res, 'conversation_read', event);
-    if (ok) resetIdleTimeout(res, key);
+    if (ok) resetIdleTimeout(res, sseClientKeys.get(res) || key);
   }
 }

@@ -19,6 +19,7 @@ import VipCustomersPage from './components/VipCustomersPage';
 import CustomerOrderHistoryPage from './components/CustomerOrderHistoryPage';
 import ChatManager from './pages/ChatManager/ChatManager';
 import { useChatUnread } from './context/ChatUnreadContext';
+import { useChatSse } from './hooks/useChatSse';
 import { ChatNotificationContainer, type ChatNotification } from './components/ChatNotificationPopup';
 import LoginPage from './components/LoginPage';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -775,6 +776,8 @@ export default function App() {
     customerHistoryPhoneFromPath(),
   );
   const { totalUnreadCount, setTotalUnreadCount } = useChatUnread();
+  const totalUnreadCountRef = useRef(totalUnreadCount);
+  totalUnreadCountRef.current = totalUnreadCount;
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
@@ -845,6 +848,32 @@ export default function App() {
       // Không có file âm thanh hoặc lỗi — bỏ qua
     }
   }, [activeTab, addChatNotification]);
+
+  const handleBackgroundChatMessage = useCallback((data: {
+    shop_id: number;
+    conversation_id: string;
+    message_id: string;
+    sender_type: string;
+    snippet: string;
+  }) => {
+    // Khi đang ở màn khác, cập nhật badge và mở popup góc phải dưới.
+    const nextUnreadCount = totalUnreadCountRef.current + 1;
+    totalUnreadCountRef.current = nextUnreadCount;
+    setTotalUnreadCount(nextUnreadCount);
+    handleNewChatMessage({
+      ...data,
+      customer_name: 'Khách hàng',
+    });
+  }, [handleNewChatMessage, setTotalUnreadCount]);
+
+  // Giữ một kết nối SSE nền khi ChatManager không được mount ở tab khác.
+  useChatSse({
+    enabled: isAuthenticated && activeTab !== 'chat',
+    onNewMessage: handleBackgroundChatMessage,
+    onError: useCallback((error: Error) => {
+      console.warn('[Chat SSE nền]', error.message);
+    }, []),
+  });
 
   /** Mở Quét mã: nếu list tab đang rỗng nhưng hydrate còn data → khôi phục pool fallback (không đụng filter list). */
   useEffect(() => {

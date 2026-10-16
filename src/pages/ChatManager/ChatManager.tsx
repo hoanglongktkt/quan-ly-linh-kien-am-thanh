@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Loader2, MessageSquare, Plus, Send, X, Zap } from 'lucide-react';
+import { ArrowLeft, CheckCheck, Loader2, MessageSquare, Plus, Send, X, Zap } from 'lucide-react';
 import { apiFetch, parseJsonResponse } from '../../utils/apiClient';
 import { useChatUnread } from '../../context/ChatUnreadContext';
 import { useChatSse } from '../../hooks/useChatSse';
@@ -293,6 +293,7 @@ export default function ChatManager({ shops = [], onNewMessage }: ChatManagerPro
   const [newShortcut, setNewShortcut] = useState('');
   const [newContent, setNewContent] = useState('');
   const [savingReply, setSavingReply] = useState(false);
+  const [markingAllRead, setMarkingAllRead] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const listFlight = useRef(false);
@@ -648,6 +649,57 @@ export default function ChatManager({ shops = [], onNewMessage }: ChatManagerPro
     })();
   };
 
+  const handleMarkAllRead = async () => {
+    if (markingAllRead || unreadTotal <= 0) return;
+
+    // Lưu lại số chưa đọc để khôi phục nếu API thất bại.
+    const conversationSnapshot = conversations;
+    const unreadSnapshot = new Map(
+      conversations.map((row) => [
+        `${String(row.shop_id ?? '')}:${row.conversation_id}`,
+        Number(row.unread_count) || 0,
+      ]),
+    );
+    const clearUntil = Date.now() + 25_000;
+    for (const row of conversations) {
+      if (Number(row.unread_count) <= 0) continue;
+      readClearUntil.current.set(`${String(row.shop_id ?? '')}:${row.conversation_id}`, clearUntil);
+    }
+
+    setMarkingAllRead(true);
+    setConversations((current) =>
+      filter === 'unread'
+        ? []
+        : current.map((row) => ({ ...row, unread_count: 0 })),
+    );
+    setTotalUnreadCount(0);
+
+    try {
+      const response = await apiFetch('/api/chat/conversations/read-all', {
+        method: 'POST',
+        headers: authHeaders(),
+        // Theo yêu cầu: xóa số chưa trả lời của toàn bộ shop.
+        body: JSON.stringify({}),
+      });
+      const data = await parseJsonResponse<{ success?: boolean; error?: string }>(response);
+      if (!response.ok || data.success === false) {
+        throw new Error(data.error || 'Không đánh dấu được tất cả hội thoại đã đọc');
+      }
+      setError('');
+      await loadConversations();
+    } catch (err) {
+      // Khôi phục đúng số chưa đọc cũ nếu server không cập nhật được.
+      readClearUntil.current.clear();
+      setConversations(conversationSnapshot);
+      setTotalUnreadCount(
+        Array.from(unreadSnapshot.values()).reduce((sum, count) => sum + Math.max(0, count), 0),
+      );
+      setError(err instanceof Error ? err.message : 'Không đánh dấu được tất cả hội thoại đã đọc');
+    } finally {
+      setMarkingAllRead(false);
+    }
+  };
+
   const customerLabel = customerNameOf(active);
 
   return (
@@ -661,6 +713,15 @@ export default function ChatManager({ shops = [], onNewMessage }: ChatManagerPro
               {unreadTotal}
             </span>
           </div>
+          <button
+            type="button"
+            onClick={() => void handleMarkAllRead()}
+            disabled={markingAllRead || unreadTotal <= 0}
+            className="mb-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-2 py-2 text-[11px] font-extrabold text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {markingAllRead ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCheck className="h-3.5 w-3.5" />}
+            Đánh dấu tất cả đã đọc
+          </button>
           {shopeeShops.length > 0 && (
             <select
               value={shopId}

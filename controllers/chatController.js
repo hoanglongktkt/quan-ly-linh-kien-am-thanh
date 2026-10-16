@@ -197,6 +197,40 @@ export async function markConversationRead(req, res) {
   }
 }
 
+/** POST /api/chat/conversations/read-all — đánh dấu toàn bộ hội thoại đã đọc. */
+export async function markAllConversationsRead(req, res) {
+  try {
+    const shopRaw = req.body?.shop_id ?? req.query?.shop_id;
+    const hasShop = shopRaw != null && String(shopRaw).trim() !== "";
+    const shopId = parseShopId(shopRaw);
+    if (hasShop && shopId == null) {
+      return res.status(400).json({ success: false, error: "shop_id không hợp lệ." });
+    }
+
+    // Chỉ cập nhật các hội thoại còn chưa đọc; không đụng dữ liệu tin nhắn.
+    const filter = { unread_count: { $gt: 0 } };
+    if (shopId != null) filter.shop_id = shopId;
+    const result = await Conversation.updateMany(filter, { $set: { unread_count: 0 } });
+
+    // Xóa cache đếm để badge ở các màn khác nhận giá trị mới ngay lần tải kế tiếp.
+    unreadCountCache.clear();
+
+    return res.json({
+      success: true,
+      unread_count: 0,
+      matched_count: Number(result?.matchedCount) || 0,
+      modified_count: Number(result?.modifiedCount) || 0,
+      shop_id: shopId,
+    });
+  } catch (error) {
+    logChatError("[Chat markAllConversationsRead]", error);
+    return res.status(500).json({
+      success: false,
+      error: "Không đánh dấu được tất cả hội thoại đã đọc.",
+    });
+  }
+}
+
 /** GET /api/chat/messages/:conversation_id */
 export async function getMessages(req, res) {
   try {
