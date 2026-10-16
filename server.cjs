@@ -95795,7 +95795,13 @@ async function getUnreadCount(req, res) {
         }
       }
     ];
-    const result = await Conversation.aggregate(pipeline2).maxTimeMS(5e3).exec();
+    let result;
+    try {
+      result = await Conversation.aggregate(pipeline2).maxTimeMS(5e3).exec();
+    } catch (aggError) {
+      logChatError2("[Chat getUnreadCount aggregate]", aggError);
+      return res.json({ success: true, unreadCount: 0, cached: false, fallback: true });
+    }
     const total = result.length > 0 && result[0].total != null ? Math.max(0, Number(result[0].total) || 0) : 0;
     unreadCountCache.set(cacheKey, { count: total, at: now });
     const expireAt = now - 12e4;
