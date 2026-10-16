@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Product, Expense, Order, ChannelSettings, SyncLog, Supplier, ImportTransaction, BulkSaveProductUpdate, ConnectedShop, getProductChildren } from './types';
-import { 
+import {
   INITIAL_SYNC_LOGS,
 } from './data';
 import Dashboard from './components/Dashboard';
@@ -19,6 +19,8 @@ import VipCustomersPage from './components/VipCustomersPage';
 import CustomerOrderHistoryPage from './components/CustomerOrderHistoryPage';
 import ChatManager from './pages/ChatManager/ChatManager';
 import { useChatUnread } from './context/ChatUnreadContext';
+import { useChatSse } from './hooks/useChatSse';
+import { ChatNotificationContainer, type ChatNotification } from './components/ChatNotificationPopup';
 import LoginPage from './components/LoginPage';
 import ErrorBoundary from './components/ErrorBoundary';
 import BrandLogo, { BrandHeader } from './components/BrandLogo';
@@ -783,9 +785,68 @@ export default function App() {
   );
   // Mobile: tab 'products' có 2 màn — Kiểm hàng (audit) và Danh sách sản phẩm (list).
   const [mobileProductsView, setMobileProductsView] = useState<'audit' | 'list'>('audit');
-  
+
   // Selected products for bulk editing
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  // Chat notification popups — giới hạn 3 popup cùng lúc
+  const [chatNotifications, setChatNotifications] = useState<ChatNotification[]>([]);
+
+  const addChatNotification = useCallback((notification: ChatNotification) => {
+    setChatNotifications((prev) => {
+      // Giới hạn 3 popup, xóa popup cũ nhất nếu đầy
+      const filtered = prev.filter((n) => n.id !== notification.id);
+      const limited = filtered.slice(-2); // Giữ 2 popup mới nhất
+      return [...limited, notification];
+    });
+  }, []);
+
+  const removeChatNotification = useCallback((id: string) => {
+    setChatNotifications((prev) => prev.filter((n) => n.id !== id));
+  }, []);
+
+  const handleChatNotificationClick = useCallback((conversationId: string) => {
+    // Chuyển sang tab Chat và mở hội thoại
+    setActiveTab('chat');
+    writeSessionTab('omni_active_tab', 'chat');
+    const url = buildNavUrl('chat');
+    window.history.pushState({ tab: 'chat', conversationId }, '', url);
+    // ChatManager sẽ tự động mở conversationId nếu có trong state
+  }, []);
+
+  // SSE toàn app — chỉ lắng nghe khi KHÔNG ở tab Chat (ChatManager tự quản lý SSE riêng)
+  useChatSse({
+    enabled: isAuthenticated && activeTab !== 'chat',
+    onNewMessage: useCallback((data) => {
+      // Tăng badge
+      setTotalUnreadCount((prev) => prev + 1);
+
+      // Hiện popup notification
+      const notification: ChatNotification = {
+        id: `notif-${data.message_id}-${Date.now()}`,
+        shopId: data.shop_id,
+        conversationId: data.conversation_id,
+        customerName: 'Khách hàng', // SSE không gửi tên, sẽ hiện "Khách hàng"
+        snippet: data.snippet || 'Tin nhắn mới',
+        timestamp: Date.now(),
+      };
+      addChatNotification(notification);
+
+      // Phát âm thanh nhẹ (optional)
+      try {
+        const audio = new Audio('/assets/tientien_1.mp3');
+        audio.volume = 0.3;
+        audio.play().catch(() => {
+          // Trình duyệt chặn autoplay — bỏ qua
+        });
+      } catch {
+        // Không có file âm thanh hoặc lỗi — bỏ qua
+      }
+    }, [setTotalUnreadCount, addChatNotification]),
+    onConversationRead: useCallback((data) => {
+      // Không làm gì — tab Chat tự xử lý
+    }, []),
+  });
 
   /** Mở Quét mã: nếu list tab đang rỗng nhưng hydrate còn data → khôi phục pool fallback (không đụng filter list). */
   useEffect(() => {
@@ -3418,6 +3479,13 @@ export default function App() {
           <span className="max-w-full truncate text-[9px] uppercase tracking-wide font-extrabold whitespace-nowrap leading-none">Quét mã</span>
         </button>
       </div>
+
+      {/* Chat notification popups — góc phải màn hình */}
+      <ChatNotificationContainer
+        notifications={chatNotifications}
+        onClose={removeChatNotification}
+        onClick={handleChatNotificationClick}
+      />
     </div>
   );
 }
