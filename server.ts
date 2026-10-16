@@ -76,6 +76,7 @@ import addressBookRoutesImport from "./routes/addressBookRoutes.js";
 import customerRoutesImport from "./routes/customerRoutes.js";
 import chatRoutesImport from "./routes/chatRoutes.js";
 import { markConversationRead } from "./controllers/chatController.js";
+import { chatSseStream } from "./controllers/chatSseController.js";
 import importsRoutesImport from "./routes/importsRoutes.js";
 import materialsRoutesImport from "./routes/materialsRoutes.js";
 import materialImportsRoutesImport from "./routes/materialImportsRoutes.js";
@@ -23005,6 +23006,9 @@ async function startServer() {
   app.use("/api/finance", authMiddleware, financeRoutes);
   app.use("/api/address-book", authMiddleware, addressBookRoutes);
   app.use("/api/customers", authMiddleware, customerRoutes);
+  // EventSource không gửi được Authorization header; SSE tự xác thực token query.
+  // Đăng ký route cụ thể trước middleware Bearer của toàn bộ /api/chat.
+  app.get("/api/chat/sse", chatSseStream);
   app.post("/api/chat/conversations/:id/read", authMiddleware, (req, res) => {
     try {
       Promise.resolve(markConversationRead(req, res)).catch((error) => {

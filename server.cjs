@@ -48836,9 +48836,9 @@ var require_jws = __commonJS({
 var require_decode2 = __commonJS({
   "node_modules/jsonwebtoken/decode.js"(exports2, module2) {
     var jws = require_jws();
-    module2.exports = function(jwt2, options) {
+    module2.exports = function(jwt3, options) {
       options = options || {};
-      var decoded = jws.decode(jwt2, options);
+      var decoded = jws.decode(jwt3, options);
       if (!decoded) {
         return null;
       }
@@ -51880,6 +51880,69 @@ var require_jsonwebtoken = __commonJS({
   }
 });
 
+// _lib/jwtSecret.js
+function getJwtSecret() {
+  const secret = process.env.JWT_SECRET;
+  return secret || FALLBACK_JWT_SECRET;
+}
+function warnJwtSecretOnStartup() {
+  if (!String(process.env.JWT_SECRET || "").trim()) {
+    console.warn(
+      "[JWT] C\u1EA2NH B\xC1O: JWT_SECRET ch\u01B0a \u0111\u01B0\u1EE3c set \u2014 \u0111ang d\xF9ng secret fallback m\u1EB7c \u0111\u1ECBnh. Token c\xF3 th\u1EC3 KH\xD4NG kh\u1EDBp gi\u1EEFa Vercel v\xE0 cPanel. H\xE3y set JWT_SECRET gi\u1ED1ng nhau tr\xEAn cPanel (.htaccess / Node env) v\xE0 Vercel Environment Variables."
+    );
+  }
+}
+var FALLBACK_JWT_SECRET;
+var init_jwtSecret = __esm({
+  "_lib/jwtSecret.js"() {
+    FALLBACK_JWT_SECRET = "omnisales-vn-super-secret-key-2026";
+  }
+});
+
+// middlewares/auth.js
+function authMiddleware(req, res, next) {
+  const authHeader = req.headers.authorization;
+  let token = "";
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    token = authHeader.slice(7);
+  }
+  if (!token) {
+    return res.status(401).json({ error: "Kh\xF4ng c\xF3 token x\xE1c th\u1EF1c." });
+  }
+  try {
+    const decoded = import_jsonwebtoken.default.verify(token, getJwtSecret());
+    req.user = decoded;
+    return next();
+  } catch (err) {
+    if (err.name === "TokenExpiredError") {
+      return res.status(401).json({
+        error: "Token \u0111\xE3 h\u1EBFt h\u1EA1n.",
+        code: "TOKEN_EXPIRED"
+      });
+    }
+    return res.status(401).json({
+      error: "Token kh\xF4ng h\u1EE3p l\u1EC7.",
+      code: "INVALID_TOKEN"
+    });
+  }
+}
+function signAdminToken(username, role = "admin", permissions = ["*"]) {
+  const payload = {
+    username,
+    role,
+    permissions: Array.isArray(permissions) ? permissions : ["*"],
+    iat: Math.floor(Date.now() / 1e3)
+  };
+  return import_jsonwebtoken.default.sign(payload, getJwtSecret(), { expiresIn: "7d" });
+}
+var import_jsonwebtoken;
+var init_auth = __esm({
+  "middlewares/auth.js"() {
+    import_jsonwebtoken = __toESM(require_jsonwebtoken(), 1);
+    init_jwtSecret();
+  }
+});
+
 // controllers/chatSseController.js
 var chatSseController_exports = {};
 __export(chatSseController_exports, {
@@ -51960,13 +52023,7 @@ function chatSseStream(req, res) {
     return res.status(401).json({ success: false, error: "Thi\u1EBFu token x\xE1c th\u1EF1c." });
   }
   try {
-    const jwt2 = require_jsonwebtoken();
-    const JWT_SECRET = process.env.JWT_SECRET;
-    if (!JWT_SECRET) {
-      logSse("JWT_SECRET not configured");
-      return res.status(500).json({ success: false, error: "Server ch\u01B0a c\u1EA5u h\xECnh." });
-    }
-    jwt2.verify(token, JWT_SECRET);
+    import_jsonwebtoken2.default.verify(token, getJwtSecret());
   } catch (err) {
     return res.status(401).json({ success: false, error: "Token kh\xF4ng h\u1EE3p l\u1EC7 ho\u1EB7c \u0111\xE3 h\u1EBFt h\u1EA1n." });
   }
@@ -52053,9 +52110,11 @@ function broadcastConversationRead(shopId, conversationId) {
     if (ok) resetIdleTimeout(res, sseClientKeys.get(res) || key);
   }
 }
-var MAX_SSE_CONNECTIONS, SSE_IDLE_TIMEOUT_MS, SSE_HEARTBEAT_MS, sseClients, sseTimeouts, sseClientKeys;
+var import_jsonwebtoken2, MAX_SSE_CONNECTIONS, SSE_IDLE_TIMEOUT_MS, SSE_HEARTBEAT_MS, sseClients, sseTimeouts, sseClientKeys;
 var init_chatSseController = __esm({
   "controllers/chatSseController.js"() {
+    import_jsonwebtoken2 = __toESM(require_jsonwebtoken(), 1);
+    init_auth();
     MAX_SSE_CONNECTIONS = 50;
     SSE_IDLE_TIMEOUT_MS = 3e5;
     SSE_HEARTBEAT_MS = 3e4;
@@ -63111,14 +63170,14 @@ var require_oauth2client = __commonJS({
        * @param maxExpiry The max expiry the certificate can be (Optional).
        * @return Returns a promise resolving to LoginTicket on verification.
        */
-      async verifySignedJwtWithCertsAsync(jwt2, certs, requiredAudience, issuers, maxExpiry) {
+      async verifySignedJwtWithCertsAsync(jwt3, certs, requiredAudience, issuers, maxExpiry) {
         const crypto13 = (0, crypto_1.createCrypto)();
         if (!maxExpiry) {
           maxExpiry = _OAuth2Client.DEFAULT_MAX_TOKEN_LIFETIME_SECS_;
         }
-        const segments = jwt2.split(".");
+        const segments = jwt3.split(".");
         if (segments.length !== 3) {
-          throw new Error("Wrong number of segments in token: " + jwt2);
+          throw new Error("Wrong number of segments in token: " + jwt3);
         }
         const signed = segments[0] + "." + segments[1];
         let signature = segments[2];
@@ -63155,7 +63214,7 @@ var require_oauth2client = __commonJS({
         }
         const verified = await crypto13.verify(cert, signed, signature);
         if (!verified) {
-          throw new Error("Invalid token signature: " + jwt2);
+          throw new Error("Invalid token signature: " + jwt3);
         }
         if (!payload.iat) {
           throw new Error("No issue time in token: " + JSON.stringify(payload));
@@ -64072,9 +64131,9 @@ var require_jwtclient = __commonJS({
        * @return The cloned instance.
        */
       createScoped(scopes) {
-        const jwt2 = new _JWT(this);
-        jwt2.scopes = scopes;
-        return jwt2;
+        const jwt3 = new _JWT(this);
+        jwt3.scopes = scopes;
+        return jwt3;
       }
       /**
        * Obtains the metadata to be sent with the request.
@@ -73893,7 +73952,7 @@ function listTiktokCredentialSummaries() {
   return Object.keys(tokens).map((id) => sanitizeCredentialRecord(tokens[id]));
 }
 var import_fs19, import_path19, APP_ROOT9, APP_BASE_URL3, TIKTOK_TOKENS_PATH, CHANNEL_SETTINGS_PATH2, TIKTOK_CALLBACK_URL, TIKTOK_CALLBACK_IDLE_MSG, TIKTOK_API_HOST, TIKTOK_APP_KEY, TIKTOK_APP_SECRET, TIKTOK_ACCESS_TOKEN, TIKTOK_SHOP_ID, TIKTOK_SHOP_CIPHER;
-var init_auth = __esm({
+var init_auth2 = __esm({
   "services/tiktok/auth.js"() {
     import_fs19 = __toESM(require("fs"), 1);
     import_path19 = __toESM(require("path"), 1);
@@ -74245,7 +74304,7 @@ function isTiktokTokenExpiredError(result) {
 var AUTH_HOST, TOKEN_HTTP_TIMEOUT_MS, refreshLocks;
 var init_token = __esm({
   "services/tiktok/token.js"() {
-    init_auth();
+    init_auth2();
     AUTH_HOST = () => String(process.env.TIKTOK_AUTH_HOST || "https://auth.tiktok-shops.com").trim().replace(/\/$/, "");
     TOKEN_HTTP_TIMEOUT_MS = 25e3;
     refreshLocks = /* @__PURE__ */ new Map();
@@ -76727,7 +76786,7 @@ var init_client = __esm({
   "services/tiktok/client.js"() {
     import_crypto5 = __toESM(require("crypto"), 1);
     init_concurrency();
-    init_auth();
+    init_auth2();
     init_token();
     TIKTOK_HTTP_TIMEOUT_MS = 3e4;
     TIKTOK_API_DELAY_MS = 400;
@@ -77302,7 +77361,7 @@ var SHOPS_PING_PATH;
 var init_ping = __esm({
   "services/tiktok/ping.js"() {
     init_client();
-    init_auth();
+    init_auth2();
     init_token();
     SHOPS_PING_PATH = "/authorization/202309/shops";
   }
@@ -93311,61 +93370,8 @@ var scanRoutes_default = router;
 // routes/authRoutes.js
 var import_express4 = __toESM(require_express2(), 1);
 
-// middlewares/auth.js
-var import_jsonwebtoken = __toESM(require_jsonwebtoken(), 1);
-
-// _lib/jwtSecret.js
-var FALLBACK_JWT_SECRET = "omnisales-vn-super-secret-key-2026";
-function getJwtSecret() {
-  const secret = process.env.JWT_SECRET;
-  return secret || FALLBACK_JWT_SECRET;
-}
-function warnJwtSecretOnStartup() {
-  if (!String(process.env.JWT_SECRET || "").trim()) {
-    console.warn(
-      "[JWT] C\u1EA2NH B\xC1O: JWT_SECRET ch\u01B0a \u0111\u01B0\u1EE3c set \u2014 \u0111ang d\xF9ng secret fallback m\u1EB7c \u0111\u1ECBnh. Token c\xF3 th\u1EC3 KH\xD4NG kh\u1EDBp gi\u1EEFa Vercel v\xE0 cPanel. H\xE3y set JWT_SECRET gi\u1ED1ng nhau tr\xEAn cPanel (.htaccess / Node env) v\xE0 Vercel Environment Variables."
-    );
-  }
-}
-
-// middlewares/auth.js
-function authMiddleware(req, res, next) {
-  const authHeader = req.headers.authorization;
-  let token = "";
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    token = authHeader.slice(7);
-  }
-  if (!token) {
-    return res.status(401).json({ error: "Kh\xF4ng c\xF3 token x\xE1c th\u1EF1c." });
-  }
-  try {
-    const decoded = import_jsonwebtoken.default.verify(token, getJwtSecret());
-    req.user = decoded;
-    return next();
-  } catch (err) {
-    if (err.name === "TokenExpiredError") {
-      return res.status(401).json({
-        error: "Token \u0111\xE3 h\u1EBFt h\u1EA1n.",
-        code: "TOKEN_EXPIRED"
-      });
-    }
-    return res.status(401).json({
-      error: "Token kh\xF4ng h\u1EE3p l\u1EC7.",
-      code: "INVALID_TOKEN"
-    });
-  }
-}
-function signAdminToken(username, role = "admin", permissions = ["*"]) {
-  const payload = {
-    username,
-    role,
-    permissions: Array.isArray(permissions) ? permissions : ["*"],
-    iat: Math.floor(Date.now() / 1e3)
-  };
-  return import_jsonwebtoken.default.sign(payload, getJwtSecret(), { expiresIn: "7d" });
-}
-
 // controllers/authController.js
+init_auth();
 function login(req, res) {
   const { username, password } = req.body;
   const expectedUsername = process.env.ADMIN_USERNAME || "admin";
@@ -93387,6 +93393,7 @@ async function verifyAuth(req, res) {
 }
 
 // routes/authRoutes.js
+init_auth();
 var router2 = (0, import_express4.Router)();
 router2.post("/login", login);
 router2.get("/auth/verify", authMiddleware, verifyAuth);
@@ -93517,6 +93524,7 @@ function safeOrderSyncDiagnostics() {
 }
 
 // routes/healthRoutes.js
+init_auth();
 var router3 = (0, import_express5.Router)();
 router3.get("/health", getHealth);
 router3.get("/config/public", getPublicConfig);
@@ -95904,7 +95912,7 @@ async function getUnreadCount(req, res) {
     ];
     let result;
     try {
-      result = await Conversation.aggregate(pipeline2).maxTimeMS(5e3).exec();
+      result = await Conversation.aggregate(pipeline2).option({ maxTimeMS: 5e3 }).exec();
     } catch (aggError) {
       logChatError2("[Chat getUnreadCount aggregate]", aggError);
       return res.json({ success: true, unreadCount: 0, cached: false, fallback: true });
@@ -95979,6 +95987,9 @@ router10.get("/quick-replies", h3(getQuickReplies));
 router10.post("/quick-replies", h3(createQuickReply));
 router10.get("/sse", chatSseStream);
 var chatRoutes_default = router10;
+
+// server.ts
+init_chatSseController();
 
 // routes/importsRoutes.js
 var import_express13 = __toESM(require_express2(), 1);
@@ -124633,6 +124644,7 @@ var settingsRoutes_default = router14;
 
 // routes/aiRoutes.js
 var import_express17 = __toESM(require_express2(), 1);
+init_auth();
 
 // controllers/aiController.js
 function markdownToHtml(text) {
@@ -125127,6 +125139,9 @@ async function getDashboard(req, res) {
 var router16 = (0, import_express18.Router)();
 router16.get("/", getDashboard);
 var dashboardRoutes_default = router16;
+
+// server.ts
+init_auth();
 
 // node_modules/express-rate-limit/dist/index.mjs
 var import_node_net2 = require("node:net");
@@ -126376,6 +126391,9 @@ function requireRole(roles) {
 var requireAdmin = requireRole("admin");
 var requireManager = requireRole(["admin", "manager"]);
 
+// server.ts
+init_jwtSecret();
+
 // middlewares/cors.js
 function corsMiddleware(req, res, next) {
   const origin2 = req.headers.origin;
@@ -127586,6 +127604,9 @@ try {
 } catch {
 }
 
+// controllers/authController.legacy.js
+init_auth();
+
 // utils/passwordHash.js
 var import_bcrypt = __toESM(require("bcrypt"), 1);
 var BCRYPT_ROUNDS = parseInt(process.env.BCRYPT_ROUNDS || "12", 10);
@@ -127740,6 +127761,7 @@ async function verifyAuth2(req, res) {
 }
 
 // controllers/authController.enhanced.js
+init_auth();
 async function changePassword(req, res) {
   if (!req.user || !req.user.username) {
     return res.status(401).json({ error: "Ch\u01B0a x\xE1c th\u1EF1c." });
@@ -127786,6 +127808,7 @@ async function changePassword(req, res) {
 
 // routes/usersRoutes.js
 var import_express19 = __toESM(require_express2(), 1);
+init_auth();
 
 // controllers/usersController.js
 async function listUsers(req, res) {
@@ -137910,6 +137933,7 @@ var ordersRoutes_default = router20;
 
 // routes/shopeeAuthRoutes.js
 var import_express23 = __toESM(require_express2(), 1);
+init_auth();
 
 // controllers/shopeeAuthController.js
 init_appPaths();
@@ -138170,9 +138194,10 @@ var shopeeAuthRoutes_default = router21;
 
 // routes/tiktokAuthRoutes.js
 var import_express24 = __toESM(require_express2(), 1);
+init_auth();
 
 // controllers/tiktokAuthController.js
-init_auth();
+init_auth2();
 function logTiktokIngress(prefix, req) {
   console.log(
     prefix,
@@ -138246,11 +138271,11 @@ function escapeHtml2(s2) {
 }
 
 // controllers/tiktokCustomAppController.js
-init_auth();
+init_auth2();
 
 // services/tiktok/orders.js
 init_client();
-init_auth();
+init_auth2();
 var ORDER_SEARCH_PATH = "/order/202309/orders/search";
 var ORDER_DETAIL_PATH = "/order/202309/orders/detail";
 async function fetchTiktokOrderListPage(opts = {}) {
@@ -138381,7 +138406,7 @@ async function syncTiktokOrdersSkeleton(opts = {}) {
 
 // services/tiktok/products.js
 init_client();
-init_auth();
+init_auth2();
 var PRODUCT_DETAIL_PATH = "/product/202309/products";
 var PRODUCT_SEARCH_PATH = "/product/202309/products/search";
 async function fetchTiktokProductDetail(productId, opts = {}) {
@@ -138844,6 +138869,7 @@ var shopeePrintRoutes_default = router26;
 
 // routes/inventoryRoutes.js
 var import_express29 = __toESM(require_express2(), 1);
+init_auth();
 var router27 = (0, import_express29.Router)();
 router27.get("/local-inventory", authMiddleware, getLocalInventory);
 router27.post("/local-inventory/refresh", authMiddleware, refreshLocalInventory);
@@ -138854,6 +138880,7 @@ var inventoryRoutes_default = router27;
 
 // routes/autoLinkRoutes.js
 var import_express30 = __toESM(require_express2(), 1);
+init_auth();
 var router28 = (0, import_express30.Router)();
 router28.post("/mapping/bulk-update", authMiddleware, handleBulkAutoLinkByIds);
 router28.post("/shopee/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
@@ -138863,6 +138890,7 @@ var autoLinkRoutes_default = router28;
 
 // routes/apiSystemRoutes.js
 var import_express31 = __toESM(require_express2(), 1);
+init_auth();
 var router29 = (0, import_express31.Router)();
 router29.get("/sync-jobs/:jobId", authMiddleware, getSyncJobById);
 router29.get("/order-counts", authMiddleware, getOrderCounts);
@@ -157081,6 +157109,7 @@ async function startServer() {
   app.use("/api/finance", authMiddleware, financeRoutes);
   app.use("/api/address-book", authMiddleware, addressBookRoutes);
   app.use("/api/customers", authMiddleware, customerRoutes);
+  app.get("/api/chat/sse", chatSseStream);
   app.post("/api/chat/conversations/:id/read", authMiddleware, (req, res) => {
     try {
       Promise.resolve(markConversationRead(req, res)).catch((error) => {

@@ -4,6 +4,9 @@
  * tự động đóng kết nối idle sau 5 phút, heartbeat 30s.
  */
 
+import jwt from 'jsonwebtoken';
+import { getJwtSecret } from '../middlewares/auth.js';
+
 const MAX_SSE_CONNECTIONS = 50;
 const SSE_IDLE_TIMEOUT_MS = 300_000; // 5 phút
 const SSE_HEARTBEAT_MS = 30_000; // 30 giây
@@ -103,15 +106,9 @@ export function chatSseStream(req, res) {
     return res.status(401).json({ success: false, error: 'Thiếu token xác thực.' });
   }
 
-  // Verify JWT token đơn giản (không async để SSE stream nhanh)
+  // Dùng cùng JWT secret với API đăng nhập; tránh lệch secret giữa SSE và authMiddleware.
   try {
-    const jwt = require('jsonwebtoken');
-    const JWT_SECRET = process.env.JWT_SECRET;
-    if (!JWT_SECRET) {
-      logSse('JWT_SECRET not configured');
-      return res.status(500).json({ success: false, error: 'Server chưa cấu hình.' });
-    }
-    jwt.verify(token, JWT_SECRET);
+    jwt.verify(token, getJwtSecret());
   } catch (err) {
     return res.status(401).json({ success: false, error: 'Token không hợp lệ hoặc đã hết hạn.' });
   }

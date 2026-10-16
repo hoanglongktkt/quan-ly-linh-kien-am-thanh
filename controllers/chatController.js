@@ -390,8 +390,10 @@ export async function getUnreadCount(req, res) {
 
     let result;
     try {
+      // Mongoose 9 cấu hình maxTimeMS cho Aggregate qua option();
+      // Query helper .maxTimeMS() không tồn tại và từng làm badge luôn rơi về 0.
       result = await Conversation.aggregate(pipeline)
-        .maxTimeMS(5000)
+        .option({ maxTimeMS: 5000 })
         .exec();
     } catch (aggError) {
       // MongoDB timeout hoặc collection không tồn tại → trả 0 thay vì crash
