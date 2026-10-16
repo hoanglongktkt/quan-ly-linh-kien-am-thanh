@@ -4543,7 +4543,8 @@ export default function OrderManager({
     (sns: string[], flowGen: number) => Promise<void>
   >(async () => {});
   /** Nhịp đệm sau RTS, trước khi gọi API gộp PDF — Shopee kịp xử lý hàng đợi. */
-  const confirmAutoPrintBufferTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Timer này chạy trên trình duyệt nên window.setTimeout luôn trả về number.
+  const confirmAutoPrintBufferTimerRef = useRef<number | null>(null);
   /** Nút In nhanh: waiting (đang poll mã) | retry (timeout). Không auto-clear khi đóng toast. */
   const [labelWaitState, setLabelWaitState] = useState<Record<string, 'waiting' | 'retry'>>({});
   const confirmProgressActiveRef = React.useRef(false);
@@ -5721,14 +5722,17 @@ export default function OrderManager({
   /** Đóng modal tiến độ: ẩn modal, bỏ tick, tải lại đúng tab đang đứng. Không đổi tab/lọc. Không hủy silent-prefetch PDF. */
   const refreshOrdersStayOnCurrentTab = () => {
     const tab = activeSubTabRef.current;
-    void fetchOrdersWithShop({
-      silent: true,
-      page: 1,
-      limit: ORDERS_PAGE_SIZE,
-      merge: false,
-      tab: tab === 'all' ? '' : tab,
-      force: true,
-    }).catch((error: unknown) => {
+    // Callback có thể trả void hoặc Promise; Promise.resolve xử lý an toàn cả hai kiểu.
+    void Promise.resolve(
+      fetchOrdersWithShop({
+        silent: true,
+        page: 1,
+        limit: ORDERS_PAGE_SIZE,
+        merge: false,
+        tab: tab === 'all' ? '' : tab,
+        force: true,
+      }),
+    ).catch((error: unknown) => {
       if (error instanceof Error && error.name === 'AbortError') return;
     });
     void fetchOrderCounts({ force: true }).catch(() => {});
@@ -6318,14 +6322,17 @@ export default function OrderManager({
         return !(hit?.hasPdf || hit?.readyToPrint || hit?.labelUrl || hit?.pdfUrl || hit?.waybill_url);
       });
       if (remaining.length === 0) {
-        void fetchOrdersWithShop({
-          silent: true,
-          page: 1,
-          limit: ORDERS_PAGE_SIZE,
-          merge: true,
-          tab: 'processed',
-          force: true,
-        }).catch((error: unknown) => {
+        // Callback có thể là đồng bộ hoặc bất đồng bộ; luôn chuẩn hóa thành Promise.
+        void Promise.resolve(
+          fetchOrdersWithShop({
+            silent: true,
+            page: 1,
+            limit: ORDERS_PAGE_SIZE,
+            merge: true,
+            tab: 'processed',
+            force: true,
+          }),
+        ).catch((error: unknown) => {
           if (error instanceof Error && error.name === 'AbortError') return;
         });
         return;
