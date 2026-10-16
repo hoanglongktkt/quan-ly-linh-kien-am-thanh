@@ -45,6 +45,10 @@ export function useChatSse(options: UseChatSseOptions) {
   const reconnectAttemptsRef = useRef(0);
   const unmountedRef = useRef(false);
 
+  // Dùng ref để tránh TDZ - callbacks luôn dùng giá trị mới nhất mà không cần dependencies
+  const callbacksRef = useRef({ onNewMessage, onConversationRead, onConnected, onError });
+  callbacksRef.current = { onNewMessage, onConversationRead, onConnected, onError };
+
   const disconnect = useCallback(() => {
     if (reconnectTimerRef.current) {
       window.clearTimeout(reconnectTimerRef.current);
@@ -76,13 +80,13 @@ export function useChatSse(options: UseChatSseOptions) {
 
       es.addEventListener('connected', () => {
         reconnectAttemptsRef.current = 0;
-        onConnected?.();
+        callbacksRef.current.onConnected?.();
       });
 
       es.addEventListener('new_message', (event: MessageEvent) => {
         try {
           const data = JSON.parse(event.data);
-          onNewMessage?.(data);
+          callbacksRef.current.onNewMessage?.(data);
         } catch (err) {
           console.warn('[Chat SSE] parse new_message error', err);
         }
@@ -91,7 +95,7 @@ export function useChatSse(options: UseChatSseOptions) {
       es.addEventListener('conversation_read', (event: MessageEvent) => {
         try {
           const data = JSON.parse(event.data);
-          onConversationRead?.(data);
+          callbacksRef.current.onConversationRead?.(data);
         } catch (err) {
           console.warn('[Chat SSE] parse conversation_read error', err);
         }
@@ -112,7 +116,7 @@ export function useChatSse(options: UseChatSseOptions) {
         // Giới hạn retry: tối đa 5 lần, backoff 2s → 4s → 8s → 16s → 30s
         if (attempts >= 5) {
           const err = new Error('SSE reconnect failed after 5 attempts');
-          onError?.(err);
+          callbacksRef.current.onError?.(err);
           disconnect();
           return;
         }
@@ -128,10 +132,10 @@ export function useChatSse(options: UseChatSseOptions) {
         }, delayMs);
       };
     } catch (err) {
-      onError?.(err instanceof Error ? err : new Error('SSE connect failed'));
+      callbacksRef.current.onError?.(err instanceof Error ? err : new Error('SSE connect failed'));
       disconnect();
     }
-  }, [enabled, shopId, onNewMessage, onConversationRead, onConnected, onError, disconnect]);
+  }, [enabled, shopId, disconnect]);
 
   useEffect(() => {
     unmountedRef.current = false;
