@@ -587,7 +587,9 @@ function docsToListings(docs: Array<{ data?: any }>): any[] {
 }
 
 function enqueueWrite(task: () => Promise<void>): Promise<void> {
-  const next = writeChain.then(task);
+  // Một tác vụ ghi treo không được khóa toàn bộ chuỗi ghi của process vô hạn.
+  // Promise gốc có thể kết thúc muộn, nhưng chuỗi được mở để tác vụ sau tiếp tục.
+  const next = writeChain.then(() => withWriteTimeout(task(), "write_chain_task", 60_000));
   writeChain = next.catch((err) => {
     console.error("[MongoDB] Write chain error:", err);
   });

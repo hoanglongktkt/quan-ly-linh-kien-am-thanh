@@ -17,6 +17,11 @@ const MAX_RETRY = 5;
 /** Heartbeat cho running; hết hạn không được tự cướp job đang xử lý. */
 const RUNNING_LEASE_MS = 4 * 60 * 1000;
 /**
+ * Chặn một webhook/API/Mongo bị treo giữ khóa toàn cục vô hạn.
+ * 4 phút vẫn đủ cho get_order_detail retry + fallback tuần tự của một đơn.
+ */
+const JOB_EXECUTION_TIMEOUT_MS = 4 * 60 * 1000;
+/**
  * Push cũ hơn ngưỡng này bỏ qua (cron đã đồng bộ) — status trong payload cũ không được
  * kéo lùi đơn đang ở tab khác.
  */
@@ -73,6 +78,25 @@ export function webhookEventTime(payload) {
 function delay(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
+  });
+}
+
+/**
+ * Giới hạn thời gian một job chiếm worker. Promise gốc có thể kết thúc muộn,
+ * nhưng job đã đổi khỏi running nên không thể ghi đè kết quả retry mới.
+ */
+export function withJobExecutionTimeout(promise, timeoutMs = JOB_EXECUTION_TIMEOUT_MS) {
+  const safeTimeoutMs = Math.max(1, Number(timeoutMs) || JOB_EXECUTION_TIMEOUT_MS);
+  let timeout = null;
+  const deadline = new Promise((_, reject) => {
+    timeout = setTimeout(
+      () => reject(new Error(`webhook_job_timeout_${safeTimeoutMs}ms`)),
+      safeTimeoutMs,
+    );
+    timeout.unref?.();
+  });
+  return Promise.race([Promise.resolve(promise), deadline]).finally(() => {
+    if (timeout) clearTimeout(timeout);
   });
 }
 
@@ -351,7 +375,8 @@ export async function drainOnce(processPayload) {
       }
       if (!job) break;
       try {
-        const processed = await runClaimedJob(job);
+        // Một job treo không được giữ khóa toàn cục và chặn mọi đơn phía sau.
+        const processed = await withJobExecutionTimeout(runClaimedJob(job));
         console.log(
           processed
             ? `[WebhookJobQueue] job succeeded jobId=${job.jobId}`

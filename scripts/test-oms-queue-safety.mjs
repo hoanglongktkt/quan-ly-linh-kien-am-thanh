@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import mongoose from "mongoose";
 import WebhookJob from "../models/WebhookJob.js";
-import { drainOnce, enqueueWebhookJob, enqueueOrderSyncJob, setOrderSyncJobProcessor } from "../services/webhookJobQueue.js";
+import { drainOnce, enqueueWebhookJob, enqueueOrderSyncJob, setOrderSyncJobProcessor, withJobExecutionTimeout } from "../services/webhookJobQueue.js";
 import { acquireShopeeSyncLease, renewShopeeSyncLease } from "../services/orderSync/syncOrchestrator.js";
 import { withOrderWorkLock } from "../services/orderSync/orderWorkLock.js";
 import { resolveShopeeOrderIdentities } from "../services/orderSync/orderIdentity.js";
@@ -92,6 +92,13 @@ test("OMS: khóa, job cũ, ưu tiên, retry và idempotency", async (t) => {
     return { ...job };
   } }));
   const push = (sn, age = 0) => ({ shop_id: "123", data: { ordersn: sn, update_time: Math.floor((Date.now() - age) / 1000) } });
+
+  await t.test("job treo bị timeout để worker tiếp tục xử lý hàng đợi", async () => {
+    await assert.rejects(
+      withJobExecutionTimeout(new Promise(() => {}), 20),
+      /webhook_job_timeout_20ms/,
+    );
+  });
 
   await t.test("payload nhiều ngày được cách ly ngay và không ghi thành công", async () => {
     await enqueueWebhookJob({ jobId: "old", payload: push("OLD", 3 * 86400000) });

@@ -79917,6 +79917,7 @@ var BATCH_LIMIT = 5;
 var JOB_GAP_MS = 400;
 var MAX_RETRY = 5;
 var RUNNING_LEASE_MS = 4 * 60 * 1e3;
+var JOB_EXECUTION_TIMEOUT_MS = 4 * 60 * 1e3;
 var STALE_JOB_MAX_AGE_MS = 15 * 60 * 1e3;
 var PENDING_BACKLOG_MAX_AGE_MS = 60 * 60 * 1e3;
 var STALE_SWEEP_INTERVAL_MS = 6e4;
@@ -79967,6 +79968,20 @@ function webhookEventTime(payload) {
 function delay2(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
+  });
+}
+function withJobExecutionTimeout(promise, timeoutMs = JOB_EXECUTION_TIMEOUT_MS) {
+  const safeTimeoutMs = Math.max(1, Number(timeoutMs) || JOB_EXECUTION_TIMEOUT_MS);
+  let timeout = null;
+  const deadline = new Promise((_, reject) => {
+    timeout = setTimeout(
+      () => reject(new Error(`webhook_job_timeout_${safeTimeoutMs}ms`)),
+      safeTimeoutMs
+    );
+    timeout.unref?.();
+  });
+  return Promise.race([Promise.resolve(promise), deadline]).finally(() => {
+    if (timeout) clearTimeout(timeout);
   });
 }
 function isDuplicateKeyError(err) {
@@ -80219,7 +80234,7 @@ async function drainOnce(processPayload) {
       }
       if (!job) break;
       try {
-        const processed = await runClaimedJob(job);
+        const processed = await withJobExecutionTimeout(runClaimedJob(job));
         console.log(
           processed ? `[WebhookJobQueue] job succeeded jobId=${job.jobId}` : `[WebhookJobQueue] job stale skipped jobId=${job.jobId}`
         );
@@ -84051,7 +84066,7 @@ function docsToListings(docs) {
   return out;
 }
 function enqueueWrite(task) {
-  const next = writeChain3.then(task);
+  const next = writeChain3.then(() => withWriteTimeout(task(), "write_chain_task", 6e4));
   writeChain3 = next.catch((err) => {
     console.error("[MongoDB] Write chain error:", err);
   });
