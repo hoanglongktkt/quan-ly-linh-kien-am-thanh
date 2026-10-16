@@ -86760,11 +86760,18 @@ async function bulkUpsertOrdersToStore(orders) {
               $set.status = "unprocessed";
               $set["data.status"] = "unprocessed";
             } else if (!forwardProgress && incomingStatus === "unprocessed" && LOCAL_STATUS_NOT_BELOW_PROCESSED.has(existingStatus) && (current?.isPrinted === true || current?.data?.isPrinted === true || current?.is_handed_over === true)) {
-              delete $set.status;
-              delete $set["data.status"];
-              console.warn(
-                `[MongoDB] BLOCK downgrade status ${existingStatus}\u2192unprocessed order_sn=${item.orderSn || item.id} printed=${current?.isPrinted === true} handed=${current?.is_handed_over === true}`
-              );
+              const isPendingToUnprocessed = existingStatus === "pending_confirm" || existingStatus === "pending_verification";
+              if (isPendingToUnprocessed) {
+                console.log(
+                  `[MongoDB] ALLOW ${existingStatus}\u2192unprocessed (x\xE1c nh\u1EADn \u0111\u01A1n) order_sn=${item.orderSn || item.id}`
+                );
+              } else {
+                delete $set.status;
+                delete $set["data.status"];
+                console.warn(
+                  `[MongoDB] BLOCK downgrade status ${existingStatus}\u2192unprocessed order_sn=${item.orderSn || item.id} printed=${current?.isPrinted === true} handed=${current?.is_handed_over === true}`
+                );
+              }
             }
             const storedRawForGuard = String(
               current.shopee_order_status || current.data?.shopee_order_status || ""
@@ -140205,9 +140212,25 @@ async function processShopeeWebhookPayloadInner(body) {
           safeError(applyErr)
         );
       }
-      console.log(
-        `[Shopee Webhook] skip sync tracking order_sn=${orderSn} event=${parsed.eventKind || "webhook"}`
-      );
+      const rawAfterPush = String(orders[idx].shopee_order_status || "").toUpperCase();
+      const shouldFetchTracking = !deps21.hasUsableShopeeTrackingNumber(orders[idx]) && Boolean(shopId && accessToken) && (parsed.eventKind === "tracking_no_update" || rawAfterPush === "READY_TO_SHIP" || rawAfterPush === "RETRY_SHIP" || rawAfterPush === "PROCESSED");
+      if (shouldFetchTracking) {
+        try {
+          await deps21.enrichShopeeOrderTrackingFromApi(shopId, accessToken, orders[idx], {
+            light: true,
+            retries: 1
+          });
+          console.log(
+            `[Shopee Webhook] tracking heal order_sn=${orderSn} tn=${orders[idx].trackingNumber || orders[idx].tracking_no || "\u2014"}`
+          );
+        } catch (trackingErr) {
+          console.warn(
+            `[Shopee Webhook] tracking heal deferred order_sn=${orderSn}:`,
+            safeError(trackingErr)
+          );
+          scheduleWebhookRescuePull(orderSn, shopId, "webhook_tracking_deferred");
+        }
+      }
       const afterTn = String(
         orders[idx].trackingNumber || orders[idx].tracking_no || ""
       );
@@ -140287,6 +140310,14 @@ async function processShopeeWebhookPayload(body) {
       throw new Error(result.reason || "webhook_job_failed");
     }
   } catch (error) {
+    if (error?.message === "order_work_locked") {
+      const key = extractOrderSnAndShopId(body, deps21.parseShopeePushEvent(body));
+      scheduleWebhookRescuePull(key.orderSn, key.shopId, "webhook_order_coalesced");
+      console.log(
+        `[Shopee Webhook] coalesced duplicate order_sn=${key.orderSn || "?"} shop=${key.shopId || "?"}`
+      );
+      return;
+    }
     console.error(
       "[Shopee Webhook] Async processing error:",
       safeError(error),

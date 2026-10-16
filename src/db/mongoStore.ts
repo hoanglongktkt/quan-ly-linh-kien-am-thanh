@@ -3986,13 +3986,26 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
                 current?.data?.isPrinted === true ||
                 current?.is_handed_over === true)
             ) {
-              delete $set.status;
-              delete $set["data.status"];
-              console.warn(
-                `[MongoDB] BLOCK downgrade status ${existingStatus}→unprocessed` +
-                  ` order_sn=${item.orderSn || item.id}` +
-                  ` printed=${current?.isPrinted === true} handed=${current?.is_handed_over === true}`,
-              );
+              // Cho phép pending_confirm / pending_verification → unprocessed khi xác nhận đơn.
+              // Đây là luồng hợp lệ: đơn được xác nhận rồi vào tab "Chưa xử lý" để nhặt hàng.
+              const isPendingToUnprocessed =
+                existingStatus === "pending_confirm" || existingStatus === "pending_verification";
+              if (isPendingToUnprocessed) {
+                // Cho phép chuyển sang unprocessed, không chặn
+                console.log(
+                  `[MongoDB] ALLOW ${existingStatus}→unprocessed (xác nhận đơn)` +
+                    ` order_sn=${item.orderSn || item.id}`,
+                );
+              } else {
+                // Chặn downgrade từ processed/shipping/... về unprocessed
+                delete $set.status;
+                delete $set["data.status"];
+                console.warn(
+                  `[MongoDB] BLOCK downgrade status ${existingStatus}→unprocessed` +
+                    ` order_sn=${item.orderSn || item.id}` +
+                    ` printed=${current?.isPrinted === true} handed=${current?.is_handed_over === true}`,
+                );
+              }
             }
             // Shopee lag: get_order_detail / cron còn trả READY_TO_SHIP sau ship_order.
             // Chỉ chặn khi snapshot KHÔNG mới hơn watermark — READY_TO_SHIP thật (mới hơn) vẫn ghi.

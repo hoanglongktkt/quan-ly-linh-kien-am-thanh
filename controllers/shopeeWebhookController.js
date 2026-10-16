@@ -795,11 +795,36 @@ async function processShopeeWebhookPayloadInner(body) {
         );
       }
 
-      // Mã vận đơn không kéo đồng bộ trong job webhook (enrichTracking: false ở get_order_detail).
-      // Payload đã có tracking_no thì applyShopeePushFieldsToOrder đã gắn. Phần còn lại để cron bù.
-      console.log(
-        `[Shopee Webhook] skip sync tracking order_sn=${orderSn} event=${parsed.eventKind || "webhook"}`,
-      );
+      // READY_TO_SHIP/PROCESSED là lúc Shopee có thể vừa cấp mã vận đơn.
+      // Chỉ bù mã cho đúng 1 đơn vừa có webhook; không quét hàng loạt và không chờ cron.
+      const rawAfterPush = String(orders[idx].shopee_order_status || "").toUpperCase();
+      const shouldFetchTracking =
+        !deps.hasUsableShopeeTrackingNumber(orders[idx]) &&
+        Boolean(shopId && accessToken) &&
+        (parsed.eventKind === "tracking_no_update" ||
+          rawAfterPush === "READY_TO_SHIP" ||
+          rawAfterPush === "RETRY_SHIP" ||
+          rawAfterPush === "PROCESSED");
+
+      if (shouldFetchTracking) {
+        try {
+          await deps.enrichShopeeOrderTrackingFromApi(shopId, accessToken, orders[idx], {
+            light: true,
+            retries: 1,
+          });
+          console.log(
+            `[Shopee Webhook] tracking heal order_sn=${orderSn}` +
+              ` tn=${orders[idx].trackingNumber || orders[idx].tracking_no || "—"}`,
+          );
+        } catch (trackingErr) {
+          // Không làm hỏng cập nhật trạng thái; cron/rescue sẽ thử bù mã lần sau.
+          console.warn(
+            `[Shopee Webhook] tracking heal deferred order_sn=${orderSn}:`,
+            safeError(trackingErr),
+          );
+          scheduleWebhookRescuePull(orderSn, shopId, "webhook_tracking_deferred");
+        }
+      }
 
       const afterTn = String(
         orders[idx].trackingNumber || orders[idx].tracking_no || "",
@@ -911,6 +936,17 @@ export async function processShopeeWebhookPayload(body) {
       throw new Error(result.reason || "webhook_job_failed");
     }
   } catch (error) {
+    if (error?.message === "order_work_locked") {
+      // Nhiều webhook cùng đơn đến sát nhau: job đang giữ khóa sẽ lấy snapshot mới nhất.
+      // Gộp job trùng thay vì cho cả nhóm retry đồng thời đến 5 lần.
+      const key = extractOrderSnAndShopId(body, deps.parseShopeePushEvent(body));
+      scheduleWebhookRescuePull(key.orderSn, key.shopId, "webhook_order_coalesced");
+      console.log(
+        `[Shopee Webhook] coalesced duplicate order_sn=${key.orderSn || "?"}` +
+          ` shop=${key.shopId || "?"}`,
+      );
+      return;
+    }
     console.error(
       "[Shopee Webhook] Async processing error:",
       safeError(error),
