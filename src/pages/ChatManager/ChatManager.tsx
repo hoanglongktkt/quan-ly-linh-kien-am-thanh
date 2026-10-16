@@ -223,7 +223,17 @@ function previewSnippet(value: unknown): string {
   }
 }
 
-function ChatBubble({ mine, content, createdAt }: { mine: boolean; content: unknown; createdAt?: string }) {
+function ChatBubble({
+  mine,
+  content,
+  createdAt,
+  onOpenImage,
+}: {
+  mine: boolean;
+  content: unknown;
+  createdAt?: string;
+  onOpenImage: (url: string) => void;
+}) {
   const parsed = parseMessageContent(content);
   const shell = mine
     ? 'rounded-br-md bg-blue-600 text-white'
@@ -241,7 +251,18 @@ function ChatBubble({ mine, content, createdAt }: { mine: boolean; content: unkn
           {parsed.itemName ? <p className="mt-1 whitespace-pre-wrap">{parsed.itemName}</p> : null}
         </div>
       ) : parsed.kind === 'image' && parsed.imageUrl ? (
-        <img src={parsed.imageUrl} alt="Hình ảnh" className="max-h-48 rounded-lg object-cover" />
+        <button
+          type="button"
+          onClick={() => onOpenImage(parsed.imageUrl || '')}
+          className="block cursor-zoom-in overflow-hidden rounded-lg outline-none ring-blue-300 focus-visible:ring-2"
+          aria-label="Phóng to hình ảnh"
+        >
+          <img
+            src={parsed.imageUrl}
+            alt="Hình ảnh khách hàng gửi"
+            className="max-h-48 rounded-lg object-cover transition-transform duration-200 hover:scale-[1.02]"
+          />
+        </button>
       ) : (
         <p className="whitespace-pre-wrap">{parsed.text || '…'}</p>
       )}
@@ -294,6 +315,7 @@ export default function ChatManager({ shops = [], onNewMessage }: ChatManagerPro
   const [newContent, setNewContent] = useState('');
   const [savingReply, setSavingReply] = useState(false);
   const [markingAllRead, setMarkingAllRead] = useState(false);
+  const [previewImageUrl, setPreviewImageUrl] = useState('');
   const bodyRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const listFlight = useRef(false);
@@ -313,6 +335,21 @@ export default function ChatManager({ shops = [], onNewMessage }: ChatManagerPro
   useEffect(() => {
     setTotalUnreadCount(unreadTotal);
   }, [unreadTotal, setTotalUnreadCount]);
+
+  useEffect(() => {
+    if (!previewImageUrl) return;
+    // Khóa cuộn nền và hỗ trợ phím Esc khi đang xem ảnh lớn.
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPreviewImageUrl('');
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [previewImageUrl]);
 
   const loadMessages = useCallback(async (conversationId: string) => {
     // Không gọi API khi chưa chọn hội thoại.
@@ -862,7 +899,12 @@ export default function ChatManager({ shops = [], onNewMessage }: ChatManagerPro
                   const mine = msg.sender_type === 'shop';
                   return (
                     <div key={msg.message_id || `${msg.created_at}-${index}`} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
-                      <ChatBubble mine={mine} content={msg.content} createdAt={msg.created_at} />
+                      <ChatBubble
+                        mine={mine}
+                        content={msg.content}
+                        createdAt={msg.created_at}
+                        onOpenImage={setPreviewImageUrl}
+                      />
                     </div>
                   );
                 })
@@ -965,6 +1007,31 @@ export default function ChatManager({ shops = [], onNewMessage }: ChatManagerPro
           </div>
         )}
       </section>
+
+      {previewImageUrl && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 p-3 backdrop-blur-sm md:p-8"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Xem hình ảnh phóng to"
+          onClick={() => setPreviewImageUrl('')}
+        >
+          <button
+            type="button"
+            onClick={() => setPreviewImageUrl('')}
+            className="absolute right-3 top-3 inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/15 text-white transition hover:bg-white/25 md:right-6 md:top-6"
+            aria-label="Đóng ảnh"
+          >
+            <X className="h-6 w-6" />
+          </button>
+          <img
+            src={previewImageUrl}
+            alt="Hình ảnh phóng to"
+            className="max-h-[92dvh] max-w-[96vw] select-none object-contain shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          />
+        </div>
+      )}
 
       {composerOpen && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4">
