@@ -28697,8 +28697,8 @@ async function startServer() {
       );
 
       scheduleLabelPdfCleanup();
-      // Self-ping /api/health — chống Passenger/CloudLinux spin-down app qua đêm (cold-start rất lâu).
-      scheduleKeepAlivePing({ appBaseUrl: APP_BASE_URL });
+      // Ping thẳng backend cPanel, không đi vòng qua frontend/Vercel gây tăng độ trễ.
+      scheduleKeepAlivePing({ appBaseUrl: resolveLabelsPublicBaseUrl() });
 
       // Passenger recycle process liên tục — đóng change stream để không rò cursor trên Atlas.
       for (const sig of ["SIGTERM", "SIGINT"] as const) {

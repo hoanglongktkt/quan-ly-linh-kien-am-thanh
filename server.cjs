@@ -80832,7 +80832,7 @@ function scheduleKeepAlivePing(deps23 = {}) {
     );
     return;
   }
-  const url2 = `${baseUrl}/api/health`;
+  const url2 = `${baseUrl}/api/health/`;
   const intervalMs = Math.max(
     6e4,
     Math.min(10 * 6e4, Number(process.env.KEEP_ALIVE_PING_MS) || 4 * 6e4)
@@ -161809,7 +161809,7 @@ async function startServer() {
         `[Shopee Webhook] orders write ${String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "1").trim() === "0" ? "OFF (disabled)" : "ON"}`
       );
       scheduleLabelPdfCleanup();
-      scheduleKeepAlivePing({ appBaseUrl: APP_BASE_URL4 });
+      scheduleKeepAlivePing({ appBaseUrl: resolveLabelsPublicBaseUrl() });
       for (const sig of ["SIGTERM", "SIGINT"]) {
         process.once(sig, () => {
           try {

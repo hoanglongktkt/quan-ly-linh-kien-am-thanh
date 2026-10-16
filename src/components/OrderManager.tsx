@@ -879,6 +879,9 @@ const SCAN_BG_STATUS_IDLE_POLL_MS = 60_000;
 /** Tab đang mở: poll 3s để đơn stub hiện gần real-time. Tab ẩn: 10s (tick tự bỏ qua). */
 const ORDERS_POLL_VISIBLE_MS = 3_000;
 const ORDERS_POLL_HIDDEN_MS = 10_000;
+/** Quay lại sau ngủ dài: chỉ cho một tab kích Quick Sync trong mỗi 15 phút. */
+const WAKE_QUICK_SYNC_COOLDOWN_MS = 15 * 60_000;
+const WAKE_QUICK_SYNC_STORAGE_KEY = 'oms:wake-quick-sync-at:v1';
 
 /** Tab không có list đơn — poll counter vẫn chạy, không gọi /orders/refresh. */
 const ORDER_POLL_LISTLESS_TABS = new Set([
@@ -1750,6 +1753,7 @@ export default function OrderManager({
   useEffect(() => {
     if (!counterBootReady) return;
     let cancelled = false;
+
     let inFlight = false;
     if (!prevTabBadgeRef.current && serverOrderCountsRef.current) {
       const tab = activeSubTabRef.current;
@@ -1858,6 +1862,55 @@ export default function OrderManager({
     if (!counterBootReady) return;
     let cancelled = false;
 
+    /** Kéo bù đơn Shopee bị lỡ webhook khi Passenger ngủ; ACK nhanh, xử lý qua queue chung. */
+    const triggerWakeQuickSync = async (info?: WakeInfo) => {
+      if (!info?.isLongSleep || !info.healthReady || cancelled) return;
+      const token = localStorage.getItem('admin_token') || '';
+      if (!token) return;
+
+      const now = Date.now();
+      const lastTriggeredAt = Number(localStorage.getItem(WAKE_QUICK_SYNC_STORAGE_KEY)) || 0;
+      if (now - lastTriggeredAt < WAKE_QUICK_SYNC_COOLDOWN_MS) return;
+
+      // Ghi khóa trước request để nhiều tab cùng tỉnh không xếp nhiều job trùng nhau.
+      localStorage.setItem(WAKE_QUICK_SYNC_STORAGE_KEY, String(now));
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 12_000);
+      try {
+        const body: Record<string, unknown> = { mode: 'quick' };
+        const scope = shopScopeRef.current;
+        // Chỉ giới hạn shop khi người dùng đang lọc đúng nền tảng Shopee.
+        if (scope.selectedPlatform === 'shopee' && scope.shopIds.length > 0) {
+          body.shop_ids = scope.shopIds;
+        }
+        const response = await fetch('/api/sync-shopee', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+        const payload = await response.json().catch(() => ({} as Record<string, unknown>));
+        if (!response.ok) {
+          throw new Error(String(payload?.message || payload?.error || `HTTP ${response.status}`));
+        }
+        if (cancelled) return;
+        console.log('[Orders Wake] Quick Sync 3h đã được xếp hàng sau khi tab ngủ dài.');
+        showToast('Đang kéo bù đơn mới sau thời gian không mở web...', 6000);
+        startSyncPolling();
+      } catch (error) {
+        // Request chưa được server nhận thì mở khóa để lần wake sau có thể thử lại.
+        if (localStorage.getItem(WAKE_QUICK_SYNC_STORAGE_KEY) === String(now)) {
+          localStorage.removeItem(WAKE_QUICK_SYNC_STORAGE_KEY);
+        }
+        console.warn('[Orders Wake] Không thể bắt đầu Quick Sync:', error);
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
+    };
+
     const triggerHandedOverReconcileIfNeeded = () => {
       if (activeSubTabRef.current !== 'handed_over_carrier') return;
       const auth = localStorage.getItem('admin_token') || '';
@@ -1899,6 +1952,10 @@ export default function OrderManager({
       window.setTimeout(() => {
         if (!cancelled) triggerHandedOverReconcileIfNeeded();
       }, 300);
+      // Đợi list/counter chạy trước; Quick Sync chỉ xếp job nền nên không chặn giao diện.
+      window.setTimeout(() => {
+        if (!cancelled) void triggerWakeQuickSync(info);
+      }, 1200);
     };
 
     // Gộp focus/visibilitychange/pageshow qua tabWakeGate (priority 0 = chạy trước,
@@ -1910,7 +1967,7 @@ export default function OrderManager({
       cancelled = true;
       unsubscribeWake();
     };
-  }, [counterBootReady]);
+  }, [counterBootReady, startSyncPolling]);
 
   /** Tự unlock audio sau click/touch đầu tiên của user trên trang. */
   useEffect(() => {

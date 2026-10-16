@@ -63,7 +63,8 @@ export function scheduleKeepAlivePing(deps = {}) {
     );
     return;
   }
-  const url = `${baseUrl}/api/health`;
+  // Dấu "/" cuối tránh redirect 301 trên cPanel, giảm một vòng request mỗi lần ping.
+  const url = `${baseUrl}/api/health/`;
   // Giới hạn cứng 1-10 phút — không cho env var đẩy về quá nhỏ (spam) hoặc quá lớn (mất tác dụng).
   const intervalMs = Math.max(
     60_000,
