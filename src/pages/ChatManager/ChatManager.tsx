@@ -349,11 +349,24 @@ export default function ChatManager({ shops = [], onNewMessage }: ChatManagerPro
         setConversations((prev) => {
           const conv = prev.find((row) => row.conversation_id === data.conversation_id);
           if (conv) {
+            // Inline logic tên khách hàng để tránh TDZ error
+            const raw = conv.customer_name ?? conv.customerName;
+            let customerName = 'Khách hàng';
+            if (typeof raw === 'string' && raw.trim()) {
+              customerName = raw.trim();
+            } else if (raw && typeof raw === 'object') {
+              const record = raw as Record<string, unknown>;
+              const nested = record.name ?? record.username ?? record.display_name ?? record.nickname;
+              if (typeof nested === 'string' && nested.trim()) {
+                customerName = nested.trim();
+              }
+            }
+
             onNewMessage({
               shop_id: data.shop_id,
               conversation_id: data.conversation_id,
               message_id: data.message_id,
-              customer_name: customerNameOf(conv),
+              customer_name: customerName,
               snippet: data.snippet,
             });
           }
