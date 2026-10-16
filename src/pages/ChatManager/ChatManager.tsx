@@ -313,6 +313,31 @@ export default function ChatManager({ shops = [], onNewMessage }: ChatManagerPro
     setTotalUnreadCount(unreadTotal);
   }, [unreadTotal, setTotalUnreadCount]);
 
+  const loadMessages = useCallback(async (conversationId: string) => {
+    // Không gọi API khi chưa chọn hội thoại.
+    if (!conversationId) {
+      setMessages([]);
+      return;
+    }
+    setMessagesLoading(true);
+    try {
+      const response = await apiFetch(`/api/chat/messages/${encodeURIComponent(conversationId)}`, {
+        headers: authHeaders(),
+      });
+      const data = await parseJsonResponse<{ success?: boolean; messages?: MessageRow[]; error?: string }>(response);
+      if (!response.ok || data.success === false) {
+        throw new Error(data.error || 'Không tải được tin nhắn');
+      }
+      setMessages(Array.isArray(data.messages) ? data.messages : []);
+      setError('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Không tải được tin nhắn');
+      setMessages([]);
+    } finally {
+      setMessagesLoading(false);
+    }
+  }, []);
+
   // SSE real-time: nhận tin nhắn mới và cập nhật badge ngay lập tức
   useChatSse({
     shopId: shopId || undefined,
@@ -444,30 +469,6 @@ export default function ChatManager({ shops = [], onNewMessage }: ChatManagerPro
       setListLoading(false);
     }
   }, [filter, shopId, conversations.length]);
-
-  const loadMessages = useCallback(async (conversationId: string) => {
-    if (!conversationId) {
-      setMessages([]);
-      return;
-    }
-    setMessagesLoading(true);
-    try {
-      const response = await apiFetch(`/api/chat/messages/${encodeURIComponent(conversationId)}`, {
-        headers: authHeaders(),
-      });
-      const data = await parseJsonResponse<{ success?: boolean; messages?: MessageRow[]; error?: string }>(response);
-      if (!response.ok || data.success === false) {
-        throw new Error(data.error || 'Không tải được tin nhắn');
-      }
-      setMessages(Array.isArray(data.messages) ? data.messages : []);
-      setError('');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Không tải được tin nhắn');
-      setMessages([]);
-    } finally {
-      setMessagesLoading(false);
-    }
-  }, []);
 
   const loadQuickReplies = useCallback(async () => {
     try {
