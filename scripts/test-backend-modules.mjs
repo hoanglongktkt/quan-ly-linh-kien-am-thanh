@@ -24,6 +24,22 @@ import * as oldScheduler from "../cron/index.js";
 import * as scheduler from "../modules/shopee-sync/scheduler.js";
 import { findOrderRecord, resolveOrdersFromRequest } from "../modules/orders/lookupService.js";
 
+// Mô phỏng trạng thái sàn cập nhật chậm sau xác nhận/in, không đụng dữ liệu thật.
+test("đơn đã xác nhận hoặc in chỉ thuộc tab đã xử lý khi sàn còn chờ lấy hàng", () => {
+  for (const raw of ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"]) {
+    for (const flags of [{}, { isPrepared: true }, { isPrinted: true }, { isPrepared: true, isPrinted: true }]) {
+      const order = { channel: "shopee", status: "unprocessed", shopee_order_status: raw, trackingNumber: "SPX123456", ...flags };
+      const packed = flags.isPrepared === true || flags.isPrinted === true;
+      assert.equal(handover.matchesProcessedPickupTab(order), packed);
+      assert.equal(handover.matchesUnprocessedPickupTab(order), !packed);
+      for (const patch of [{ is_handed_over: true }, { status: "shipping" }, { status: "cancelled" }, { status: "completed" }]) {
+        assert.equal(handover.matchesProcessedPickupTab({ ...order, ...patch }), false);
+        assert.equal(handover.matchesUnprocessedPickupTab({ ...order, ...patch }), false);
+      }
+    }
+  }
+});
+
 // Kiểm tra compatibility và singleton để import cũ/mới không tạo hai worker.
 test("import cũ/mới cùng hàm và cùng trạng thái", () => {
   for (const key of Object.keys(oldWebhook)) assert.equal(oldWebhook[key], webhook[key]);

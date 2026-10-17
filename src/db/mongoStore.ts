@@ -8236,20 +8236,14 @@ const ORDER_TAB_CLOSED_LOCAL = [
 
 /**
  * Đơn chưa xử lý: shop còn phải thao tác.
- * READY_TO_SHIP / RETRY_SHIP (chưa arrange shipment, có mã hay chưa đều vào đây)
- * hoặc PROCESSED nhưng chưa in và chưa chuẩn bị.
+ * READY_TO_SHIP / RETRY_SHIP / PROCESSED nhưng chưa in và chưa chuẩn bị.
  */
 function orderTabUnprocessedMatch(): Record<string, unknown> {
   return {
     $and: [
-      {
-        $or: [
-          { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] } },
-          {
-            $and: [{ shopee_order_status: "PROCESSED" }, ORDER_TAB_SHOP_NOT_PACKED],
-          },
-        ],
-      },
+      // Khớp giao diện: chỉ còn ở đây khi shop chưa in và chưa chuẩn bị.
+      { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
+      ORDER_TAB_SHOP_NOT_PACKED,
       { is_handed_over: { $ne: true } },
       { channel: { $nin: ["woocommerce", "manual"] } },
       { status: { $nin: [...ORDER_TAB_CLOSED_LOCAL] } },
@@ -8262,12 +8256,12 @@ function orderTabUnprocessedMatch(): Record<string, unknown> {
 }
 
 /**
- * Chờ lấy hàng (Đã xử lý): PROCESSED, đã in hoặc đã chuẩn bị, chưa bàn giao ĐVVC.
+ * Chờ lấy hàng: đã in hoặc đã chuẩn bị, kể cả khi trạng thái sàn cập nhật chậm.
  */
 function orderTabProcessedMatch(): Record<string, unknown> {
   return {
     $and: [
-      { shopee_order_status: "PROCESSED" },
+      { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
       ORDER_TAB_SHOP_PACKED,
       { is_handed_over: { $ne: true } },
       { status: { $nin: [...ORDER_TAB_CLOSED_LOCAL] } },

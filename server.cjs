@@ -82858,7 +82858,7 @@ function hasOrderTrackingNo(order) {
 }
 function isProcessedCondition(order) {
   const raw = getShopeeOrderRawStatus(order);
-  if (raw !== "PROCESSED") return false;
+  if (!["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"].includes(raw)) return false;
   return order.isPrepared === true || isTruthyFlag(order.isPrinted);
 }
 function isShopeeCompletedStatus(order) {
@@ -82902,6 +82902,7 @@ function matchesShippingTab(order) {
   return isShopeeShippingStatus(order);
 }
 function matchesProcessedPickupTab(order) {
+  if (["shipping", "completed", "cancelled", "return_pending", "return_received"].includes(order.status)) return false;
   if (isShopeeShippingStatus(order)) return false;
   if (isShopeeCompletedStatus(order)) return false;
   if (isShopeeCancelledLikeStatus(order)) return false;
@@ -82919,8 +82920,7 @@ function matchesUnprocessedPickupTab(order) {
     return false;
   }
   const raw = getShopeeOrderRawStatus(order);
-  if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") return true;
-  if (raw === "PROCESSED") {
+  if (["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"].includes(raw)) {
     return order.isPrepared !== true && !isTruthyFlag(order.isPrinted);
   }
   return false;
@@ -89785,14 +89785,9 @@ var ORDER_TAB_CLOSED_LOCAL = [
 function orderTabUnprocessedMatch() {
   return {
     $and: [
-      {
-        $or: [
-          { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] } },
-          {
-            $and: [{ shopee_order_status: "PROCESSED" }, ORDER_TAB_SHOP_NOT_PACKED]
-          }
-        ]
-      },
+      // Khớp giao diện: chỉ còn ở đây khi shop chưa in và chưa chuẩn bị.
+      { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
+      ORDER_TAB_SHOP_NOT_PACKED,
       { is_handed_over: { $ne: true } },
       { channel: { $nin: ["woocommerce", "manual"] } },
       { status: { $nin: [...ORDER_TAB_CLOSED_LOCAL] } },
@@ -89806,7 +89801,7 @@ function orderTabUnprocessedMatch() {
 function orderTabProcessedMatch() {
   return {
     $and: [
-      { shopee_order_status: "PROCESSED" },
+      { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
       ORDER_TAB_SHOP_PACKED,
       { is_handed_over: { $ne: true } },
       { status: { $nin: [...ORDER_TAB_CLOSED_LOCAL] } },

@@ -110,14 +110,15 @@ export function getOrderFulfillmentType(
 }
 
 /**
- * Đã xử lý: chỉ PROCESSED và shop đã in hoặc đã chuẩn bị.
- * READY_TO_SHIP vẫn là đơn shop phải arrange shipment — không tính đã xử lý.
+ * Đã xử lý: còn chờ lấy hàng và shop đã in hoặc đã chuẩn bị.
+ * Shopee có thể cập nhật trạng thái chậm sau thao tác thành công.
  */
 export function isProcessedCondition(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
   const raw = getShopeeOrderRawStatus(order);
-  if (raw !== 'PROCESSED') return false;
+  // Dùng cờ thao tác đã lưu khi trạng thái sàn chưa kịp cập nhật.
+  if (!['READY_TO_SHIP', 'RETRY_SHIP', 'PROCESSED'].includes(raw)) return false;
   return order.isPrepared === true || isTruthyFlag(order.isPrinted);
 }
 
@@ -260,6 +261,8 @@ export function matchesShippingTab(order: Order): boolean {
  * PROCESSED + đã in hoặc đã chuẩn bị + chưa bàn giao ĐVVC.
  */
 export function matchesProcessedPickupTab(order: Order): boolean {
+  // Trạng thái nội bộ đã kết thúc phải được loại giống bộ lọc Mongo.
+  if (['shipping', 'completed', 'cancelled', 'return_pending', 'return_received'].includes(order.status)) return false;
   if (isShopeeShippingStatus(order)) return false;
   if (isShopeeCompletedStatus(order)) return false;
   if (isShopeeCancelledLikeStatus(order)) return false;
@@ -269,8 +272,7 @@ export function matchesProcessedPickupTab(order: Order): boolean {
 
 /**
  * TAB "ĐƠN CHƯA XỬ LÝ":
- * Mọi READY_TO_SHIP / RETRY_SHIP (chưa arrange, có mã hay chưa),
- * hoặc PROCESSED nhưng chưa in và chưa chuẩn bị.
+ * READY_TO_SHIP / RETRY_SHIP / PROCESSED nhưng chưa in và chưa chuẩn bị.
  */
 export function matchesUnprocessedPickupTab(order: Order): boolean {
   if (isShopeeShippingStatus(order)) return false;
@@ -289,8 +291,8 @@ export function matchesUnprocessedPickupTab(order: Order): boolean {
     return false;
   }
   const raw = getShopeeOrderRawStatus(order);
-  if (raw === 'READY_TO_SHIP' || raw === 'RETRY_SHIP') return true;
-  if (raw === 'PROCESSED') {
+  // Hai tab loại trừ nhau kể cả khi trạng thái sàn cập nhật chậm.
+  if (['READY_TO_SHIP', 'RETRY_SHIP', 'PROCESSED'].includes(raw)) {
     return order.isPrepared !== true && !isTruthyFlag(order.isPrinted);
   }
   return false;
