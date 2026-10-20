@@ -1,3 +1,4 @@
+import { OrderProductImage } from './OrderProductImage';
 import React, { useState } from 'react';
 import {
   Barcode,
@@ -32,11 +33,7 @@ import {
   matchCatalogProduct,
   resolveItemImportPrice,
 } from '../utils/orderImportCost';
-import {
-  getShopeeItemAmount,
-  getShopeeNetRevenue,
-  isShopeeEscrowSynced,
-} from '../utils/shopeeFees';
+import { getOrderListFinance } from '../utils/orderListFinance';
 import { getShippingCarrierBadgeMeta } from '../utils/shippingCarrier';
 import { ReturnWarehouseStatusBlock } from './ReturnWarehouseStatusBlock';
 import {
@@ -309,30 +306,11 @@ function renderMissingTrackingBadge(order: Order) {
   return <AwaitingShopeeTrackingBadge />;
 }
 
-function calculateDynamicFeeItems(itemAmount: number, systemFees: SystemFee[]) {
-  return systemFees
-    .filter((fee) => fee.active && fee.name.trim() && Number(fee.value) > 0)
-    .map((fee) => ({
-      ...fee,
-      amount:
-        fee.calculationType === 'percentage'
-          ? Math.round((itemAmount * Number(fee.value)) / 100)
-          : Math.round(Number(fee.value)),
-    }));
-}
-
 function formatOrderNetRevenueDisplay(
   order: Order,
   systemFees: SystemFee[] = [],
 ): { text: string; pending: boolean; amount: number } {
-  const pending = order.channel === 'shopee' && !isShopeeEscrowSynced(order);
-  const itemAmount = getShopeeItemAmount(order);
-  const netReceived = pending
-    ? Math.max(
-        0,
-        itemAmount - calculateDynamicFeeItems(itemAmount, systemFees).reduce((sum, fee) => sum + fee.amount, 0),
-      )
-    : getShopeeNetRevenue(order);
+  const { pending, netRevenue: netReceived } = getOrderListFinance(order, systemFees);
   // Giá vốn chỉ từ item.importPrice đã hydrate ở Backend — không map cache kho FE.
   const totalImportCost = getOrderTotalImportCost(order);
   const profit = (Number.isFinite(netReceived) ? netReceived : 0) - totalImportCost;
@@ -820,7 +798,7 @@ function OrderItemsCell({
         return (
           <div key={`${itemKey}-${idx}`} className="flex items-start gap-2">
             {item.productImage ? (
-              <img
+              <OrderProductImage
                 src={item.productImage}
                 alt={itemTitle}
                 className="w-10 h-10 rounded-lg object-cover border border-gray-200 shrink-0 bg-gray-50"

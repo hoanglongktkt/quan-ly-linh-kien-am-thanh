@@ -1,3 +1,5 @@
+import { OrderProductImage } from './OrderProductImage';
+import { getOrderListFinance } from '../utils/orderListFinance';
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   startLiveQrScanner,
@@ -127,12 +129,7 @@ import {
   type OrderDatePreset,
 } from '../utils/orderDateFilter';
 import {
-  computeShopeeSurchargeTotal,
-  getShopeeItemAmount,
-  getShopeeNetRevenue,
-  getShopeeTaxTotal,
   getShopeeTransactionFee,
-  isShopeeEscrowSynced,
 } from '../utils/shopeeFees';
 import {
   playNotificationSound,
@@ -281,26 +278,6 @@ function isPendingConfirmOrder(order: Order): boolean {
   );
 }
 
-function calculateDynamicFeeItems(itemAmount: number, systemFees: SystemFee[]) {
-  return systemFees
-    .filter((fee) => fee.active && fee.name.trim() && Number(fee.value) > 0)
-    .map((fee) => ({
-      ...fee,
-      amount: fee.calculationType === 'percentage'
-        ? Math.round((itemAmount * Number(fee.value)) / 100)
-        : Math.round(Number(fee.value)),
-    }));
-}
-
-function formatOrderNetRevenueDisplay(order: Order, systemFees: SystemFee[] = []): { text: string; pending: boolean } {
-  const pending = order.channel === 'shopee' && !isShopeeEscrowSynced(order);
-  const itemAmount = getShopeeItemAmount(order);
-  const amount = pending
-    ? Math.max(0, itemAmount - calculateDynamicFeeItems(itemAmount, systemFees).reduce((sum, fee) => sum + fee.amount, 0))
-    : getShopeeNetRevenue(order);
-  return { text: `${amount.toLocaleString('vi-VN')}đ`, pending };
-}
-
 function OrderShopeeFinanceSummary({
   order,
   systemFees,
@@ -312,15 +289,8 @@ function OrderShopeeFinanceSummary({
   const commissionFee = Math.max(0, Number(fees?.commission_fee) || 0);
   const serviceFee = Math.max(0, Number(fees?.service_fee) || 0);
   const transactionFee = getShopeeTransactionFee(fees);
-  const taxTotal = getShopeeTaxTotal(fees, order);
-  const surchargeTotal = computeShopeeSurchargeTotal(fees);
-  const itemAmount = getShopeeItemAmount(order);
-  const escrowReady = order.channel !== 'shopee' || isShopeeEscrowSynced(order);
-  const dynamicFeeItems = calculateDynamicFeeItems(itemAmount, systemFees);
-  const dynamicFeeTotal = dynamicFeeItems.reduce((sum, fee) => sum + fee.amount, 0);
-  const netRevenue = escrowReady
-    ? getShopeeNetRevenue(order)
-    : Math.max(0, itemAmount - dynamicFeeTotal);
+  const { pending, itemAmount, dynamicFeeItems, dynamicFeeTotal, surchargeTotal, taxTotal, customCosts, netRevenue } = getOrderListFinance(order, systemFees);
+  const escrowReady = !pending;
 
   if (order.channel === 'manual') {
     return (
@@ -401,6 +371,12 @@ function OrderShopeeFinanceSummary({
           -{taxTotal.toLocaleString('vi-VN')}đ
         </span>
       </div>
+      )}
+      {customCosts > 0 && (
+        <div className="flex justify-between text-rose-500 gap-2">
+          <span>Chi phí riêng của đơn:</span>
+          <span className="font-semibold">-{customCosts.toLocaleString('vi-VN')}đ</span>
+        </div>
       )}
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-emerald-600 pt-1.5 border-t border-dashed border-gray-200 text-sm">
         <span className="font-bold">Doanh thu Nhận Về:</span>
@@ -615,7 +591,7 @@ function OrderDetailAccordionPanel({
             <div key={`${item.productId || item.sku || 'item'}-${index}`} className="p-3 flex items-center justify-between text-xs gap-3">
               <div className="flex items-center gap-2.5 min-w-0">
                 {item.productImage ? (
-                  <img
+                  <OrderProductImage
                     src={item.productImage}
                     alt={item.productTitle}
                     className="w-11 h-11 rounded-lg object-cover border border-gray-200 shrink-0 bg-gray-50"
@@ -10163,9 +10139,9 @@ export default function OrderManager({
                       <tr key={item.groupKey} className="hover:bg-slate-50/50 transition-colors">
                         <td className="p-4">
                           {item.productImage ? (
-                            <img
+                            <OrderProductImage
                               src={item.productImage}
-                              alt=""
+                              alt={item.baseTitle}
                               className="w-11 h-11 rounded-lg object-cover border border-gray-100"
                               referrerPolicy="no-referrer"
                             />
@@ -10197,9 +10173,9 @@ export default function OrderManager({
                 {aggregatedOrderProducts.map((item) => (
                   <div key={item.groupKey} className="flex items-center gap-2.5 md:gap-3 p-3 md:p-4 max-md:border-0">
                     {item.productImage ? (
-                      <img
+                      <OrderProductImage
                         src={item.productImage}
-                        alt=""
+                        alt={item.baseTitle}
                         className="w-11 h-11 md:w-12 md:h-12 rounded-xl object-cover border border-gray-100 shrink-0"
                         referrerPolicy="no-referrer"
                       />
