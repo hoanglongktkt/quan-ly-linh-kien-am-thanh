@@ -7,8 +7,9 @@
 import path from "path";
 import { createRequire } from "node:module";
 import { sleep } from "../../utils/concurrency.js";
-import { recordShopeeApiError } from "../operations/telemetry.js";
+import { recordShopeeApiError, observeWebhookStage, hasShortOrderDeadline } from "../operations/telemetry.js";
 import { safeError } from "../../utils/safeProductionLog.js";
+import { assertSyncActive } from "./syncYield.js";
 import {
   normalizeShopeeProductIds,
   normalizeShopeeReturnDetail,
@@ -92,6 +93,9 @@ try {
 }
 
 export async function fetchWithTimeout(url, init = {}, timeoutMs = SHOPEE_HTTP_TIMEOUT_MS) {
+  assertSyncActive();
+  // A webhook retries through its durable queue, not several HTTP loops.
+  if (hasShortOrderDeadline()) timeoutMs = Math.min(timeoutMs, 15_000);
   const controller = new AbortController();
   const externalSignal = init?.signal;
   const abortFromExternal = () => controller.abort(externalSignal?.reason);
@@ -99,6 +103,12 @@ export async function fetchWithTimeout(url, init = {}, timeoutMs = SHOPEE_HTTP_T
   else externalSignal?.addEventListener?.("abort", abortFromExternal, { once: true });
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let hardTimer;
+  let bodyOwnsDeadline = false;
+  const cleanup = () => {
+    clearTimeout(timer);
+    if (hardTimer) clearTimeout(hardTimer);
+    externalSignal?.removeEventListener?.("abort", abortFromExternal);
+  };
   try {
     const fetchInit = {
       ...init,
@@ -115,17 +125,26 @@ export async function fetchWithTimeout(url, init = {}, timeoutMs = SHOPEE_HTTP_T
         } catch {
           /* ignore */
         }
-        reject(new Error(`Shopee API timeout sau ${timeoutMs / 1000}s`));
+        reject(Object.assign(new Error(`Shopee API timeout sau ${timeoutMs / 1000}s`), { code: "shopee_http_timeout" }));
       }, timeoutMs + 1000);
     });
     const response = await Promise.race([fetchPromise, hardTimeoutPromise]);
     if (response.status >= 400) await recordShopeeApiError(url, "http");
+    // fetch resolves on headers. Keep the SAME deadline and abort signal alive
+    // until text/json/binary consumption finishes, including OAuth responses.
+    for (const method of ["text", "json", "arrayBuffer", "blob", "formData", "bytes"]) {
+      if (typeof response[method] !== "function") continue;
+      const consume = response[method].bind(response);
+      Object.defineProperty(response, method, { configurable: true, value: (...args) =>
+        Promise.race([Promise.resolve().then(() => consume(...args)), hardTimeoutPromise]).finally(cleanup) });
+    }
+    bodyOwnsDeadline = true;
     return response;
   } catch (error) {
     await recordShopeeApiError(url, "network");
     if (error?.name === "AbortError" || /timeout/i.test(String(error?.message || ""))) {
       console.error(`[Shopee HTTP] TIMEOUT ${timeoutMs}ms`);
-      throw new Error(`Shopee API timeout sau ${timeoutMs / 1000}s`);
+      throw Object.assign(new Error(`Shopee API timeout sau ${timeoutMs / 1000}s`), { code: "shopee_http_timeout" });
     }
     console.error(
       "[Shopee HTTP] FETCH LỖI:",
@@ -133,9 +152,7 @@ export async function fetchWithTimeout(url, init = {}, timeoutMs = SHOPEE_HTTP_T
     );
     throw error;
   } finally {
-    clearTimeout(timer);
-    if (hardTimer) clearTimeout(hardTimer);
-    externalSignal?.removeEventListener?.("abort", abortFromExternal);
+    if (!bodyOwnsDeadline) cleanup();
   }
 }
 
@@ -401,16 +418,25 @@ function maybeNormalizeReturnJson(json, context) {
   return json;
 }
 
+function shopeeRequestStage(url) {
+  try {
+    const action = new URL(url).pathname.split("/").pop();
+    return /^[a-z_]{1,35}$/.test(action) ? `api_${action}` : "api_request";
+  } catch { return "api_request"; }
+}
+
 export async function shopeeFetchJsonWithRetry(url, context, opts) {
-  const maxAttempts = opts?.maxAttempts ?? SHOPEE_API_MAX_RETRY;
+  const maxAttempts = hasShortOrderDeadline() ? 1 : (opts?.maxAttempts ?? SHOPEE_API_MAX_RETRY);
   const baseDelayMs = opts?.baseDelayMs ?? SHOPEE_API_RETRY_BASE_MS;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     let res;
     let rawText = "";
     try {
-      res = await fetchWithTimeout(url);
-      rawText = await res.text();
+      await observeWebhookStage(shopeeRequestStage(url), async () => {
+        res = await fetchWithTimeout(url, {}, opts?.timeoutMs ?? SHOPEE_HTTP_TIMEOUT_MS);
+        rawText = await res.text();
+      });
     } catch (err) {
       // Lỗi đọc body sau HTTP thành công chưa được fetchWithTimeout đếm.
       if (res && res.status < 400) await recordShopeeApiError(url, "network");
@@ -481,21 +507,23 @@ export async function shopeeFetchJsonWithRetry(url, context, opts) {
 }
 
 export async function shopeePostJsonWithRetry(url, body, context, opts) {
-  const maxAttempts = opts?.maxAttempts ?? SHOPEE_API_MAX_RETRY;
+  const maxAttempts = hasShortOrderDeadline() ? 1 : (opts?.maxAttempts ?? SHOPEE_API_MAX_RETRY);
   const baseDelayMs = opts?.baseDelayMs ?? SHOPEE_API_RETRY_BASE_MS;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     let res;
     let rawText = "";
     try {
+      await observeWebhookStage(shopeeRequestStage(url), async () => {
       res = await fetchWithTimeout(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         // JSON.stringify chuẩn: giữ Number cho item_id/model_id (Shopee Go uint64).
         // Không dùng stringifyShopeeJson (storeAsString) — sẽ biến ID thành string và bị Shopee từ chối.
         body: JSON.stringify(body),
-      });
+      }, opts?.timeoutMs ?? SHOPEE_HTTP_TIMEOUT_MS);
       rawText = await res.text();
+      });
     } catch (err) {
       if (res && res.status < 400) await recordShopeeApiError(url, "network");
       console.error("[Shopee API] request_failed:", safeError(err));

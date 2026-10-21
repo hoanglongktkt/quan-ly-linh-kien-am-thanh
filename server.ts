@@ -1,6 +1,8 @@
 import { readShopeePushData, extractShopeeWebhookRawStatus } from "./modules/webhooks/pushData.ts";
 import express from "express";
 import operationsRoutes, { startDefaultOperationsHealthMonitor } from "./routes/operationsRoutes.js";
+import { observeWebhookStage } from "./modules/operations/telemetry.js";
+import { yieldSyncIfWebhookWaiting, isSyncControlError } from "./modules/shopee-sync/syncYield.js";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
@@ -3121,6 +3123,7 @@ async function collectShopeeOrderSnsIncremental(
 
     // Fail-safe: for-loop cứng ≤ 50 lần/shop — CẤM while(true).
     for (let pageIdx = 0; pageIdx < pageSafetyCap; pageIdx++) {
+      await yieldSyncIfWebhookWaiting();
       if (Date.now() > deadlineAt || shopListCalls >= pageSafetyCap) {
         truncated = true;
         break chunkLoop;
@@ -3704,7 +3707,7 @@ async function reconcileActiveShopeeOrdersFromStore(
 
   let mongoOrders: any[];
   try {
-    mongoOrders = await loadOrdersFromStore({
+    mongoOrders = await observeWebhookStage("sync_read_active_orders", () => loadOrdersFromStore({
       shopIds,
       statuses: ["unprocessed", "processed", "shipping", "return_pending"],
       shopeeStatuses: [
@@ -3721,7 +3724,7 @@ async function reconcileActiveShopeeOrdersFromStore(
         500,
         Math.max(150, SHOPEE_ACTIVE_STATUS_RECONCILE_LIMIT_PER_SHOP * Math.max(1, shopIds.length)),
       ),
-    });
+    }));
   } catch (error: any) {
     result.errors.push({
       error: "active_orders_read_failed",
@@ -3814,6 +3817,7 @@ async function reconcileActiveShopeeOrdersFromStore(
       const apiShopId = String(auth.apiShopId || shopId).trim();
       syncDiag("Active status reconcile START", `shop=${shopId} candidates=${orderSns.length}`);
       for (let i = 0; i < orderSns.length; i += SHOPEE_SYNC_CHUNK_SIZE) {
+        await yieldSyncIfWebhookWaiting();
         assertOrdersPullDeadline(deadlineAt, `active reconcile chunk shop=${shopId} offset=${i}`);
         const chunk = orderSns.slice(i, i + SHOPEE_SYNC_CHUNK_SIZE);
         try {
@@ -3826,6 +3830,7 @@ async function reconcileActiveShopeeOrdersFromStore(
           );
           if (errors.length) result.errors.push(...errors);
           if (normalized.length === 0) continue;
+          await yieldSyncIfWebhookWaiting();
           const persisted = await persistShopeeOrderChunk(orders, normalized, {
             apiShopId,
             accessToken: auth.token,
@@ -3840,6 +3845,7 @@ async function reconcileActiveShopeeOrdersFromStore(
               `pulled=${normalized.length} +${persisted.added}/~${persisted.updated}`,
           );
         } catch (error: any) {
+          if (isSyncControlError(error)) throw error;
           if (String(error?.message || "").includes("ORDERS_PULL_DEADLINE")) throw error;
           result.errors.push({
             shopId,
@@ -3857,6 +3863,7 @@ async function reconcileActiveShopeeOrdersFromStore(
         }
       }
     } catch (shopErr: any) {
+      if (isSyncControlError(shopErr)) throw shopErr;
       if (String(shopErr?.message || "").includes("ORDERS_PULL_DEADLINE")) {
         syncDiag("Active reconcile SHOP DEADLINE — continue next shop", shopErr.message);
         result.errors.push({ shopId, error: "pull_shop_deadline", message: shopErr.message });
@@ -4040,12 +4047,14 @@ async function reconcileHandedOverCarrierStatuses(opts?: {
     );
 
     for (const [shopIdRaw, orderSns] of byShop) {
+      await yieldSyncIfWebhookWaiting();
       const shopId = String(normalizeShopIdKey(shopIdRaw) || shopIdRaw || "").trim();
       try {
         let auth: Awaited<ReturnType<typeof getShopeeAccessTokenForApi>> | null = null;
         try {
           auth = await getShopeeAccessTokenForApi(shopId);
         } catch (tokenErr: any) {
+          if (isSyncControlError(tokenErr)) throw tokenErr;
           console.error(
             `[Sync Shop ${shopId}] Lỗi: getShopeeAccessTokenForApi (ĐVVC):`,
             tokenErr?.message || tokenErr,
@@ -4075,6 +4084,7 @@ async function reconcileHandedOverCarrierStatuses(opts?: {
 
         const apiShopId = String(auth.apiShopId || shopId).trim();
         for (let i = 0; i < orderSns.length; i += SHOPEE_SYNC_CHUNK_SIZE) {
+          await yieldSyncIfWebhookWaiting();
           const chunk = orderSns.slice(i, i + SHOPEE_SYNC_CHUNK_SIZE);
           try {
             const { normalized, errors } = await fetchNormalizeShopeeOrderChunk(
@@ -4100,6 +4110,7 @@ async function reconcileHandedOverCarrierStatuses(opts?: {
               }
             }
 
+            await yieldSyncIfWebhookWaiting();
             const persisted = await persistShopeeOrderChunk(workingOrders, normalized, {
               apiShopId,
               accessToken: auth.token,
@@ -4113,6 +4124,7 @@ async function reconcileHandedOverCarrierStatuses(opts?: {
                 ` pulled=${normalized.length} upd=${persisted.updated}`,
             );
           } catch (chunkErr: any) {
+            if (isSyncControlError(chunkErr)) throw chunkErr;
             result.errors.push({
               shopId,
               error: "handed_over_reconcile_chunk_failed",
@@ -4129,6 +4141,7 @@ async function reconcileHandedOverCarrierStatuses(opts?: {
           }
         }
       } catch (shopErr: any) {
+        if (isSyncControlError(shopErr)) throw shopErr;
         result.errors.push({
           shopId,
           error: "handed_over_reconcile_shop_failed",
@@ -4170,6 +4183,7 @@ async function reconcileHandedOverCarrierStatuses(opts?: {
     console.log(`[HandedOver Reconcile][${trigger}] DONE ${result.message}`);
     return result;
   } catch (err: any) {
+    if (isSyncControlError(err)) throw err;
     result.success = false;
     result.message = err?.message || String(err);
     result.errors.push({ error: "handed_over_reconcile_failed", message: result.message });
@@ -5295,6 +5309,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
    * không trả lại các đơn cũ bị kẹt trạng thái.
    */
   reconcileActive?: boolean;
+  includeHistoryReconcile?: boolean;
   /**
    * Cron/auto: cho phép cửa sổ ngắn (< 3 ngày) — webhook đã real-time;
    * tránh mỗi 30 phút kéo 5 ngày → chồng job / process spike cPanel.
@@ -5345,6 +5360,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
 
   const startedAt = Date.now();
   const enrichTracking = opts?.enrichTracking === true;
+  const includeHistoryReconcile = opts?.includeHistoryReconcile !== false;
   const errors: any[] = [];
   const shopeeResponsePages: any[] = [];
   const failedOrdersSet = new Set<string>();
@@ -5435,6 +5451,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
     // TUẦN TỰ từng shop — CẤM mapWithConcurrency đa shop khi cùng mutate `orders`
     // (unshift/findIndex song song → race → crash/HTTP 500 HTML).
     for (let shopIdx = 0; shopIdx < shopIds.length; shopIdx++) {
+      await yieldSyncIfWebhookWaiting();
       const shopId = shopIds[shopIdx];
       const remainingMs = Math.max(0, deadlineAt - Date.now());
       const shopBudgetMs = perShopBudgetMs;
@@ -5597,6 +5614,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
                 );
               }
             } catch (createErr: any) {
+              if (isSyncControlError(createErr)) throw createErr;
               console.error("[SHOPEE API CRON ERROR]:", createErr?.response?.data || createErr);
               console.warn(
                 `[Sync Shop ${shopIdStr}] create_time lookback skip:`,
@@ -5632,7 +5650,8 @@ async function pullIncrementalOrdersFromShopee(opts?: {
           // KHÔNG lọc theo order_status — kéo ALL từ get_order_list.
           // Luôn quét riêng CANCELLED/IN_CANCEL theo update_time, kể cả cron cửa sổ ngắn.
           // Một số shop không trả đủ trạng thái hủy trong lượt ALL nên đơn cũ có thể kẹt SHIPPED.
-          if (Date.now() < shopDeadlineAt) {
+          await yieldSyncIfWebhookWaiting();
+          if (includeHistoryReconcile && Date.now() < shopDeadlineAt) {
             try {
               const cancelLookbackSec = shortLookback
                 ? Math.max(3 * 24 * 60 * 60, lookbackSec)
@@ -5679,7 +5698,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
           }
 
           // Lookback SHIPPED 1–3 ngày: bắt đơn Shopee đã SHIPPED nhưng Mongo còn READY_TO_SHIP/PROCESSED.
-          if (Date.now() < shopDeadlineAt) {
+          if (includeHistoryReconcile && Date.now() < shopDeadlineAt) {
             try {
               const shippedLookbackSec = Math.max(
                 24 * 60 * 60,
@@ -5754,7 +5773,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
           }
 
           // Lookback COMPLETED: heal đơn Mongo còn SHIPPED/shipping dù Shopee đã giao xong.
-          if (Date.now() < shopDeadlineAt) {
+          if (includeHistoryReconcile && Date.now() < shopDeadlineAt) {
             try {
               const completedLookbackSec = Math.max(
                 24 * 60 * 60,
@@ -5823,7 +5842,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
           }
 
           // MỌI pull (kể cả cron/Quick): bổ sung order_sn từ get_return_list (TO_RETURN).
-          if (Date.now() < shopDeadlineAt) {
+          if (includeHistoryReconcile && Date.now() < shopDeadlineAt) {
             try {
               const returnRows = await shopeeFetchAllReturnSns(shopIdStr, accessToken, {
                 mode: "full",
@@ -5924,6 +5943,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
           }
 
           for (let i = 0; i < detailSnList.length; i += SHOPEE_SYNC_CHUNK_SIZE) {
+            await yieldSyncIfWebhookWaiting();
             try {
               assertOrdersPullDeadline(shopDeadlineAt, `detail chunk shop=${shopId} offset=${i}`);
               const chunkSns = detailSnList.slice(i, i + SHOPEE_SYNC_CHUNK_SIZE);
@@ -5962,6 +5982,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
                 syncDiag("Saving to MongoDB...", `shop=${shopId} chunk=${chunkNo} docs=${normalized.length}`);
                 // Bọc riêng logic lưu DB — lỗi map/BulkWrite phải log + đẩy lên FE, không nuốt.
                 try {
+                  await yieldSyncIfWebhookWaiting();
                   const upsert = await persistShopeeOrderChunk(orders, normalized, {
                     apiShopId: shopIdStr,
                     accessToken,
@@ -5979,6 +6000,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
                     `shop=${shopIdStr} +${upsert.added}/~${upsert.updated} elapsed=${Date.now() - startedAt}ms`,
                   );
                 } catch (saveErr: any) {
+                  if (isSyncControlError(saveErr)) throw saveErr;
                   const friendly = describeMongoWriteError(saveErr);
                   console.error(
                     `[Sync Shop ${shopIdStr}] Lỗi: Mongo/JSON upsert FAILED:`,
@@ -6000,6 +6022,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
                   shopErrorMsg = "db_upsert_failed";
                 }
               } catch (chunkErr: any) {
+                if (isSyncControlError(chunkErr)) throw chunkErr;
                 if (String(chunkErr?.message || "").includes("ORDERS_PULL_DEADLINE")) throw chunkErr;
                 console.error(
                   `[Sync Shop ${shopIdStr}] Lỗi: Chunk exception:`,
@@ -6049,6 +6072,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
             error: shopErrorMsg || undefined,
           });
         } catch (shopErr: any) {
+          if (isSyncControlError(shopErr)) throw shopErr;
           const sid = String(normalizeShopIdKey(shopId) || shopId || "").trim();
           if (String(shopErr?.message || "").includes("ORDERS_PULL_DEADLINE")) {
             syncDiag("SHOP DEADLINE — continue next shop", shopErr.message);
@@ -6092,6 +6116,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
           });
         }
       } catch (outerShopErr: any) {
+        if (isSyncControlError(outerShopErr)) throw outerShopErr;
         // Tuyệt đối không để 1 shop (vd 831052930) làm sập cả phiên pull.
         const sid = String(normalizeShopIdKey(shopId) || shopId || "").trim();
         console.error(
@@ -6121,7 +6146,8 @@ async function pullIncrementalOrdersFromShopee(opts?: {
       JSON.stringify(perShopResults),
     );
 
-    if (Date.now() <= deadlineAt) {
+    await yieldSyncIfWebhookWaiting();
+    if (includeHistoryReconcile && Date.now() <= deadlineAt) {
       try {
         const repaired = await repairWrongShopCancelledOrders({ limit: 12 });
         if (repaired.checked > 0) {
@@ -6153,6 +6179,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
           `pulled=${reconciled.pulled} +${reconciled.added}/~${reconciled.updated} errors=${reconciled.errors.length}`,
         );
       } catch (reconcileErr: any) {
+        if (isSyncControlError(reconcileErr)) throw reconcileErr;
         console.error(
           "[Orders Pull] reconcileActive FAILED:",
           reconcileErr?.message || reconcileErr,
@@ -6238,6 +6265,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
       failed_orders,
     };
   } catch (pullFatal: any) {
+    if (isSyncControlError(pullFatal)) throw pullFatal;
     logShopeeSyncApiError(pullFatal, "pullIncrementalOrdersFromShopee fatal");
     console.error(
       "[Orders Pull] FATAL:",
@@ -6577,6 +6605,7 @@ async function syncShopeeReturnRequests(opts?: {
 
     // Duyệt lần lượt từng shop. Hết ngân sách thì bỏ qua API của shop đó, không Promise.all.
     for (let shopIndex = 0; shopIndex < shopIds.length; shopIndex++) {
+      await yieldSyncIfWebhookWaiting();
       const shopId = shopIds[shopIndex];
       console.log(`[Return Sync] Đang xử lý shop_id=${shopId}, index=${shopIndex}`);
       if (Date.now() >= globalDeadlineAt) {
@@ -6597,6 +6626,7 @@ async function syncShopeeReturnRequests(opts?: {
         }
         let pageNo = 1;
         while (pageNo <= listMaxPages) {
+          await yieldSyncIfWebhookWaiting();
           if (Date.now() >= shopDeadlineAt || Date.now() >= globalDeadlineAt) {
             console.warn(
               `[ReturnRequests Sync] shop=${shopId} hết ngân sách trước page=${pageNo}`,
@@ -6637,6 +6667,7 @@ async function syncShopeeReturnRequests(opts?: {
 
           const patches: any[] = [];
           for (const row of limited) {
+          await yieldSyncIfWebhookWaiting();
           if (Date.now() >= shopDeadlineAt) {
             console.warn(
               `[ReturnRequests Sync] shop=${shopId} hết ngân sách — giữ ${patches.length} patch, chuyển shop tiếp theo`,
@@ -6899,6 +6930,7 @@ async function syncShopeeReturnRequests(opts?: {
             pulled += 1;
             await shopeeSyncDelay(300);
           } catch (rowErr: any) {
+            if (isSyncControlError(rowErr)) throw rowErr;
             console.warn(
               `[Return Sync Error] Shop: ${shopId}, SN: ${returnSn}, Lỗi: ${rowErr?.message || rowErr}`,
             );
@@ -6913,6 +6945,7 @@ async function syncShopeeReturnRequests(opts?: {
         }
 
         if (patches.length) {
+          await yieldSyncIfWebhookWaiting();
           const upsert = await persistShopeeOrderChunk(orders, patches, {
             apiShopId: shopId,
             accessToken,
@@ -6930,6 +6963,7 @@ async function syncShopeeReturnRequests(opts?: {
         pageNo += 1;
         }
       } catch (shopErr: any) {
+        if (isSyncControlError(shopErr)) throw shopErr;
         console.warn(
           `[Return Sync Error] Shop: ${shopId}, SN: -, Lỗi: ${shopErr?.message || shopErr}`,
         );
@@ -6960,6 +6994,7 @@ async function syncShopeeReturnRequests(opts?: {
       elapsedMs,
     };
   } catch (err: any) {
+    if (isSyncControlError(err)) throw err;
     console.error("[ReturnRequests Sync] fatal:", err?.stack || err?.message || err);
     return {
       success: false,
@@ -7062,6 +7097,7 @@ async function retryPendingReturnTracking(opts?: {
       let shopAttempted = 0;
       let shopFilled = 0;
       for (const order of candidates) {
+        await yieldSyncIfWebhookWaiting();
         if (attempted >= hardLimit) break;
         if (shopAttempted >= shopCap) break;
         const orderShopId =
@@ -7107,6 +7143,7 @@ async function retryPendingReturnTracking(opts?: {
             }
           }
         } catch (rowErr: any) {
+          if (isSyncControlError(rowErr)) throw rowErr;
           errors += 1;
           console.warn(
             `[Return Sync Error] Shop: ${orderShopId}, SN: ${order?.orderSn || returnSn}, Lỗi: ${rowErr?.message || rowErr}`,
@@ -16689,6 +16726,7 @@ async function runQueuedReturnRequests(opts: any) {
           trigger: opts?.trigger || "cron",
         });
       } catch (retryErr: any) {
+        if (isSyncControlError(retryErr)) throw retryErr;
         console.warn("[ReturnTracking Retry] tick failed:", retryErr?.message || retryErr);
       }
       return {
@@ -18268,7 +18306,7 @@ async function fetchNormalizeShopeeOrderChunk(
   accessToken: string,
   fileKey: string,
   orderSns: string[],
-  opts?: { enrichTracking?: boolean; skipEscrow?: boolean },
+  opts?: { enrichTracking?: boolean; skipEscrow?: boolean; webhookFastPath?: boolean },
 ): Promise<{ normalized: any[]; errors: any[]; failed_orders: string[] }> {
   const normalized: any[] = [];
   const errors: any[] = [];
@@ -18277,6 +18315,7 @@ async function fetchNormalizeShopeeOrderChunk(
   const enrichTracking = opts?.enrichTracking !== false;
   void enrichTracking; // tracking chạy ở persistShopeeOrderChunk — không gọi x2 ở đây
   const skipEscrow = opts?.skipEscrow === true;
+  const webhookFastPath = opts?.webhookFastPath === true;
   const snList = orderSns.map((sn) => String(sn || "").trim()).filter(Boolean);
   if (snList.length === 0) return { normalized, errors, failed_orders };
 
@@ -18418,9 +18457,11 @@ async function fetchNormalizeShopeeOrderChunk(
       let detailResult = await shopeeGetOrderDetail(shopApiId, accessToken, batch);
 
       if (
-        detailResult?.httpStatus === 401 ||
-        detailResult?.httpStatus === 403 ||
-        isShopeeInvalidTokenError(detailResult?.error, detailResult?.message)
+        !webhookFastPath && (
+          detailResult?.httpStatus === 401 ||
+          detailResult?.httpStatus === 403 ||
+          isShopeeInvalidTokenError(detailResult?.error, detailResult?.message)
+        )
       ) {
         console.warn(
           `[Sync Shop ${shopFileKey}] Lỗi: get_order_detail AUTH FAIL — force refresh token + retry 1 lần`,
@@ -18440,7 +18481,7 @@ async function fetchNormalizeShopeeOrderChunk(
         }
       }
 
-      if (isShopeeRateLimited(detailResult?.httpStatus, detailResult)) {
+      if (!webhookFastPath && isShopeeRateLimited(detailResult?.httpStatus, detailResult)) {
         console.warn(
           `[Sync Shop ${shopFileKey}] Lỗi: get_order_detail RATE LIMIT — chờ ${ORDER_DETAIL_BATCH_DELAY_MS * 2}ms rồi retry`,
         );
@@ -18459,7 +18500,9 @@ async function fetchNormalizeShopeeOrderChunk(
         const message =
           detailResult.message || formatShopeeApiError(detailResult, detailResult.httpStatus);
         // Batch not-found / sai shop — probe lẻ, KHÔNG đánh CANCELLED.
-        if (isShopeeOrderNotFoundError(detailResult.error, message) && batch.length === 1) {
+        if (webhookFastPath) {
+          for (const sn of batch) pushFail(sn, String(detailResult.error), message, detailResult.httpStatus);
+        } else if (isShopeeOrderNotFoundError(detailResult.error, message) && batch.length === 1) {
           pushFail(batch[0], String(detailResult.error), message, detailResult.httpStatus);
         } else if (isShopeeOrderNotFoundError(detailResult.error, message) && batch.length > 1) {
           console.error(
@@ -18478,7 +18521,9 @@ async function fetchNormalizeShopeeOrderChunk(
           console.warn(
             `[Sync Shop ${shopFileKey}] Lỗi: get_order_detail trả rỗng lô ${batch.length} — fallback từng đơn`,
           );
-          await fetchBatchIndividually(batch, accessToken);
+          if (webhookFastPath) {
+            for (const sn of batch) pushFail(sn, "order_detail_empty", "response_empty");
+          } else await fetchBatchIndividually(batch, accessToken);
         } else {
           const detailBySn = new Map<string, any>();
           for (const detail of detailList) {
@@ -18503,7 +18548,9 @@ async function fetchNormalizeShopeeOrderChunk(
             console.warn(
               `[Sync Shop ${shopFileKey}] ${missingSns.length} đơn thiếu trong batch → probe lẻ: ${missingSns.slice(0, 5).join(",")}`,
             );
-            await fetchBatchIndividually(missingSns, accessToken);
+            if (webhookFastPath) {
+              for (const sn of missingSns) pushFail(sn, "order_detail_empty", "response_missing_order");
+            } else await fetchBatchIndividually(missingSns, accessToken);
           }
         }
       }
@@ -18513,7 +18560,9 @@ async function fetchNormalizeShopeeOrderChunk(
         err?.message || err,
         "— fallback tuần tự từng đơn",
       );
-      await fetchBatchIndividually(batch, accessToken);
+      if (webhookFastPath) {
+        for (const sn of batch) pushFail(sn, "order_detail_exception", "request_failed");
+      } else await fetchBatchIndividually(batch, accessToken);
     }
 
     if (i + batchSize < snList.length) {
@@ -18533,7 +18582,7 @@ async function fetchNormalizeShopeeOrderChunk(
     }
   }
 
-  if (notFoundSns.size > 0) {
+  if (!webhookFastPath && notFoundSns.size > 0) {
     const sns = [...notFoundSns];
     console.error(
       `[Sync Shop ${shopFileKey}] get_order_detail lỗi ${sns.length} đơn — GIỮ NGUYÊN status DB, KHÔNG đánh CANCELLED.` +
@@ -18684,7 +18733,7 @@ async function persistShopeeOrderChunk(
         .filter(Boolean)
         .filter((sn) => !orders.some((o: any) => String(o?.orderSn || "") === sn));
       if (snNeed.length > 0) {
-        const mongoExisting = await loadOrdersFromStore({ orderSns: snNeed });
+        const mongoExisting = await observeWebhookStage("db_detail_preload", () => loadOrdersFromStore({ orderSns: snNeed }));
         for (const row of mongoExisting || []) {
           if (!row?.orderSn) continue;
           orders.push(row);
@@ -18802,11 +18851,11 @@ async function persistShopeeOrderChunk(
       }
 
       if (normalized.partialCancel) {
-        await restoreLocalStockForPartialCancel(
+        await observeWebhookStage("db_partial_restock", () => restoreLocalStockForPartialCancel(
           normalized.shopId || existing?.shopId,
           existing,
           normalized,
-        );
+        ));
       }
 
       const existingIndex = orders.findIndex(
@@ -18880,7 +18929,7 @@ async function persistShopeeOrderChunk(
   if (touched.length > 0) {
     if (!isMongoReady()) throw new Error("mongodb_not_ready");
     if (cancelRestockJobs.length > 0) {
-      const restock = await restoreLocalStockOnCancelReturnScanBatch(cancelRestockJobs);
+      const restock = await observeWebhookStage("db_cancel_restock", () => restoreLocalStockOnCancelReturnScanBatch(cancelRestockJobs));
       console.log(
         `[Shopee CANCELLED Restock] restored=${restock.restored} qty=${restock.qty}` +
           ` orders=${cancelRestockJobs.map((job) => job.order.orderSn).join(",")}`,
@@ -19255,11 +19304,13 @@ async function pullReadyToShipBackfillFromShopee(opts?: {
     );
 
     for (const shopId of shopIds) {
+      await yieldSyncIfWebhookWaiting();
       const shopDeadlineAt = Date.now() + ORDERS_PULL_PER_SHOP_MS;
       let accessToken: string | null = null;
       try {
         accessToken = await getValidShopeeAccessToken(shopId);
       } catch (tokenErr: any) {
+        if (isSyncControlError(tokenErr)) throw tokenErr;
         console.warn(`[RTS Backfill] token shop=${shopId}:`, tokenErr?.message || tokenErr);
         continue;
       }
@@ -19271,6 +19322,7 @@ async function pullReadyToShipBackfillFromShopee(opts?: {
         Math.floor(SHOPEE_ORDER_LIST_LOOP_SAFETY_CAP / 2),
       );
       for (const status of ["READY_TO_SHIP", "RETRY_SHIP"] as const) {
+        await yieldSyncIfWebhookWaiting();
         try {
           const sns = await collectShopeeOrderSnsByStatus(shopId, accessToken, status, {
             lookbackSec,
@@ -19281,6 +19333,7 @@ async function pullReadyToShipBackfillFromShopee(opts?: {
           });
           for (const sn of sns) snSet.add(sn);
         } catch (listErr: any) {
+          if (isSyncControlError(listErr)) throw listErr;
           console.warn(
             `[RTS Backfill] get_order_list ${status} shop=${shopId}:`,
             listErr?.message || listErr,
@@ -19295,6 +19348,7 @@ async function pullReadyToShipBackfillFromShopee(opts?: {
 
       const working: any[] = [];
       for (let i = 0; i < orderSnList.length; i += SHOPEE_SYNC_CHUNK_SIZE) {
+        await yieldSyncIfWebhookWaiting();
         if (Date.now() >= shopDeadlineAt) break;
         const chunkSns = orderSnList.slice(i, i + SHOPEE_SYNC_CHUNK_SIZE);
         try {
@@ -19308,6 +19362,7 @@ async function pullReadyToShipBackfillFromShopee(opts?: {
             { enrichTracking: false, skipEscrow: true },
           );
           if (!Array.isArray(normalized) || normalized.length === 0) continue;
+          await yieldSyncIfWebhookWaiting();
           const upsert = await persistShopeeOrderChunk(working, normalized, {
             apiShopId: shopId,
             accessToken,
@@ -19317,6 +19372,7 @@ async function pullReadyToShipBackfillFromShopee(opts?: {
           updated += upsert.updated;
           pulled += normalized.length;
         } catch (chunkErr: any) {
+          if (isSyncControlError(chunkErr)) throw chunkErr;
           console.error(
             `[RTS Backfill] persist chunk shop=${shopId} sns=${chunkSns.join(",")}:`,
             chunkErr?.message || chunkErr,
@@ -19345,6 +19401,7 @@ async function pullReadyToShipBackfillFromShopee(opts?: {
     console.log(`[RTS Backfill] ${message}`);
     return { success: true, pulled, added, updated, message };
   } catch (err: any) {
+    if (isSyncControlError(err)) throw err;
     console.error("[RTS Backfill] FATAL:", err?.message || err);
     return {
       success: false,
@@ -22647,7 +22704,9 @@ async function eagerUpsertWebhookStub(body: any): Promise<boolean> {
 }
 
 /** Fallback cũ: normalize payload push thô khi chưa gọi được get_order_detail. */
-async function upsertShopeeWebhookShallow(body: any, orders: any[]): Promise<string | null> {
+async function upsertShopeeWebhookShallow(
+  body: any, orders: any[], opts?: { skipEnrichment?: boolean },
+): Promise<string | null> {
   const normalized = normalizeShopeeOrder(body);
   if (!normalized) return null;
 
@@ -22696,7 +22755,7 @@ async function upsertShopeeWebhookShallow(body: any, orders: any[]): Promise<str
       );
     }
   }
-  if (merged.channel === "shopee" && merged.shopId && needsShopeeTrackingEnrichment(merged)) {
+  if (opts?.skipEnrichment !== true && merged.channel === "shopee" && merged.shopId && needsShopeeTrackingEnrichment(merged)) {
     try {
       const accessToken = await getValidShopeeAccessToken(String(merged.shopId));
       if (accessToken) {
@@ -22720,6 +22779,7 @@ async function upsertShopeeWebhookShallow(body: any, orders: any[]): Promise<str
     }
   }
   if (
+    opts?.skipEnrichment !== true &&
     merged.channel === "shopee" &&
     merged.shopId &&
     merged.orderSn &&
@@ -28701,8 +28761,8 @@ async function startServer() {
       );
 
       scheduleLabelPdfCleanup();
-      // Ping thẳng backend cPanel, không đi vòng qua frontend/Vercel gây tăng độ trễ.
-      scheduleKeepAlivePing({ appBaseUrl: resolveLabelsPublicBaseUrl() });
+      // Ping đúng domain ứng dụng cPanel (APP_BASE_URL = https://quanly.linhkienamthanh.net).
+      scheduleKeepAlivePing({ appBaseUrl: APP_BASE_URL });
 
       // Passenger recycle process liên tục — đóng change stream để không rò cursor trên Atlas.
       for (const sig of ["SIGTERM", "SIGINT"] as const) {

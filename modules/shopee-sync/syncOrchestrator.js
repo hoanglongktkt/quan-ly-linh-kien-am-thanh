@@ -11,6 +11,7 @@ import { safeError } from "../../utils/safeProductionLog.js";
 import crypto from "crypto";
 import mongoose from "mongoose";
 import os from "node:os";
+import { recordStallDiagnostic, STALL_HEARTBEAT_WARN_MS } from "../operations/stallDiagnostics.js";
 
 /** Chỉ phục hồi khi hệ điều hành xác nhận process trên cùng máy đã chết. */
 export function isOwnerProcessDead(lock) {
@@ -25,6 +26,7 @@ const WATERMARK_COLLECTION = "sync_orchestrator_watermarks";
 const DEFAULT_LEASE_MS = 12 * 60 * 1000;
 const DEFAULT_OVERLAP_SEC = 5 * 60;
 const DEFAULT_BOOTSTRAP_LOOKBACK_SEC = 2 * 60 * 60;
+const indexReadiness = new WeakMap();
 
 function numberInRange(value, fallback, min, max) {
   const parsed = Number(value);
@@ -58,11 +60,18 @@ function database() {
 async function ensureIndexes() {
   const db = database();
   if (!db) return false;
-  await Promise.all([
+  // Indexes persist across queue ticks. Avoid two createIndex round trips on
+  // every poll; retry failed setup and initialize again for a new DB handle.
+  if (indexReadiness.has(db)) return indexReadiness.get(db);
+  const ready = Promise.all([
     db.collection(LOCK_COLLECTION).createIndex({ expiresAt: 1 }),
     db.collection(WATERMARK_COLLECTION).createIndex({ updatedAt: -1 }),
-  ]);
-  return true;
+  ]).then(() => true).catch((error) => {
+    indexReadiness.delete(db);
+    throw error;
+  });
+  indexReadiness.set(db, ready);
+  return ready;
 }
 
 /** Acquire one cross-process lease. Never steals an unexpired lease. */
@@ -80,7 +89,16 @@ export async function acquireShopeeSyncLease(trigger = "unknown") {
       Number.isFinite(new Date(previous.expiresAt).getTime()) &&
       new Date(previous.expiresAt).getTime() <= now.getTime();
     const previousProcessDead = previous?.owner && isOwnerProcessDead(previous);
+    const previousHeartbeatAgeMs =
+      previous?.owner && previous?.heartbeatAt
+        ? now.getTime() - new Date(previous.heartbeatAt).getTime()
+        : 0;
     if (previous?.owner && (previousExpired || previousProcessDead)) {
+      void recordStallDiagnostic(
+        previousProcessDead ? "recovered_dead_process_lock" : "recovered_expired_lease",
+        { lock: previous, heartbeatGapMs: Number.isFinite(previousHeartbeatAgeMs) ? previousHeartbeatAgeMs : null },
+        { db, now, force: true, sampleMs: 100 },
+      );
       // Khóa là lease: hết hạn hoặc process cũ đã chết thì thu hồi bằng CAS.
       // CAS theo owner + expiresAt để không nhả nhầm khóa vừa được gia hạn.
       await db.collection(LOCK_COLLECTION).updateOne(
@@ -95,6 +113,13 @@ export async function acquireShopeeSyncLease(trigger = "unknown") {
         previousProcessDead
           ? "[SyncOrchestrator] recovered_dead_process_lock"
           : "[SyncOrchestrator] recovered_expired_lease",
+      );
+    } else if (previous?.owner && Number.isFinite(previousHeartbeatAgeMs) && previousHeartbeatAgeMs >= STALL_HEARTBEAT_WARN_MS) {
+      // Ghi nhận sớm khi một tiến trình khác thấy chủ khóa ngừng gửi heartbeat > 90s (trước khi lease 12 phút hết hạn).
+      void recordStallDiagnostic(
+        "lock_heartbeat_overdue",
+        { lock: previous, heartbeatGapMs: previousHeartbeatAgeMs },
+        { db, now, dedupeKey: `overdue:${previous.owner}`, sampleMs: 250 },
       );
     }
     const result = await db.collection(LOCK_COLLECTION).findOneAndUpdate(
@@ -141,6 +166,7 @@ export async function renewShopeeSyncLease(owner) {
   const result = await db.collection(LOCK_COLLECTION).updateOne(
     { _id: LOCK_ID, owner },
     { $set: { heartbeatAt: now, expiresAt: new Date(now.getTime() + leaseMs()) } },
+    { maxTimeMS: 3000, timeoutMS: 4000 },
   );
   return result.modifiedCount === 1;
 }

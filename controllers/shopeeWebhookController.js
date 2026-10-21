@@ -1,6 +1,7 @@
 import { withOrderWorkLock } from "../services/orderSync/orderWorkLock.js";
 import { safeError } from "../utils/safeProductionLog.js";
 import { webhookEventTime } from "../services/webhookJobQueue.js";
+import { webhookObservation, observeWebhookStage } from "../modules/operations/telemetry.js";
 /**
  * Controllers: Shopee webhook payload processor (real-time).
  * Mount: app.use("/api/shopee", createShopeeWebhookRouter(processShopeeWebhookPayload, "/webhook"))
@@ -98,6 +99,10 @@ export function initShopeeWebhookController(partial) {
 
 /** Load working set cho 1 order_sn: ưu tiên Mongo theo order_sn (KHÔNG full-scan orders.json). */
 async function loadWorkingOrdersForWebhook(orderSn) {
+  return observeWebhookStage("load_order", () => loadWorkingOrdersForWebhookInner(orderSn));
+}
+
+async function loadWorkingOrdersForWebhookInner(orderSn) {
   const sn = String(orderSn || "").trim();
   const orders = [];
   const seen = new Set();
@@ -136,6 +141,10 @@ async function loadWorkingOrdersForWebhook(orderSn) {
 }
 
 async function upsertOrderToDb(order, label = "") {
+  return observeWebhookStage("persist_push", () => upsertOrderToDbInner(order, label));
+}
+
+async function upsertOrderToDbInner(order, label = "") {
   if (!order?.orderSn) {
     console.log("💾 Kết quả lưu DB:", "thất bại — thiếu orderSn");
     throw new Error("webhook_order_sn_missing");
@@ -283,6 +292,10 @@ function inspectShopTokenStatus(shopId) {
  * @returns {{ ok: boolean, token?: string, apiShopId?: string, fileKey?: string, message?: string, refreshed?: boolean }}
  */
 async function resolveWebhookShopAuth(shopId) {
+  return observeWebhookStage("resolve_auth", () => resolveWebhookShopAuthInner(shopId));
+}
+
+async function resolveWebhookShopAuthInner(shopId) {
   // Đa shop: resolve đúng token record theo shop_id payload (linked/oauth alias).
   const resolved = resolveShopeeTokenShopId(shopId);
   const key =
@@ -332,7 +345,7 @@ async function resolveWebhookShopAuth(shopId) {
         `🔑 Token hết hạn shop_id=${key} — gọi Refresh Token trước get_order_detail...`,
       );
       try {
-        const newToken = await refreshShopeeAccessTokenLocked(key, { force: true });
+        const newToken = await observeWebhookStage("refresh_auth", () => refreshShopeeAccessTokenLocked(key, { force: true }));
         if (newToken) {
           refreshed = true;
           auth = await getShopeeAccessTokenForApi(key);
@@ -474,13 +487,13 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
     let normalized = [];
     let errors = [];
     try {
-      const chunk = await deps.fetchNormalizeShopeeOrderChunk(
+      const chunk = await observeWebhookStage("fetch_order_detail", () => deps.fetchNormalizeShopeeOrderChunk(
         apiShopId,
         accessToken,
         fileKey,
         [orderSn],
-        { enrichTracking: false, skipEscrow: true },
-      );
+        { enrichTracking: false, skipEscrow: true, webhookFastPath: true },
+      ));
       normalized = chunk.normalized || [];
       errors = chunk.errors || [];
 
@@ -495,16 +508,16 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
           `🔑 get_order_detail báo token lỗi shop=${fileKey} — force refresh + retry 1 lần`,
         );
         try {
-          const refreshed = await refreshShopeeAccessTokenLocked(fileKey, { force: true });
+          const refreshed = await observeWebhookStage("refresh_auth", () => refreshShopeeAccessTokenLocked(fileKey, { force: true }));
           if (refreshed) {
             accessToken = refreshed;
-            const retry = await deps.fetchNormalizeShopeeOrderChunk(
+            const retry = await observeWebhookStage("fetch_order_detail_retry", () => deps.fetchNormalizeShopeeOrderChunk(
               apiShopId,
               accessToken,
               fileKey,
               [orderSn],
-              { enrichTracking: false, skipEscrow: true },
-            );
+              { enrichTracking: false, skipEscrow: true, webhookFastPath: true },
+            ));
             normalized = retry.normalized || [];
             errors = retry.errors || [];
           }
@@ -556,11 +569,11 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
         if (!row) continue;
         row.shopId = stampShopId;
       }
-      await deps.persistShopeeOrderChunk(orders, normalized, {
+      await observeWebhookStage("persist_detail", () => deps.persistShopeeOrderChunk(orders, normalized, {
         apiShopId: stampShopId,
         accessToken,
         skipTracking: true,
-      });
+      }));
       console.log(
         `[Shopee Webhook] get_order_detail + UPSERT OK order_sn=${orderSn}` +
           ` shop_id=${stampShopId}` +
@@ -611,32 +624,8 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
     }
   }
 
-  // Payload có shop_id nhưng fail → fallback các shop ủy quyền còn lại (1 lần)
-  if (payloadShopId) {
-    const fallbackShops = [];
-    try {
-      for (const id of deps.listShopeeOAuthShopIds() || []) {
-        const s = String(id || "").trim();
-        if (s && s !== payloadShopId && !fallbackShops.includes(s)) fallbackShops.push(s);
-      }
-    } catch {
-      /* ignore */
-    }
-    for (const shopId of fallbackShops) {
-      try {
-        console.warn(
-          `[Shopee Webhook] Fallback shop_id=${shopId} sau khi payload shop=${payloadShopId} thất bại`,
-        );
-        const result = await tryFetchForShop(shopId);
-        if (result?.fetched) return result;
-      } catch (fbErr) {
-        console.error(
-          `[Shopee Webhook] Fallback EXCEPTION shop=${shopId}:`,
-          safeError(fbErr),
-        );
-      }
-    }
-  }
+  // Retry the owning shop; do not probe unrelated shops on API failures.
+
 
   console.log(
     "📥 Kết quả gọi API get_order_detail:",
@@ -724,7 +713,7 @@ async function processShopeeWebhookPayloadInner(body) {
     const fetchedDetail = detailResult.fetched;
     let accessToken = detailResult.accessToken || null;
 
-    if (!accessToken && shopId) {
+    if (!accessToken && shopId && fetchedDetail) {
       try {
         const auth = await resolveWebhookShopAuth(shopId);
         accessToken = auth.ok ? auth.token : null;
@@ -742,7 +731,7 @@ async function processShopeeWebhookPayloadInner(body) {
         `[Shopee Webhook] Fallback shallow normalize order_sn=${orderSn} (detail chưa lấy được)`,
       );
       try {
-        await deps.upsertShopeeWebhookShallow(body, orders);
+        await observeWebhookStage("persist_shallow", () => deps.upsertShopeeWebhookShallow(body, orders, { skipEnrichment: true }));
         console.log("💾 Kết quả lưu DB:", `shallow fallback đã gọi — order_sn=${orderSn}`);
       } catch (shallowErr) {
         console.error(
@@ -761,7 +750,7 @@ async function processShopeeWebhookPayloadInner(body) {
     let idx = orders.findIndex((o) => String(o.orderSn) === orderSn);
     if (idx < 0 && (parsed.trackingNo || parsed.status || orderSn)) {
       try {
-        await deps.upsertShopeeWebhookShallow(body, orders);
+        await observeWebhookStage("persist_shallow", () => deps.upsertShopeeWebhookShallow(body, orders, { skipEnrichment: true }));
       } catch (err) {
         console.error("[WEBHOOK DB ERROR]:", safeError(err));
       }
@@ -799,6 +788,7 @@ async function processShopeeWebhookPayloadInner(body) {
       // Chỉ bù mã cho đúng 1 đơn vừa có webhook; không quét hàng loạt và không chờ cron.
       const rawAfterPush = String(orders[idx].shopee_order_status || "").toUpperCase();
       const shouldFetchTracking =
+        fetchedDetail &&
         !deps.hasUsableShopeeTrackingNumber(orders[idx]) &&
         Boolean(shopId && accessToken) &&
         (parsed.eventKind === "tracking_no_update" ||
@@ -808,10 +798,10 @@ async function processShopeeWebhookPayloadInner(body) {
 
       if (shouldFetchTracking) {
         try {
-          await deps.enrichShopeeOrderTrackingFromApi(shopId, accessToken, orders[idx], {
+          await observeWebhookStage("fetch_tracking", () => deps.enrichShopeeOrderTrackingFromApi(shopId, accessToken, orders[idx], {
             light: true,
             retries: 1,
-          });
+          }));
           console.log(
             `[Shopee Webhook] tracking heal order_sn=${orderSn}` +
               ` tn=${orders[idx].trackingNumber || orders[idx].tracking_no || "—"}`,
@@ -860,13 +850,13 @@ async function processShopeeWebhookPayloadInner(body) {
 
     if (needReturnFallback && shopId && accessToken) {
       try {
-        await deps.applyWebhookReturnFallback(
+        await observeWebhookStage("return_fallback", () => deps.applyWebhookReturnFallback(
           shopId,
           accessToken,
           orderSn,
           orders,
           parsed.returnSn,
-        );
+        ));
         const row = orders.find((o) => String(o.orderSn) === orderSn);
         if (row) await upsertOrderToDb(row, "return/cancel");
       } catch (retErr) {
@@ -894,7 +884,7 @@ async function processShopeeWebhookPayloadInner(body) {
       "💾 Kết quả lưu DB:",
       `exception — ${safeError(processErr)}`,
     );
-    return { ok: false, reason: processErr?.message || "webhook_exception" };
+    return { ok: false, reason: processErr?.message || "webhook_exception", code: processErr?.code || processErr?.name };
   }
 }
 
@@ -929,11 +919,12 @@ export async function processShopeeWebhookPayload(body) {
   try {
     // Chặn payload cũ cả khi caller gọi worker trực tiếp.
     const eventAt = webhookEventTime(body);
-    if (eventAt != null && Date.now() - eventAt > 15 * 60_000) throw new Error("stale_webhook_event");
+    const receivedAt = new Date(webhookObservation.getStore()?.receivedAt || Date.now()).getTime();
+    if (eventAt != null && receivedAt - eventAt > 15 * 60_000) throw new Error("stale_webhook_event");
     const key = extractOrderSnAndShopId(body, deps.parseShopeePushEvent(body));
     const result = await withOrderWorkLock(key.shopId, key.orderSn, () => processShopeeWebhookPayloadInner(body));
     if (result && result.ok === false) {
-      throw new Error(result.reason || "webhook_job_failed");
+      throw Object.assign(new Error(result.reason || "webhook_job_failed"), result.code ? { code: result.code } : {});
     }
   } catch (error) {
     if (error?.message === "order_work_locked") {

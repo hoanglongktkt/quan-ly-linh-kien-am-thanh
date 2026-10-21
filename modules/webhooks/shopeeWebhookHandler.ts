@@ -9,6 +9,7 @@ import express, { type Router } from "express";
 import { verifyShopeeWebhookSignature } from "./shopeeSignature.ts";
 import { ingestShopeeChatPush } from "../../services/shopee/chat.js";
 import { enqueueWebhookJob } from "../jobs/webhookJobQueue.js";
+import { webhookObservation } from "../operations/telemetry.js";
 
 type WebhookProcessor = (payload: Record<string, unknown>) => Promise<void>;
 type QueueOverflowHandler = (payload: Record<string, unknown>) => void | Promise<void>;
@@ -126,7 +127,7 @@ async function processShopeeWebhookAsync(
     let eagerPersistedAt: Date | undefined;
     if (eagerStubOrder) {
       try {
-        const persisted = await eagerStubOrder(payload);
+        const persisted = await webhookObservation.run({ receivedAt: snapshot.receivedAt }, () => eagerStubOrder(payload));
         if (persisted) eagerPersistedAt = new Date();
       } catch (stubErr) {
         // Không chặn enqueue: worker còn có thể lấy detail và lưu lại đầy đủ.

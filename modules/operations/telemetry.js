@@ -3,6 +3,22 @@ import mongoose from "mongoose";
 import { retentionSeconds } from "./mongoIndexes.js";
 
 export const webhookObservation = new AsyncLocalStorage();
+export const syncObservation = new AsyncLocalStorage();
+export const hasShortOrderDeadline = () => Boolean(webhookObservation.getStore() || syncObservation.getStore()?.incremental);
+
+export async function observeWebhookStage(stage, work) {
+  const observation = webhookObservation.getStore() || syncObservation.getStore();
+  if (!observation) return work();
+  observation.stage = stage;
+  observation.stageStartedAt = new Date();
+  const start = Date.now();
+  const kind = webhookObservation.getStore() ? "webhook" : "sync";
+  console.log("[Shopee Job] stage_start", JSON.stringify({ kind, stage }));
+  let outcome = "succeeded";
+  try { return await work(); }
+  catch (error) { outcome = "failed"; throw error; }
+  finally { console.log("[Shopee Job] stage_end", JSON.stringify({ kind, stage, outcome, elapsedMs: Date.now() - start })); }
+}
 
 export function markWebhookOrderPersisted() {
   const observation = webhookObservation.getStore();

@@ -10,7 +10,9 @@ export { normalizeScannedCode } from "../../modules/orders/scanCode.ts";
  */
 import { resolveShopeeOrderIdentities } from "../../services/orderSync/orderIdentity.js";
 import mongoose, { Schema, type Model } from "mongoose";
-import { markWebhookOrderPersisted } from "../../modules/operations/telemetry.js";
+import { markWebhookOrderPersisted, observeWebhookStage, webhookObservation, hasShortOrderDeadline } from "../../modules/operations/telemetry.js";
+import { assertSyncActive } from "../../modules/shopee-sync/syncYield.js";
+import { createSerialWriteQueue } from "../../modules/orders/serialWriteQueue.js";
 import { ORDER_OPERATIONAL_INDEXES, LISTING_OPERATIONAL_INDEXES,
   ensureMongoIndex, retentionSeconds } from "../../modules/operations/mongoIndexes.js";
 import fs from "fs";
@@ -476,7 +478,7 @@ let DonHoanHuyModel: Model<DonHoanHuyDoc>;
 let mongoReady = false;
 let appRootResolved = "";
 /** Serialize writes to avoid concurrent replace races. */
-let writeChain: Promise<void> = Promise.resolve();
+const serialWrites = createSerialWriteQueue();
 
 function ensureModels(): void {
   ProductModel =
@@ -587,13 +589,19 @@ function docsToListings(docs: Array<{ data?: any }>): any[] {
 }
 
 function enqueueWrite(task: () => Promise<void>): Promise<void> {
-  // Một tác vụ ghi treo không được khóa toàn bộ chuỗi ghi của process vô hạn.
-  // Promise gốc có thể kết thúc muộn, nhưng chuỗi được mở để tác vụ sau tiếp tục.
-  const next = writeChain.then(() => withWriteTimeout(task(), "write_chain_task", 60_000));
-  writeChain = next.catch((err) => {
-    console.error("[MongoDB] Write chain error:", err);
+  assertSyncActive();
+  const urgent = Boolean(webhookObservation.getStore());
+  return serialWrites.enqueue(async () => {
+    assertSyncActive();
+    await task();
+  }, {
+    priority: urgent ? 10 : 0,
+    waitTimeoutMs: hasShortOrderDeadline() ? 15000 : 0,
+    executionTimeoutMs: 60000,
+  }).catch((err) => {
+    console.error("[MongoDB] Write queue error:", err?.code || err?.name || "write_failed");
+    throw err;
   });
-  return next;
 }
 
 /** Không để một bulkWrite treo khóa tiến trình ship/print vô hạn trên cPanel. */
@@ -2031,7 +2039,8 @@ export async function reloadCachesFromDb(): Promise<LocalInventoryCache> {
 
 async function setMeta(key: string, value: string): Promise<void> {
   requireMongo();
-  await MetaModel.findByIdAndUpdate(key, { value }, { upsert: true });
+  await MetaModel.findByIdAndUpdate(key, { value }, { upsert: true,
+    ...(hasShortOrderDeadline() ? { timeoutMS: 12000 } : {}) });
 }
 
 /** Cấu hình GHN/SPX do user lưu ở Cài đặt — collection `meta`, _id = logistics_config. */
@@ -3091,11 +3100,13 @@ export async function insertPosOrderToStore(order: any): Promise<void> {
  * - CẤM đưa cờ nội bộ vào `$set`
  */
 export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
+  assertSyncActive();
   requireMongo();
   const list = Array.isArray(orders)
     ? orders.filter((o) => o != null && typeof o === "object")
     : [];
   if (list.length === 0) return 0;
+  const dbOptions = hasShortOrderDeadline() ? { timeoutMS: 12000 } : {};
   // Ánh xạ theo lô giữ nguyên dữ liệu cũ và chặn tạo đơn trùng từ mọi nguồn ghi.
   const identityIds = await resolveShopeeOrderIdentities(list, mongoose.connection.db!, OrderModel);
 
@@ -3108,13 +3119,15 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     forceShopId: boolean;
     trackingIntent: TrackingPayloadIntent;
     webhookStub: boolean;
+    canonicalIdentity: boolean;
   }> = [];
   for (const order of list) {
     const id = String(order.id || "").trim();
     const orderSn = String(order.orderSn || order.order_sn || "").trim();
     if (!id && !orderSn) continue;
     const identityShop = String(order.shopId ?? order.shop_id ?? "").trim();
-    const _id = identityIds.get(identityShop + ":" + orderSn) || id || "shopee-" + orderSn;
+    const canonicalId = identityIds.get(identityShop + ":" + orderSn);
+    const _id = canonicalId || id || "shopee-" + orderSn;
 
     const rawStatus = String(
       order.shopee_order_status || order.order_status || "",
@@ -3748,7 +3761,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     // Filter cũ `buildOrderCompoundFilter(..., shopId)` bỏ qua document gắn nhầm
     // AuDIO↔LKAT → upsert tạo bản mới → E11000 unique orderSn → shopId sai kẹt mãi.
     const snKey = orderSn || String(_id).replace(/^shopee-/i, "");
-    const filter = {
+    const filter = canonicalId ? { _id: canonicalId } : {
       $or: [{ orderSn: snKey }, { _id }, { "data.orderSn": snKey }],
     };
 
@@ -3772,20 +3785,22 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       forceShopId,
       trackingIntent,
       webhookStub: isWebhookStub,
+      canonicalIdentity: Boolean(canonicalId),
     });
   }
   if (pendingWrites.length === 0) return 0;
 
   try {
-    await enqueueWrite(async () => {
+    await observeWebhookStage("db_write_queue_wait", () => enqueueWrite(async () => {
       try {
         // enqueueWrite serializes this process; the conditional filter below is still
         // required so an out-of-order retry/webhook cannot win at MongoDB level.
         const ids = pendingWrites.map((item) => item.id);
         const orderSns = pendingWrites.map((item) => item.orderSn).filter(Boolean);
-        const existing = await OrderModel.find({
+        const existingFilter = pendingWrites.every((item) => item.canonicalIdentity) ? { _id: { $in: ids } } : {
           $or: [{ _id: { $in: ids } }, { orderSn: { $in: orderSns } }, { "data.orderSn": { $in: orderSns } }],
-        })
+        };
+        const existing = await observeWebhookStage("db_order_existing", () => OrderModel.find(existingFilter, null, dbOptions)
           .select({
             _id: 1,
             orderSn: 1,
@@ -3824,7 +3839,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
             "data.order_status": 1,
             "data.items": 1,
           })
-          .lean();
+          .lean());
         const existingByKey = new Map<string, any>();
         for (const row of existing) {
           for (const key of [row._id, row.orderSn, row.data?.orderSn]) {
@@ -4151,10 +4166,11 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
         }
         const ops = accepted.map((item) => item.op);
         if (ops.length === 0) return;
-        const result = await OrderModel.bulkWrite(ops as any, { ordered: false });
+        const result = await observeWebhookStage("db_order_bulk_write", () =>
+          OrderModel.bulkWrite(ops as any, { ordered: false, ...dbOptions }));
         // Đo ngay sau ghi orders thành công, trước metadata/mirror hoặc bước khác.
         if (result.upsertedCount || result.matchedCount) markWebhookOrderPersisted();
-        await setMeta("orders_updated_at", new Date().toISOString());
+        await observeWebhookStage("db_order_metadata", () => setMeta("orders_updated_at", new Date().toISOString()));
         // Không ghi order_events (đã loại bỏ để tránh đầy Atlas Free).
         console.log(
           `[DB UPDATED] bulkWrite orders — upserted=${result.upsertedCount || 0} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0}` +
@@ -4194,7 +4210,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
         }
         throw bulkErr;
       }
-    });
+    }));
   } catch (err: any) {
     console.error(
       "[MongoDB] bulkUpsertOrdersToStore OUTER FAILED — orders dropped from this batch:",
@@ -10508,14 +10524,16 @@ export async function createSyncJob(
 ): Promise<{ id: string; state: SyncJobDoc["state"] }> {
   requireMongo();
   const id = `sync-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  await SyncJobModel.create({
+  await mongoose.connection.db!.collection<SyncJobDoc>("sync_jobs").insertOne({
     _id: id,
     type,
     state: "running",
     started_at: new Date(),
+    finished_at: null,
     metrics: {},
+    error: null,
     requested_by: requestedBy || null,
-  });
+  }, hasShortOrderDeadline() ? { timeoutMS: 12000 } : {});
   return { id, state: "running" };
 }
 
@@ -10537,6 +10555,7 @@ export async function finishSyncJob(
         error: error || null,
       },
     },
+    hasShortOrderDeadline() ? { timeoutMS: error === "sync_yield_for_webhook" ? 2000 : 12000 } : {},
   );
 }
 
@@ -12586,7 +12605,7 @@ export async function getDashboardStatsFromStore(
 }
 
 export async function flushDbWrites(): Promise<void> {
-  await writeChain;
+  await serialWrites.whenIdle();
 }
 
 export async function seedStoreFromArrays(

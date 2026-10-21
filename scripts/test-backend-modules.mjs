@@ -5,6 +5,9 @@ import express from "express";
 import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
 import WebhookJob from "../models/WebhookJob.js";
+import mongoose from "mongoose";
+import { processShopeeWebhookPayload } from "../controllers/shopeeWebhookController.js";
+import { webhookObservation } from "../modules/operations/telemetry.js";
 import * as oldWebhook from "../src/webhooks/shopeeWebhookHandler.ts";
 import * as webhook from "../modules/webhooks/shopeeWebhookHandler.ts";
 import * as oldQueue from "../services/webhookJobQueue.js";
@@ -128,4 +131,26 @@ test("webhook ACK trước Mongo, enqueue, lỗi queue và HMAC giữ hành vi c
   failQueue = true;
   assert.equal((await fetch(url, { method: "POST", body })).status, 200);
   await waitUntil(() => overflow === 1);
+});
+
+test('controller accepts a fresh-at-arrival queued push after 20 minutes, but rejects an old direct push', async () => {
+  const oldDb = mongoose.connection.db;
+  const oldState = mongoose.connection.readyState;
+  mongoose.connection.db = { collection: () => ({
+    findOne: async () => null, insertOne: async () => {}, deleteOne: async () => {},
+  }) };
+  mongoose.connection.readyState = 1;
+  const previous = process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED;
+  process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED = '0';
+  try {
+    const receivedAt = new Date(Date.now() - 20 * 60_000);
+    const payload = { shop_id: '123', data: { ordersn: 'WAITED', update_time: Math.floor(receivedAt.getTime() / 1000) } };
+    await webhookObservation.run({ receivedAt }, () => processShopeeWebhookPayload(payload));
+    await assert.rejects(processShopeeWebhookPayload(payload), /stale_webhook_event/);
+  } finally {
+    mongoose.connection.db = oldDb;
+    mongoose.connection.readyState = oldState;
+    if (previous == null) delete process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED;
+    else process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED = previous;
+  }
 });

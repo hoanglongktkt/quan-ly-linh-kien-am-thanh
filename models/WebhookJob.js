@@ -22,6 +22,10 @@ const WebhookJobSchema = new mongoose.Schema(
     // Shop và mốc thời gian riêng để đọc chỉ số không phải bóc payload.
     shopId: { type: String },
     received_at: { type: Date },
+    started_at: { type: Date },
+    worker_revision: { type: Number },
+    processing_stage: { type: String },
+    stage_started_at: { type: Date },
     order_persisted_at: { type: Date },
     finished_at: { type: Date },
     retry_attempts: { type: Number, default: 0, min: 0 },

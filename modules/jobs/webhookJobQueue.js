@@ -6,13 +6,15 @@
  */
 import WebhookJob from "../../models/WebhookJob.js";
 import crypto from "node:crypto";
-import { webhookObservation } from "../operations/telemetry.js";
+import { webhookObservation, syncObservation } from "../operations/telemetry.js";
+import { recordStallDiagnostic } from "../operations/stallDiagnostics.js";
+import { withYieldableSync } from "../shopee-sync/syncYield.js";
 import { safeError } from "../../utils/safeProductionLog.js";
 import { acquireShopeeSyncLease, releaseShopeeSyncLease, renewShopeeSyncLease } from "../shopee-sync/syncOrchestrator.js";
+import { webhookQueueConfig } from "./webhookQueueConfig.js";
 
-const DRAIN_INTERVAL_MS = 8_000;
-const BATCH_LIMIT = 5;
-const JOB_GAP_MS = 400;
+const { intervalMs: DRAIN_INTERVAL_MS, batchLimit: BATCH_LIMIT, jobGapMs: JOB_GAP_MS } = webhookQueueConfig();
+export const WORKER_REVISION = 5;
 const MAX_RETRY = 5;
 /** Heartbeat cho running; hết hạn không được tự cướp job đang xử lý. */
 const RUNNING_LEASE_MS = 4 * 60 * 1000;
@@ -36,6 +38,19 @@ let draining = false;
 let processor = null;
 let syncProcessor = null;
 let releasePendingOwner = "";
+let wakeTimer = null;
+let wakeRequested = false;
+
+// Coalesce bursts, but do not make a newly persisted order wait for the poll.
+function wakeDrainer(delayMs = 0) {
+  if (draining) { wakeRequested = true; return; }
+  if (!timer || wakeTimer) return;
+  wakeTimer = setTimeout(() => {
+    wakeTimer = null;
+    void drainOnce();
+  }, delayMs);
+  wakeTimer.unref?.();
+}
 
 /** API chỉ trả ACK sau khi job đã lưu thành công vào Mongo. */
 export async function enqueueOrderSyncJob(payload = {}, priority = 0) {
@@ -47,7 +62,7 @@ export async function enqueueOrderSyncJob(payload = {}, priority = 0) {
     throw new Error("sync_job_invalid");
   }
   const jobId = `sync:${crypto.randomUUID()}`;
-  const activeKey = priority === 0 ? crypto.createHash("sha256").update(JSON.stringify({
+  const activeKey = priority < 10 ? crypto.createHash("sha256").update(JSON.stringify({
     mode: payload.mode || "incremental", task: payload.task || "", shopIds: [...(payload.shopIds || [])].sort(),
     lookbackSec: payload.lookbackSec || 0,
   })).digest("hex") : null;
@@ -59,6 +74,7 @@ export async function enqueueOrderSyncJob(payload = {}, priority = 0) {
     if (!activeKey || !isDuplicateKeyError(error)) throw error;
     return { accepted: true, busy: true, duplicate: true, background: true, message: "Job đồng bộ cùng loại đã có trong hàng đợi" };
   }
+  wakeDrainer();
   return { accepted: true, busy: false, jobId, background: true, message: "Đã xếp hàng đồng bộ" };
 }
 
@@ -90,7 +106,7 @@ export function withJobExecutionTimeout(promise, timeoutMs = JOB_EXECUTION_TIMEO
   let timeout = null;
   const deadline = new Promise((_, reject) => {
     timeout = setTimeout(
-      () => reject(new Error(`webhook_job_timeout_${safeTimeoutMs}ms`)),
+      () => reject(Object.assign(new Error(`webhook_job_timeout_${safeTimeoutMs}ms`), { code: "webhook_job_timeout" })),
       safeTimeoutMs,
     );
     timeout.unref?.();
@@ -160,6 +176,7 @@ export async function enqueueWebhookJob(input) {
       next_run_at: new Date(),
     });
     if (stale) console.warn("[WebhookJobQueue] stale_event_dead_letter");
+    if (!stale) wakeDrainer();
     return { ok: true, duplicate: false, jobId };
   } catch (err) {
     if (isDuplicateKeyError(err)) {
@@ -172,8 +189,9 @@ export async function enqueueWebhookJob(input) {
 async function claimNextJob() {
   const now = new Date();
   const leaseUntil = new Date(now.getTime() + RUNNING_LEASE_MS);
-  return WebhookJob.findOneAndUpdate(
+  const claim = (extra = {}) => WebhookJob.findOneAndUpdate(
     {
+      ...extra,
       $or: [
         { state: "pending", next_run_at: { $lte: now } },
         { state: "failed", next_run_at: { $lte: now }, retry_count: { $lt: MAX_RETRY } },
@@ -189,6 +207,10 @@ async function claimNextJob() {
             $cond: [{ $eq: ["$state", "running"] }, { $add: ["$retry_count", 1] }, "$retry_count"],
           },
           state: "running",
+          started_at: now,
+          worker_revision: 5,
+          processing_stage: "starting",
+          stage_started_at: now,
           claim_token: crypto.randomUUID(),
           next_run_at: leaseUntil,
         },
@@ -197,6 +219,10 @@ async function claimNextJob() {
     // Mongoose 9 chặn update dạng mảng (pipeline) nếu thiếu updatePipeline.
     { sort: { priority: -1, next_run_at: 1, _id: 1 }, returnDocument: "after", updatePipeline: true },
   ).lean();
+  // A backlog from before restart must not keep today's new pushes waiting
+  // behind dozens of expensive retries. Claims remain atomic and sequential.
+  const fresh = await claim({ kind: "webhook", received_at: { $gte: new Date(now.getTime() - 120_000) } });
+  return fresh || claim();
 }
 
 let lastStaleSweepAt = 0;
@@ -254,6 +280,7 @@ async function markSucceeded(job, note = "") {
   await WebhookJob.updateOne(
     { _id: job._id, state: "running", claim_token: job.claim_token },
     { $set: { state: "succeeded", error_log: note, next_run_at: new Date(), finished_at: new Date(),
+      ...(job.processing_stage ? { processing_stage: job.processing_stage, stage_started_at: job.stage_started_at } : {}),
       ...(job.order_persisted_at ? { order_persisted_at: job.order_persisted_at } : {}) }, $unset: { active_key: "" } },
   );
 }
@@ -261,7 +288,11 @@ async function markSucceeded(job, note = "") {
 async function markFailed(job, err) {
   const retry = Number(job.retry_count || 0) + 1;
   const message = safeError(err);
-  const nextRun = new Date(Date.now() + backoffMs(retry));
+  // New-order detail may not be available on the first push. Retry promptly,
+  // then back off; keep the slower schedule for expensive bulk sync jobs.
+  const retryDelay = job.kind === "sync" ? backoffMs(retry)
+    : [5_000, 15_000, 30_000, 60_000, 120_000][Math.min(retry - 1, 4)];
+  const nextRun = new Date(Date.now() + retryDelay);
   const result = await WebhookJob.updateOne(
     { _id: job._id, state: "running", claim_token: job.claim_token },
     {
@@ -269,6 +300,7 @@ async function markFailed(job, err) {
         state: retry >= MAX_RETRY ? "dead-letter" : "failed",
         retry_count: retry,
         error_log: message,
+        ...(job.processing_stage ? { processing_stage: job.processing_stage, stage_started_at: job.stage_started_at } : {}),
         next_run_at: nextRun,
         ...(retry >= MAX_RETRY ? { finished_at: new Date() } : {}),
         ...(job.order_persisted_at ? { order_persisted_at: job.order_persisted_at } : {}),
@@ -287,7 +319,8 @@ async function markFailed(job, err) {
   );
 }
 
-async function runClaimedJob(job) {
+async function runClaimedJob(job, lifecycle = { active: true }) {
+  let observation = null;
   if (typeof processor !== "function") {
     throw new Error("webhook_job_processor_missing");
   }
@@ -299,26 +332,66 @@ async function runClaimedJob(job) {
     console.warn("[WebhookJobQueue] stale_job_dead_letter");
     return false;
   }
+  let lastHeartbeatAt = Date.now();
   // Gia hạn theo thời gian thực; claim_token giữ quyền sở hữu qua mỗi heartbeat.
   const heartbeat = setInterval(() => {
+    const nowMs = Date.now();
+    const gapMs = nowMs - lastHeartbeatAt;
+    lastHeartbeatAt = nowMs;
+    if (gapMs >= 75_000) {
+      void recordStallDiagnostic("job_heartbeat_lag", {
+        stage: observation?.stage || job.processing_stage || "starting",
+        heartbeatGapMs: gapMs,
+        runningJobs: [job],
+      });
+    }
     void WebhookJob.updateOne(
       { _id: job._id, state: "running", claim_token: job.claim_token },
-      { $set: { next_run_at: new Date(Date.now() + RUNNING_LEASE_MS) } },
-    ).catch(() => console.warn("[WebhookJobQueue] heartbeat_failed"));
+      { $set: { next_run_at: new Date(nowMs + RUNNING_LEASE_MS),
+        ...(observation?.stage ? { processing_stage: observation.stage, stage_started_at: observation.stageStartedAt } : {}) } },
+    ).then((res) => {
+      // Nếu job đã bị worker khác cách ly sau khi lease hết hạn, dừng ngay công việc cũ.
+      if (res && res.matchedCount === 0) lifecycle.active = false;
+    }).catch(() => console.warn("[WebhookJobQueue] heartbeat_failed"));
   }, 30_000);
   heartbeat.unref?.();
   try {
+    const hasPendingWebhook = async () => Boolean(await WebhookJob.findOne({ kind: "webhook", $or: [
+      { state: "pending", next_run_at: { $lte: new Date() } },
+      { state: "failed", next_run_at: { $lte: new Date() }, retry_count: { $lt: MAX_RETRY } },
+    ] }).select({ _id: 1 }).setOptions({ maxTimeMS: 1500, timeoutMS: 2000 }).lean());
     if (job.kind === "sync") {
       if (typeof syncProcessor !== "function") throw new Error("sync_processor_missing");
-      const result = await syncProcessor(job.payload);
-      if (result?.success === false || result?.skipped) throw new Error("sync_job_incomplete");
-    } else {
-      const observation = { orderPersistedAt: job.order_persisted_at || null };
+      const backgroundSync = !job.payload?.mode || job.payload?.mode === "task";
+      observation = { incremental: backgroundSync, stage: "sync_run", stageStartedAt: new Date() };
+      const work = () => syncObservation.run(observation, () => syncProcessor(job.payload));
+      let result;
       try {
-        await webhookObservation.run(observation, () => processor(job.payload));
+        // Mọi job sync (gồm cả quick/full/task) đều nhận lifecycle để dừng ngay khi hết hạn/mất khóa;
+        // riêng incremental và task định kỳ nhường hàng đợi khi có webhook mới.
+        result = await withYieldableSync({
+          lifecycle,
+          hasWebhook: backgroundSync ? hasPendingWebhook : null,
+        }, work);
+      } finally {
+        job.processing_stage = observation.stage;
+        job.stage_started_at = observation.stageStartedAt;
+      }
+      if (result?.success === false || result?.skipped) throw Object.assign(new Error("sync_job_incomplete"), { code: "sync_job_incomplete" });
+    } else {
+      observation = { orderPersistedAt: job.order_persisted_at || null,
+        receivedAt: job.received_at || job.createdAt };
+      try {
+        await withYieldableSync({ lifecycle, hasWebhook: null }, () =>
+          webhookObservation.run(observation, () => processor(job.payload)),
+        );
       } finally {
         // Giữ mốc lưu đơn dù bước xử lý tiếp theo ném lỗi và cần retry.
         if (observation.orderPersistedAt) job.order_persisted_at = observation.orderPersistedAt;
+        if (observation.stage) {
+          job.processing_stage = observation.stage;
+          job.stage_started_at = observation.stageStartedAt;
+        }
       }
     }
     await markSucceeded(job);
@@ -336,6 +409,7 @@ export async function drainOnce(processPayload) {
   draining = true;
   let leaseOwner = "";
   let leaseHeartbeat = null;
+  let batchFull = false;
   try {
     // Nếu DB lỗi lúc finally, thử nhả lại khóa của tác vụ đã kết thúc.
     if (releasePendingOwner) {
@@ -352,9 +426,23 @@ export async function drainOnce(processPayload) {
       { state: "running" },
       { $set: { state: "dead-letter", error_log: "abandoned_worker_requires_review", finished_at: new Date() }, $unset: { active_key: "" } },
     );
-    if (abandoned.modifiedCount) console.warn(`[WebhookJobQueue] abandoned_dead_letter count=${abandoned.modifiedCount}`);
+    if (abandoned.modifiedCount) {
+      console.warn(`[WebhookJobQueue] abandoned_dead_letter count=${abandoned.modifiedCount}`);
+      void recordStallDiagnostic("abandoned_running_job_isolated", {
+        abandonedCount: abandoned.modifiedCount,
+        errorCode: "abandoned_worker_requires_review",
+      }, { force: true });
+    }
+    let currentLifecycle = null;
+    let leaseLost = false;
     leaseHeartbeat = setInterval(() => {
-      void renewShopeeSyncLease(leaseOwner).catch(() => console.warn("[WebhookJobQueue] global_heartbeat_failed"));
+      void renewShopeeSyncLease(leaseOwner).then((ok) => {
+        if (!ok) {
+          leaseLost = true;
+          if (currentLifecycle) currentLifecycle.active = false;
+          console.warn("[WebhookJobQueue] global_lease_lost_cancelling_active_job");
+        }
+      }).catch(() => console.warn("[WebhookJobQueue] global_heartbeat_failed"));
     }, 30_000);
     leaseHeartbeat.unref?.();
     try {
@@ -363,6 +451,7 @@ export async function drainOnce(processPayload) {
       console.error("[WebhookJobQueue] stale sweep failed:", safeError(sweepErr));
     }
     for (let i = 0; i < BATCH_LIMIT; i += 1) {
+      if (leaseLost) break;
       let job = null;
       try {
         job = await claimNextJob();
@@ -374,24 +463,52 @@ export async function drainOnce(processPayload) {
         break;
       }
       if (!job) break;
+      batchFull = i === BATCH_LIMIT - 1;
+      const started = Date.now();
+      const received = new Date(job.received_at || job.createdAt).getTime();
+      let outcome = "succeeded";
+      const lifecycle = { active: true };
+      currentLifecycle = lifecycle;
       try {
         // Một job treo không được giữ khóa toàn cục và chặn mọi đơn phía sau.
-        const processed = await withJobExecutionTimeout(runClaimedJob(job));
+        const processed = await withJobExecutionTimeout(runClaimedJob(job, lifecycle));
         console.log(
           processed
             ? `[WebhookJobQueue] job succeeded jobId=${job.jobId}`
             : `[WebhookJobQueue] job stale skipped jobId=${job.jobId}`,
         );
       } catch (jobErr) {
+        outcome = "failed";
+        if (jobErr?.code === "webhook_job_timeout") {
+          void recordStallDiagnostic("webhook_job_timeout", {
+            stage: job.processing_stage || "starting",
+            error: jobErr,
+            runningJobs: [job],
+          }, { force: true });
+        }
         try {
-          await markFailed(job, jobErr);
+          if (jobErr?.code === "sync_yield_for_webhook") {
+            outcome = "yielded";
+            await WebhookJob.updateOne({ _id: job._id, state: "running", claim_token: job.claim_token }, {
+              $set: { state: "pending", next_run_at: new Date(Date.now() + 500), error_log: "",
+                processing_stage: "sync_yielded", stage_started_at: new Date() },
+            });
+          } else await markFailed(job, jobErr);
         } catch (writeErr) {
           console.error(
             `[WebhookJobQueue] markFailed crashed jobId=${job.jobId}:`,
             safeError(writeErr),
           );
         }
+      } finally {
+        lifecycle.active = false;
+        currentLifecycle = null;
       }
+      console.log("[WebhookJobQueue] timing", JSON.stringify({
+        kind: job.kind || "webhook", outcome,
+        queueWaitMs: Number.isFinite(received) ? Math.max(0, started - received) : null,
+        processingMs: Date.now() - started,
+      }));
       if (i < BATCH_LIMIT - 1) {
         await delay(JOB_GAP_MS);
       }
@@ -408,6 +525,10 @@ export async function drainOnce(processPayload) {
       }
     }
     draining = false;
+    // Continue a backlog after yielding the event loop and releasing the lease.
+    const shouldWake = batchFull || wakeRequested;
+    wakeRequested = false;
+    if (shouldWake) wakeDrainer(JOB_GAP_MS);
   }
 }
 
@@ -434,6 +555,10 @@ export function startWebhookJobDrainer(processPayload) {
 }
 
 export function stopWebhookJobDrainer() {
+  if (wakeTimer) {
+    clearTimeout(wakeTimer);
+    wakeTimer = null;
+  }
   if (timer) {
     clearInterval(timer);
     timer = null;

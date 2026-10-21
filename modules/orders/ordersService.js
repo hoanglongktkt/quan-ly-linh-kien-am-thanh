@@ -1,4 +1,6 @@
 import { getOrderLookupIndex } from "./lookupService.js";
+import { createCoalescedTask } from "./coalescedTask.js";
+import { webhookObservation } from "../operations/telemetry.js";
 export { normalizeOrderIndexKey, rebuildOrderLookupIndex, getOrderLookupIndex, findOrderRecord, resolveOrdersFromRequest } from "./lookupService.js";
 // Module miền nghiệp vụ; giữ nguyên hành vi và trạng thái dùng chung.
 /**
@@ -110,14 +112,15 @@ export function queueOrdersJsonMirror(orders) {
   });
 }
 
+const mongoMirrorRefresh = createCoalescedTask(async () => {
+  const orders = await loadOrdersFromStore({ limit: 2000, lookbackDays: 90 });
+  queueOrdersJsonMirror(orders);
+}, { minIntervalMs: 30000, initialDelayMs: 1000,
+  onError: (err) => console.warn("[Orders JSON Mirror] Mongo snapshot skipped:", err?.code || err?.name || "read_failed") });
+
 export function queueOrdersJsonMirrorFromMongo() {
-  setImmediate(() => {
-    void loadOrdersFromStore({ limit: 2000, lookbackDays: 90 })
-      .then((orders) => queueOrdersJsonMirror(orders))
-      .catch((err) =>
-        console.warn("[Orders JSON Mirror] Mongo snapshot skipped:", err?.message || err),
-      );
-  });
+  // A legacy background snapshot must not inherit a webhook's urgency/stage.
+  webhookObservation.exit(() => mongoMirrorRefresh.request());
 }
 
 /** Mongo is the SSOT. orders.json is an asynchronous legacy mirror only. */

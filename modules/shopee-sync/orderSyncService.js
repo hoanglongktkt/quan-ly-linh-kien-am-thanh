@@ -11,6 +11,8 @@
 
 import { enqueueOrderSyncJob, setOrderSyncJobProcessor } from "../jobs/webhookJobQueue.js";
 import { enqueueLabelPdfDownload } from "../jobs/labelPdfQueue.js";
+import { isSyncControlError } from "./syncYield.js";
+import { observeWebhookStage } from "../operations/telemetry.js";
 import {
   markSuccessfulShopWatermarks,
   resolveIncrementalLookbackSec,
@@ -141,10 +143,10 @@ async function executeBackgroundOrderSync(opts = {}) {
       lookbackSec = await resolveIncrementalLookbackSec(watermarkShopIds, lookbackSec);
     }
     try {
-      const job = await deps.createSyncJob(
+      const job = await observeWebhookStage("sync_audit_start", () => deps.createSyncJob(
         opts.jobType || "shopee_orders_bg_sync",
         opts.username || trigger,
-      );
+      ));
       jobId = job?.id || "";
     } catch (jobErr) {
       console.warn(`[${logTag}] createSyncJob skip:`, jobErr?.message || jobErr);
@@ -156,6 +158,7 @@ async function executeBackgroundOrderSync(opts = {}) {
       allowShortLookback: opts.allowShortLookback !== false,
       reconcileActive: opts.reconcileActive === true,
       enrichTracking: opts.enrichTracking === true,
+      includeHistoryReconcile: opts.includeHistoryReconcile === true,
     });
     try {
       await markSuccessfulShopWatermarks(result?.perShop);
@@ -223,6 +226,12 @@ async function executeBackgroundOrderSync(opts = {}) {
       jobId,
     };
   } catch (err) {
+    if (isSyncControlError(err)) {
+      if (jobId) {
+        try { await deps.finishSyncJob(jobId, "failed", { yielded: true }, err.code); } catch {}
+      }
+      throw err;
+    }
     console.error(`[${logTag}] FATAL:`, err?.stack || err?.message || err);
     if (jobId) {
       try {
@@ -255,6 +264,21 @@ async function executeBackgroundOrderSync(opts = {}) {
  * Dùng cho API Routes + Cron.
  */
 export async function triggerBackgroundOrderSync(opts = {}) {
+  // Cron for several shops must yield the queue between shops so new pushes
+  // can take priority. API/manual full pulls retain their existing semantics.
+  if (["cron", "interval", "boot"].includes(opts.trigger) && !opts.mode) {
+    const shopIds = [...new Set((opts.shopIds?.length ? opts.shopIds : deps.listShopIds?.() || [])
+      .map(String).filter((id) => /^\d+$/.test(id)))];
+    if (shopIds.length > 1) {
+      const results = [];
+      for (const shopId of shopIds) {
+        results.push(await enqueueOrderSyncJob({ ...opts, shopIds: [shopId] }, 0));
+      }
+      return { accepted: true, busy: results.every((result) => result.busy),
+        background: true, jobIds: results.map((result) => result.jobId).filter(Boolean),
+        message: "Đã xếp hàng đồng bộ theo shop" };
+    }
+  }
   return enqueueOrderSyncJob(opts, opts.trigger === "manual" || opts.trigger === "api" ? 10 : 0);
 }
 
