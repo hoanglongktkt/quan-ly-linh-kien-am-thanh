@@ -3913,17 +3913,8 @@ export default function OrderManager({
               daXuatKhoListRef.current = next;
               return next;
             });
-            setCameraScanResult(
-              waybill
-                ? `✓ Xuất kho · VĐ ${waybill} · #${order.orderSn}`
-                : `✓ Xuất kho #${order.orderSn}`,
-            );
-            showScanToast(
-              waybill
-                ? `Xuất kho #${order.orderSn} — mã VĐ: ${waybill}`
-                : `Đơn chờ lấy hàng (đã xử lý) #${order.orderSn} — đã ghi nhận xuất kho`,
-              'success',
-            );
+            setCameraScanResult('XUẤT KHO');
+            showScanToast('XUẤT KHO', 'success');
             // KHÔNG ghi DB ngay ở đây — giữ quét nhẹ (chỉ push list cục bộ).
             // Ghi Mongo dồn 1 lần lúc bấm "Kết thúc" (handleFinishContinuousScan → scan-bulk-update).
             return;
