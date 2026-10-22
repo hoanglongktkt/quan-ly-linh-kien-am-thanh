@@ -132,6 +132,7 @@ test('server print coordinator serves cached labels while a slow overlapping bat
   const calls = [];
   const context = vm.createContext({
     AbortSignal, Set, Map,
+    WAYBILL_BATCH_DEADLINE_MS: 2000,
     uniquePreserveOrder: (keys) => [...new Set(keys)],
     readCachedOrderWaybillPdf: async (sn) => sn === 'READY' ? Buffer.from('%PDF-cached') : null,
     sharedLabelWork: share,
@@ -155,4 +156,87 @@ test('server print coordinator serves cached labels while a slow overlapping bat
   assert.deepEqual((await first).documents.map((d) => d.orderSns[0]), ['A','B']);
   assert.deepEqual((await second).documents.map((d) => d.orderSns[0]), ['B','A']);
   assert.deepEqual(calls, [['A','B']]);
+});
+
+test('short prefetch reader expires without expiring generation used by print', async () => {
+  const source = ts.createSourceFile('server.ts', fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true);
+  let fn;
+  const visit = (node) => {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === 'fetchBatchPdfDocumentsByShop') fn = node.getText(source);
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  let generationDeadline;
+  const started = deferred(), finish = deferred();
+  const context = vm.createContext({
+    AbortSignal, Set, Map, WAYBILL_BATCH_DEADLINE_MS: 2000,
+    uniquePreserveOrder: (keys) => [...new Set(keys)],
+    readCachedOrderWaybillPdf: async () => null,
+    sharedLabelWork: createKeyedBatchWork(createWorkGate(1)),
+    fetchBatchPdfDocumentsByShopUnshared: async (_orders, keys, deadline) => {
+      generationDeadline = deadline;
+      started.resolve();
+      await finish.promise;
+      assert.ok(Date.now() < deadline, 'generation must outlive the short reader');
+      return {documents: keys.map((sn) => ({orderSns:[sn], buffer:Buffer.from('%PDF')})), failedOrders:[]};
+    },
+    sortBatchPdfResultByRequestedOrder: (_sns, documents, failedOrders) => ({documents, failedOrders}),
+  });
+  vm.runInContext(ts.transpileModule(fn, {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText, context);
+  const shortDeadline = Date.now() + 30;
+  const prefetch = context.fetchBatchPdfDocumentsByShop([], ['A'], shortDeadline, 'prefetch');
+  const expired = assert.rejects(prefetch, {name:'TimeoutError'});
+  await started.promise;
+  const print = context.fetchBatchPdfDocumentsByShop([], ['A'], Date.now()+2000, 'print');
+  await delay(50);
+  await expired;
+  assert.ok(generationDeadline > shortDeadline + 1000);
+  finish.resolve();
+  assert.equal((await print).documents.length, 1);
+});
+
+test('confirm print times out while PDF or error response body is stalled', async () => {
+  const source = ts.createSourceFile('OrderManager.tsx', fs.readFileSync(new URL('../src/components/OrderManager.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let declaration;
+  const visit = (node) => {
+    if (ts.isVariableDeclaration(node) && node.name.getText(source) === 'runBatchPrintOnly') declaration = node.getText(source);
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  assert.ok(declaration);
+  for (const pdf of [true, false]) {
+    const state = {};
+    let timer;
+    const context = vm.createContext({
+      AbortController, console,
+      window: {setTimeout: (fn) => (timer = setTimeout(fn, 20)), clearTimeout},
+      uniquePreserveOrder: (sns) => [...new Set(sns)],
+      confirmFlowGenRef: {current:1},
+      confirmPrintWindowRef: {current:null}, closeReservedPrintWindow() {},
+      CONFIRM_AUTO_PRINT_WAIT_MESSAGE: 'waiting',
+      authHeaders: () => ({}),
+      setConfirmMergeBusy: (value) => {state.busy = value;},
+      setProgressDone: (value) => {state.done = value;},
+      setProgressMessage: (value) => {state.message = value;},
+      setConfirmPrintFileUrl() {}, setProgressCompleted() {}, setProgressTotal() {},
+      fetchMergedPrint: async ({signal}) => {
+        const stalledBody = () => new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), {once:true});
+        });
+        return {ok:pdf, headers:new Headers({'content-type':pdf ? 'application/pdf' : 'application/json'}),
+          arrayBuffer:stalledBody, text:stalledBody};
+      },
+    });
+    vm.runInContext(ts.transpileModule(`const ${declaration}; globalThis.print = runBatchPrintOnly;`,
+      {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText, context);
+    try {
+      const result = await Promise.race([
+        context.print(['A'], {onConfirmModal:true, flowGen:1}),
+        delay(150).then(() => 'stuck'),
+      ]);
+      assert.equal(result, false, `${pdf ? 'PDF' : 'error'} body must not leave the modal stuck`);
+      assert.equal(state.busy, false);
+      assert.equal(state.done, true);
+    } finally {clearTimeout(timer);}
+  }
 });

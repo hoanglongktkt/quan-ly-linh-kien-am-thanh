@@ -1,3 +1,4 @@
+import { fetchMergedPrint } from '../utils/batchPrint';
 import { OrderProductImage } from './OrderProductImage';
 import { getOrderListFinance } from '../utils/orderListFinance';
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
@@ -4448,6 +4449,7 @@ export default function OrderManager({
   const [progressDone, setProgressDone] = useState(false);
   /** Đang gộp PDF sau xác nhận — khóa nút Đóng trên cùng modal. */
   const [confirmMergeBusy, setConfirmMergeBusy] = useState(false);
+  const confirmPrintWindowRef = useRef<Window | null>(null);
   /** Blob URL file in đã gộp — nút «Mở lại file PDF». */
   const [confirmPrintFileUrl, setConfirmPrintFileUrl] = useState<string | null>(null);
   const isConfirmModalOpen = Boolean(progressMessage);
@@ -6396,6 +6398,8 @@ export default function OrderManager({
       }
     }
 
+    closeReservedPrintWindow(confirmPrintWindowRef.current);
+    confirmPrintWindowRef.current = openReservedPrintPlaceholder();
     setShipConfirmOrders(null);
     setIsShipping(true);
     const queuedKeys = new Set<string>();
@@ -6499,9 +6503,11 @@ export default function OrderManager({
         setProgressTotal(confirmTotal);
         setProgressDone(false);
         beginConfirmAutoPrint(successfulSns);
-        void startSilentPdfPrefetch(successfulSns);
+        // The batch-print request already prepares missing labels. A second
+        // prefetch races it with a shorter deadline and duplicates DB reads.
         refreshOrdersStayOnCurrentTab();
       } else {
+        closeReservedPrintWindow(confirmPrintWindowRef.current);
         confirmAutoPrintPendingRef.current = false;
         setIsPdfReady(true);
         confirmProgressActiveRef.current = true;
@@ -6513,6 +6519,7 @@ export default function OrderManager({
         );
       }
     } catch (err) {
+      closeReservedPrintWindow(confirmPrintWindowRef.current);
       const rolled = ordersRef.current.map((o) => {
         const id = String(o.id || '').trim();
         const sn = String(o.orderSn || '').replace(/^shopee-/i, '').trim();
@@ -6809,11 +6816,15 @@ export default function OrderManager({
     opts?: { logTag?: string; groupPicking?: boolean; onConfirmModal?: boolean; flowGen?: number },
   ): Promise<boolean> => {
     const onConfirmModal = opts?.onConfirmModal === true;
+    const reservedWindow = onConfirmModal
+      ? confirmPrintWindowRef.current
+      : openReservedPrintPlaceholder();
     const flowGen = opts?.flowGen;
     const confirmUiStale = () =>
       onConfirmModal && flowGen != null && flowGen !== confirmFlowGenRef.current;
     const showConfirmPrintError = (message: string) => {
       if (confirmUiStale()) return;
+      closeReservedPrintWindow(reservedWindow);
       setConfirmMergeBusy(false);
       setProgressDone(true);
       setConfirmPrintFileUrl(null);
@@ -6866,17 +6877,20 @@ export default function OrderManager({
       const timeoutId = window.setTimeout(() => controller.abort(), 150000);
 
       try {
-        const response = await fetch('/api/orders/batch-print', {
-          method: 'POST',
+        const response = await fetchMergedPrint({
           headers: {
             ...authHeaders(),
             Accept: 'application/pdf',
           },
           body: JSON.stringify({ ordersn: orderSns, orderSns, groupPicking }),
           signal: controller.signal,
+          onProgress: (message) => {
+            if (confirmUiStale()) return;
+            if (onConfirmModal) setProgressMessage(message);
+            else setBatchPrintModal((prev) => prev ? { ...prev, message } : prev);
+          },
         });
 
-        window.clearTimeout(timeoutId);
         const contentType = String(response.headers.get('content-type') || '').toLowerCase();
 
         if (!response.ok || !contentType.includes('application/pdf')) {
@@ -6918,8 +6932,7 @@ export default function OrderManager({
           return false;
         }
         batchPrintFileUrlRef.current = fileURL;
-        const printTab = window.open(fileURL, '_blank');
-        if (!printTab) printMergedPdfViaHiddenIframe(fileURL);
+
 
         const successCount = Number(response.headers.get('X-Print-Success-Count') || 0);
         const totalCount = Number(response.headers.get('X-Print-Total') || orderSns.length);
@@ -6975,6 +6988,13 @@ export default function OrderManager({
           });
         }
 
+        window.setTimeout(() => {
+          if (confirmUiStale()) return;
+          if (navigateReservedPrintWindow(reservedWindow, fileURL)) return;
+          const printTab = window.open(fileURL, '_blank');
+          if (!printTab) printMergedPdfViaHiddenIframe(fileURL);
+        }, 100);
+
         onAddLog({
           id: `log-${Date.now()}`,
           timestamp: new Date().toISOString(),
@@ -6985,8 +7005,8 @@ export default function OrderManager({
         });
         return true;
       } catch (fetchErr: any) {
-        window.clearTimeout(timeoutId);
-        const timeout = fetchErr?.name === 'AbortError';
+        closeReservedPrintWindow(reservedWindow);
+        const timeout = fetchErr?.name === 'AbortError' || fetchErr?.name === 'TimeoutError';
         const failMessage = timeout
           ? 'Shopee chưa tạo xong PDF sau thời gian chờ. Vui lòng thử lại sau ít phút.'
           : (fetchErr instanceof Error ? fetchErr.message : 'Không thể kết nối API in gộp. Vui lòng thử lại.');
@@ -7004,8 +7024,12 @@ export default function OrderManager({
         });
         clearShipProgressOverlay();
         return false;
+      } finally {
+        // fetch resolves at headers; keep the deadline through PDF/error body reads.
+        window.clearTimeout(timeoutId);
       }
     } catch (err) {
+      closeReservedPrintWindow(reservedWindow);
       console.error('[BatchPrint] Error:', err);
       if (onConfirmModal) {
         showConfirmPrintError('Gộp file thất bại: Không thể kết nối API in gộp. Vui lòng thử lại.');
