@@ -5,6 +5,58 @@ import { decodeJwtPayload } from './jwtClient';
 
 export type ScannerMode = 'handover' | 'return';
 
+export const SCANNED_ORDER_MESSAGE = 'DON DA QU�T';
+
+function scanReceiptKey(): string | null {
+  try {
+    const username = decodeJwtPayload(localStorage.getItem('admin_token') || '')?.username;
+    return username ? `scanner_committed_v1:${username}` : null;
+  } catch { return null; }
+}
+
+function readScanReceipts(): Record<string, number> {
+  try {
+    const key = scanReceiptKey();
+    const saved = key ? JSON.parse(localStorage.getItem(key) || '{}') : {};
+    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return {};
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const receipts: Record<string, number> = {};
+    for (const [code, at] of Object.entries(saved)) {
+      if (typeof at === 'number' && at > cutoff && at <= Date.now()) receipts[code] = at;
+    }
+    return receipts;
+  } catch { return {}; }
+}
+
+/** Remember only rows explicitly confirmed by a successful database response. */
+export function rememberCommittedScans(results: unknown): void {
+  if (!Array.isArray(results)) return;
+  try {
+    const key = scanReceiptKey();
+    if (!key) return;
+    const saved = readScanReceipts();
+    for (const row of results) {
+      if (!row || !['handed_over', 'return_received', 'cancelled', 'duplicate'].includes(row.action)) continue;
+      for (const value of [row.code, row.orderSn]) {
+        const code = normalizeOrderScanKey(String(value || ''));
+        if (code) saved[code] = Date.now();
+      }
+    }
+    localStorage.setItem(key, JSON.stringify(Object.fromEntries(
+      Object.entries(saved).sort((a, b) => b[1] - a[1]).slice(0, 5000))));
+  } catch { /* Receipt storage must not interrupt the scan workflow. */ }
+}
+
+export function missingScannerOrderMessage(raw: string, pool?: Map<string, ScannerSyncEntry>): string {
+  const receipts = readScanReceipts();
+  const known = pool ? lookupScannerSyncMap(pool, raw) : null;
+  return known?.isReturnReceived === true ||
+    known?.status === 'handed_over' || known?.status === 'return_received' ||
+    buildScanLookupKeys(raw).some((key) => Boolean(receipts[key]))
+    ? SCANNED_ORDER_MESSAGE
+    : 'Kh�ng t�m th?y don trong h? th?ng';
+}
+
 /** Normalize for comparison: uppercase, strip common separators. */
 export function normalizeOrderScanKey(raw: string): string {
   return String(raw || '')

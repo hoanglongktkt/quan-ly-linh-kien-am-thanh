@@ -74,3 +74,17 @@ await assert.rejects(scan.lookupCurrentScannerOrder('SPX123456789'), /offline/, 
 console.log('PASS: deduplication, independent cancellation, persistence, account isolation, stale/expired data, corrupt storage, API failures, invalidation');
 console.log('PASS: current handover/return state across sessions, no stale fallback on missing orders or network errors');
 
+assert.equal(scan.missingScannerOrderMessage('SPX-123456789'), 'Kh�ng t�m th?y don trong h? th?ng');
+assert.equal(scan.missingScannerOrderMessage('SPX123456789', scan.buildScannerSyncMap([
+  { ...rows[0], isReturnReceived: true },
+])), 'DON DA QU�T');
+assert.notEqual(scan.missingScannerOrderMessage('SPX123456789', scan.buildScannerSyncMap(rows)), 'DON DA QU�T');
+scan.rememberCommittedScans([{ code: 'SPX123456789', orderSn: 'ORDER123', action: 'rejected' }]);
+assert.notEqual(scan.missingScannerOrderMessage('SPX123456789'), 'DON DA QU�T');
+scan.rememberCommittedScans([{ code: 'SPX123456789', orderSn: 'ORDER123', action: 'handed_over' }]);
+assert.equal(scan.missingScannerOrderMessage('SPX-123456789'), 'DON DA QU�T');
+assert.equal(scan.missingScannerOrderMessage('ORDER123'), 'DON DA QU�T');
+localStorage.setItem('admin_token', token('another-account'));
+assert.notEqual(scan.missingScannerOrderMessage('SPX123456789'), 'DON DA QU�T');
+console.log('PASS: exact duplicate message, confirmed DB receipts, code aliases, unknown/rejected scans, account isolation');
+

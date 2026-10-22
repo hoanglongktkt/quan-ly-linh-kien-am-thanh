@@ -21,6 +21,9 @@ import {
   normalizeOrderScanKey,
   buildScanLookupKeys,
   lookupCurrentScannerOrder,
+  SCANNED_ORDER_MESSAGE,
+  missingScannerOrderMessage,
+  rememberCommittedScans,
   putOrderIntoScannerSyncMap,
   fetchScannerSyncPool,
   prefetchBothScannerPools,
@@ -64,7 +67,6 @@ import {
   matchesReceivedCancelReturnTab,
   isWarehouseReturnReceived,
   isReturnScanLocked,
-  RETURN_SCAN_DUPLICATE_ERROR,
 } from '../utils/orderLocalStatus';
 import {
   enqueueScanBgCodes,
@@ -3182,7 +3184,7 @@ export default function OrderManager({
         let order: Order | null = null;
 
         if (!order) {
-          setCameraScanResult(`Đang tra cứu mã: ${trimmed}...`);
+          setCameraScanResult(`Dang tra c?u ma: ${trimmed}...`);
           const token = localStorage.getItem('admin_token') || '';
           try {
             order = await lookupCurrentScannerOrder(trimmed, token);
@@ -3203,8 +3205,8 @@ export default function OrderManager({
             scanFeedback('error');
             setCameraScanSuccess(false);
             setCameraScanError(true);
-            setCameraScanResult('Lỗi kết nối máy chủ khi tìm mã hoàn');
-            showScanToast('Lỗi kết nối máy chủ khi tìm mã hoàn', 'error');
+            setCameraScanResult('L?i k?t n?i m�y ch? khi t�m ma ho�n');
+            showScanToast('L?i k?t n?i m�y ch? khi t�m ma ho�n', 'error');
             setTimeout(() => setCameraScanError(false), 2000);
             return;
           }
@@ -3227,21 +3229,15 @@ export default function OrderManager({
           scanFeedback('error');
           setCameraScanSuccess(false);
           setCameraScanError(true);
-          setCameraScanResult(`Không tìm thấy đơn: ${trimmed}`);
-          showScanToast(
-            isLikelyTrackingCode(trimmed)
-              ? `Không tìm thấy đơn hàng với mã vận đơn "${trimmed}"`
-              : `Không tìm thấy đơn hàng này trong hệ thống (${trimmed})`,
-            'error'
-          );
+          const message = missingScannerOrderMessage(trimmed, scannerSyncMapRef.current);
+          setCameraScanResult(message);
+          showScanToast(message, 'warning');
           setTimeout(() => setCameraScanError(false), 2000);
           return;
         }
 
         if (isReturnScanLocked(order) || isOrderHandedOverToCarrier(order)) {
-          const reason = isReturnScanLocked(order)
-            ? RETURN_SCAN_DUPLICATE_ERROR
-            : 'ĐƠN ĐÃ QUÉT GIAO ĐVVC RỒI';
+          const reason = SCANNED_ORDER_MESSAGE;
           scanFeedback('warning');
           setCameraScanSuccess(false);
           setCameraScanError(false);
@@ -3252,7 +3248,7 @@ export default function OrderManager({
 
         if (isEligibleForHandOverToCarrier(order)) {
           const waybill = getOrderWaybillCode(order);
-          // Optimistic + API nền — không await, mở khóa quét ngay.
+          // Optimistic + API n?n - kh�ng await, m? kh�a qu�t ngay.
           void handOverOrderToCarrier(order, {
             fromScan: true,
             switchTab: false,
@@ -3262,8 +3258,8 @@ export default function OrderManager({
           setCameraScanSuccess(true);
           setCameraScanResult(
             waybill
-              ? `✓ Giao ĐVVC · VĐ ${waybill} · #${order.orderSn}`
-              : `✓ Giao ĐVVC #${order.orderSn}`,
+              ? `� Giao DVVC � VD ${waybill} � #${order.orderSn}`
+              : `� Giao DVVC #${order.orderSn}`,
           );
           setTimeout(() => setCameraScanSuccess(false), 1500);
           return;
@@ -3273,9 +3269,9 @@ export default function OrderManager({
           scanFeedback('error');
           setCameraScanSuccess(false);
           setCameraScanError(true);
-          setCameraScanResult(`Đơn #${order.orderSn} còn Chưa xử lý — không giao ĐVVC`);
+          setCameraScanResult(`Don #${order.orderSn} c�n Chua x? ly - kh�ng giao DVVC`);
           showScanToast(
-            `Đơn #${order.orderSn} phải ở Chờ lấy hàng (đã xử lý) mới quét ĐVVC`,
+            `Don #${order.orderSn} ph?i ? Ch? l?y h�ng (da x? ly) m?i qu�t DVVC`,
             'error',
           );
           setTimeout(() => setCameraScanError(false), 2000);
@@ -3300,16 +3296,16 @@ export default function OrderManager({
             channel: order.channel,
             type: 'stock_sync',
             status: 'success',
-            message: `[QUÉT QR] Nhận hoàn đơn ${order.orderSn} → Yêu cầu trả hàng.`,
+            message: `[QU�T QR] Nh?n ho�n don ${order.orderSn}  Y�u c?u tr? h�ng.`,
           });
           scanFeedback(isCancelRequest ? 'warning' : 'success');
           setCameraScanError(false);
           setCameraScanSuccess(true);
-          setCameraScanResult(`✓ YCTH #${order.orderSn}`);
+          setCameraScanResult(`� YCTH #${order.orderSn}`);
           showScanToast(
             isCancelRequest
-              ? `Đơn báo hủy #${order.orderSn} — đã chuyển nhận kiện`
-              : `Đã nhận hoàn / Yêu cầu trả hàng #${order.orderSn}`,
+              ? `Don b�o h?y #${order.orderSn} - da chuy?n nh?n ki?n`
+              : `Da nh?n ho�n / Y�u c?u tr? h�ng #${order.orderSn}`,
             'success'
           );
           setTimeout(() => setCameraScanSuccess(false), 2000);
@@ -3323,10 +3319,10 @@ export default function OrderManager({
           const waybillShip = getOrderWaybillCode(order);
           setCameraScanResult(
             waybillShip
-              ? `Đang giao · VĐ ${waybillShip} · #${order.orderSn}`
-              : `Đơn #${order.orderSn} đang giao`,
+              ? `Dang giao � VD ${waybillShip} � #${order.orderSn}`
+              : `Don #${order.orderSn} dang giao`,
           );
-          showScanToast(`Đơn #${order.orderSn} đang giao — không cần xuất kho lại`, 'error');
+          showScanToast(`Don #${order.orderSn} dang giao - kh�ng c?n xu?t kho l?i`, 'error');
           setTimeout(() => setCameraScanError(false), 2000);
           return;
         }
@@ -3335,29 +3331,29 @@ export default function OrderManager({
           scanFeedback('error');
           setCameraScanSuccess(false);
           setCameraScanError(true);
-          setCameraScanResult(`Đơn #${order.orderSn} đã nhận hoàn trước đó`);
-          showScanToast(`Đơn #${order.orderSn} đã nhận hoàn`, 'error');
+          setCameraScanResult(`Don #${order.orderSn} da nh?n ho�n tru?c d�`);
+          showScanToast(`Don #${order.orderSn} da nh?n ho�n`, 'error');
           setTimeout(() => setCameraScanError(false), 2000);
           return;
         }
 
         const statusLabels: Record<Order['status'], string> = {
-          pending_verification: 'Chờ xác nhận',
-          pending_confirm: 'Chờ xác nhận',
-          unprocessed: 'Đơn chưa xử lý',
-          processed: 'Chờ lấy hàng (Đã xử lý)',
-          shipping: 'Đang giao',
-          completed: 'Thành công',
-          cancelled: 'Yêu cầu huỷ đơn',
-          return_pending: 'Hủy giao chờ nhận',
-          return_received: 'Hủy giao đã nhận',
+          pending_verification: 'Ch? x�c nh?n',
+          pending_confirm: 'Ch? x�c nh?n',
+          unprocessed: 'Don chua x? ly',
+          processed: 'Ch? l?y h�ng (Da x? ly)',
+          shipping: 'Dang giao',
+          completed: 'Th�nh c�ng',
+          cancelled: 'Y�u c?u hu? don',
+          return_pending: 'H?y giao ch? nh?n',
+          return_received: 'H?y giao da nh?n',
         };
         const statusLabel = statusLabels[order.status] || order.status;
         scanFeedback('error');
         setCameraScanSuccess(false);
         setCameraScanError(true);
-        setCameraScanResult(`Trạng thái không hợp lệ: ${statusLabel}`);
-        showScanToast(`Đơn #${order.orderSn} — ${statusLabel}. Không thể xử lý tự động.`, 'error');
+        setCameraScanResult(`Tr?ng th�i kh�ng h?p l?: ${statusLabel}`);
+        showScanToast(`Don #${order.orderSn} - ${statusLabel}. Kh�ng th? x? ly t? d?ng.`, 'error');
         setTimeout(() => setCameraScanError(false), 2000);
       } finally {
         isScanBusyRef.current = false;
@@ -3398,7 +3394,7 @@ export default function OrderManager({
     );
   };
 
-  /** Ghi đơn hủy/hoàn qua scan-bulk-update (resolve orderSn + items, không tạo đơn giả). */
+  /** Ghi don h?y/ho�n qua scan-bulk-update (resolve orderSn + items, kh�ng t?o don gi?). */
   const persistCancelReturnScanFlag = React.useCallback(
     async (
       order: Order,
@@ -3440,7 +3436,7 @@ export default function OrderManager({
         if (!res.ok || data?.success === false) {
           console.warn('[Scan] persist cancel/return flag failed:', data?.message || res.status);
           showScanToast(
-            String(data?.message || `HTTP ${res.status} — không lưu được đơn hủy/hoàn`),
+            String(data?.message || `HTTP ${res.status} - kh�ng luu du?c don h?y/ho�n`),
             'error',
           );
           return;
@@ -3465,7 +3461,7 @@ export default function OrderManager({
       } catch (err) {
         console.warn('[Scan] persist cancel/return flag error:', err);
         showScanToast(
-          err instanceof Error ? err.message : 'Không kết nối được API lưu đơn.',
+          err instanceof Error ? err.message : 'Kh�ng k?t n?i du?c API luu don.',
           'error',
         );
       }
@@ -3479,7 +3475,7 @@ export default function OrderManager({
       const token = localStorage.getItem('admin_token');
       const key = String(order.id || order.orderSn || '').trim();
       if (!token || !key) {
-        showToast('Chưa đăng nhập — không thể xác nhận nhận hàng hoàn.');
+        showToast('Chua dang nh?p - kh�ng th? x�c nh?n nh?n h�ng ho�n.');
         return;
       }
       setConfirmingReturnId(key);
@@ -3523,18 +3519,18 @@ export default function OrderManager({
         );
         ordersRef.current = patched;
         onUpdateOrders(patched, { persist: false });
-        showToast(`Đã xác nhận nhận hàng hoàn #${order.orderSn}`);
+        showToast(`Da x�c nh?n nh?n h�ng ho�n #${order.orderSn}`);
         onAddLog({
           id: `log-${Date.now()}`,
           timestamp: nowIso,
           channel: order.channel,
           type: 'stock_sync',
           status: 'success',
-          message: `Xác nhận thủ công đã nhận hàng hoàn #${order.orderSn} (RETURN_RECEIVED).`,
+          message: `X�c nh?n th? c�ng da nh?n h�ng ho�n #${order.orderSn} (RETURN_RECEIVED).`,
         });
       } catch (err) {
         showToast(
-          err instanceof Error ? err.message : 'Không xác nhận được hàng hoàn.',
+          err instanceof Error ? err.message : 'Kh�ng x�c nh?n du?c h�ng ho�n.',
         );
       } finally {
         setConfirmingReturnId(null);
@@ -3543,7 +3539,7 @@ export default function OrderManager({
     [onAddLog, onUpdateOrders],
   );
 
-  /** Đẩy mã miss lên Backend queue — worker dò Shopee + ghi cờ độc lập FE. */
+  /** D?y ma miss l�n Backend queue - worker d� Shopee + ghi c? d?c l?p FE. */
   const enqueueBackgroundLookup = React.useCallback(
     (rawCode: string) => {
       const trimmed = String(rawCode || '').trim();
@@ -3560,7 +3556,7 @@ export default function OrderManager({
         const result = await enqueueScanBgCodes([trimmed]);
         if (!result.ok) {
           showScanToast(
-            result.message || 'Không xếp được hàng đợi dò ngầm',
+            result.message || 'Kh�ng x?p du?c h�ng d?i d� ng?m',
             'error',
           );
           return;
@@ -3568,8 +3564,8 @@ export default function OrderManager({
         if (!isTearingDownScannerRef.current) {
           showScanToast(
             result.queued > 0
-              ? `Đã xếp dò ngầm Backend (${result.pending} mã đang chờ)`
-              : `Mã đã có trong hàng đợi dò ngầm (${result.pending} đang chờ)`,
+              ? `Da x?p d� ng?m Backend (${result.pending} ma dang ch?)`
+              : `Ma da c� trong h�ng d?i d� ng?m (${result.pending} dang ch?)`,
             'success',
           );
         }
@@ -3578,7 +3574,7 @@ export default function OrderManager({
     [scanBgPendingKeys],
   );
 
-  /** Poll trạng thái worker Backend — badge + toast + refresh tab hủy/hoàn. */
+  /** Poll tr?ng th�i worker Backend - badge + toast + refresh tab h?y/ho�n. */
   useEffect(() => {
     let cancelled = false;
     let timer: number | null = null;
@@ -3594,7 +3590,7 @@ export default function OrderManager({
     const poll = async () => {
       if (cancelled || inFlight) return;
       if (document.visibilityState === 'hidden') {
-        // Dừng hẳn khi tab ẩn — resume có kiểm soát lúc visible lại (onVisible dưới).
+        // D?ng h?n khi tab ?n - resume c� ki?m so�t l�c visible l?i (onVisible du?i).
         pausedForHidden = true;
         return;
       }
@@ -3675,7 +3671,7 @@ export default function OrderManager({
       if (!key) return;
 
       const now = Date.now();
-      // Debounce 400ms cùng mã — tránh double-beep khi giữ camera, vẫn cho quét liên tục mã khác.
+      // Debounce 400ms c�ng ma - tr�nh double-beep khi gi? camera, v?n cho qu�t li�n t?c ma kh�c.
       if (key === lastQrScanRef.current.key && now - lastQrScanRef.current.at < 400) {
         return;
       }
@@ -3685,12 +3681,12 @@ export default function OrderManager({
         playScanSound('warning');
         vibrateScan('warning');
         flashViewfinder('error', 500);
-        setCameraScanResult(`Mã đã quét trong phiên này: ${trimmed}`);
-        showScanToast('Mã này đã có trong danh sách phiên quét', 'error');
+        setCameraScanResult(SCANNED_ORDER_MESSAGE);
+        showScanToast(SCANNED_ORDER_MESSAGE, 'warning');
         return;
       }
 
-      // Đang verify mã khác → xếp hàng, không bỏ mã khi quét liên tục.
+      // Dang verify ma kh�c  x?p h�ng, kh�ng b? ma khi qu�t li�n t?c.
       if (isScanBusyRef.current) {
         const q = pendingScanQueueRef.current;
         if (!q.some((c) => normalizeOrderScanKey(c) === key) && q.length < 20) {
@@ -3710,7 +3706,7 @@ export default function OrderManager({
 
       try {
         if (!localOrder) {
-          setCameraScanResult(`Đang tra cứu mã: ${trimmed}...`);
+          setCameraScanResult(`Dang tra c?u ma: ${trimmed}...`);
           const token = localStorage.getItem('admin_token') || '';
           try {
             const remote = await lookupCurrentScannerOrder(trimmed, token);
@@ -3748,27 +3744,23 @@ export default function OrderManager({
             playScanSound('error');
             vibrateScan('error');
             flashViewfinder('error', 400);
-            setCameraScanResult('Lỗi kết nối máy chủ khi tìm mã');
-            showScanToast('Lỗi kết nối máy chủ khi tìm mã', 'error');
+            setCameraScanResult('L?i k?t n?i m�y ch? khi t�m ma');
+            showScanToast('L?i k?t n?i m�y ch? khi t�m ma', 'error');
             return;
           }
         }
 
         if (!localOrder) {
-          playScanSound('error');
-          vibrateScan('error');
+          const message = missingScannerOrderMessage(trimmed, scannerSyncMapRef.current);
+          playScanSound('warning');
+          vibrateScan('warning');
           flashViewfinder('error', 400);
-          setCameraScanResult(`Không tìm thấy mã: ${trimmed}`);
-          showScanToast(
-            isLikelyTrackingCode(trimmed)
-              ? `Không có trong danh sách đã tải: "${trimmed}"`
-              : `Mã không khớp pool quét đã tải (${trimmed})`,
-            'error',
-          );
+          setCameraScanResult(message);
+          showScanToast(message, 'warning');
           return;
         }
 
-        setCameraScanResult(`Đang phân loại: ${trimmed}...`);
+        setCameraScanResult(`Dang ph�n lo?i: ${trimmed}...`);
         const order = localOrder;
 
         const badge = resolveOrderBadgeStatus(order);
@@ -3809,7 +3801,8 @@ export default function OrderManager({
           playScanSound('warning');
           vibrateScan('warning');
           flashViewfinder('error', 500);
-          showScanToast(`Đơn #${order.orderSn} đã quét trong phiên này`, 'error');
+          setCameraScanResult(SCANNED_ORDER_MESSAGE);
+          showScanToast(SCANNED_ORDER_MESSAGE, 'warning');
           return;
         }
 
@@ -3826,8 +3819,8 @@ export default function OrderManager({
           playScanSound('error');
           vibrateScan('warning');
           flashViewfinder('error', 500);
-          setCameraScanResult(RETURN_SCAN_DUPLICATE_ERROR);
-          showScanToast(RETURN_SCAN_DUPLICATE_ERROR, 'error');
+          setCameraScanResult(SCANNED_ORDER_MESSAGE);
+          showScanToast(SCANNED_ORDER_MESSAGE, 'error');
           return;
         }
 
@@ -3836,8 +3829,8 @@ export default function OrderManager({
             playScanSound('error');
             vibrateScan('error');
             flashViewfinder('error', 500);
-            setCameraScanResult(`Đơn hoàn #${order.orderSn} — chuyển sang chế độ Quét hàng hoàn`);
-            showScanToast('Đơn hoàn/trả — dùng chế độ Quét hàng hoàn', 'error');
+            setCameraScanResult(`Don ho�n #${order.orderSn} - chuy?n sang ch? d? Qu�t h�ng ho�n`);
+            showScanToast('Don ho�n/tr? - d�ng ch? d? Qu�t h�ng ho�n', 'error');
             return;
           }
 
@@ -3854,22 +3847,22 @@ export default function OrderManager({
             setCameraScanResult(
               waybill
                 ? isFailedDelivery
-                  ? `⚠ GIAO THẤT BẠI · VĐ ${waybill} · #${order.orderSn}`
-                  : `⚠ ĐƠN HỦY · VĐ ${waybill} · #${order.orderSn}`
+                  ? `? GIAO TH?T B?I � VD ${waybill} � #${order.orderSn}`
+                  : `? DON H?Y � VD ${waybill} � #${order.orderSn}`
                 : isFailedDelivery
-                  ? `⚠ GIAO THẤT BẠI #${order.orderSn}`
-                  : `⚠ ĐƠN HỦY #${order.orderSn} — loại kiện này ra!`,
+                  ? `? GIAO TH?T B?I #${order.orderSn}`
+                  : `? DON H?Y #${order.orderSn} - lo?i ki?n n�y ra!`,
             );
             showScanToast(
               isFailedDelivery
-                ? `Giao không thành công #${order.orderSn} — không bàn giao shipper`
-                : `CẢNH BÁO: Đơn hủy #${order.orderSn} — hãy loại kiện hàng này`,
+                ? `Giao kh�ng th�nh c�ng #${order.orderSn} - kh�ng b�n giao shipper`
+                : `C?NH BAO: Don h?y #${order.orderSn} - hay lo?i ki?n h�ng n�y`,
               'error',
             );
             return;
           }
 
-          // Quét trùng đơn đã bàn giao ĐVVC — dừng xuất kho, cảnh báo vàng + âm riêng.
+          // Qu�t tr�ng don da b�n giao DVVC - d?ng xu?t kho, c?nh b�o v�ng + �m ri�ng.
           if (
             isOrderHandedOverToCarrier(order) ||
             order.is_handed_over === true ||
@@ -3878,22 +3871,22 @@ export default function OrderManager({
           ) {
             playDuplicateHandedOverSound();
             vibrateScan('duplicate');
-            // Không flash error (đỏ) — giữ banner vàng mặc định.
+            // Kh�ng flash error (d?) - gi? banner v�ng m?c d?nh.
             setCameraScanSuccess(false);
             setCameraScanError(false);
-            setCameraScanResult('ĐƠN ĐÃ QUÉT GIAO ĐVVC RỒI');
-            showScanToast('ĐƠN ĐÃ QUÉT GIAO ĐVVC RỒI', 'warning');
+            setCameraScanResult(SCANNED_ORDER_MESSAGE);
+            showScanToast(SCANNED_ORDER_MESSAGE, 'warning');
             return;
           }
 
           if (isOrderAlreadyScanProcessed(order)) {
             const reason = isShippingOnly
-              ? `Đơn #${order.orderSn} đang giao / đã bàn giao ĐVVC`
+              ? `Don #${order.orderSn} dang giao / da b�n giao DVVC`
               : getScanProcessedReason(order);
             playScanSound('warning');
             vibrateScan('warning');
             flashViewfinder('error', 500);
-            setCameraScanResult(`⚠ ${reason}`);
+            setCameraScanResult(`? ${reason}`);
             showScanToast(reason, 'error');
             return;
           }
@@ -3904,10 +3897,10 @@ export default function OrderManager({
             flashViewfinder('error', 500);
             setCameraScanResult(
               waybill
-                ? `Đang giao · VĐ ${waybill} · #${order.orderSn}`
-                : `Đơn #${order.orderSn} đang giao`,
+                ? `Dang giao � VD ${waybill} � #${order.orderSn}`
+                : `Don #${order.orderSn} dang giao`,
             );
-            showScanToast(`Đơn #${order.orderSn} đang giao — không cần xuất kho lại`, 'error');
+            showScanToast(`Don #${order.orderSn} dang giao - kh�ng c?n xu?t kho l?i`, 'error');
             return;
           }
 
@@ -3922,17 +3915,17 @@ export default function OrderManager({
             });
             setCameraScanResult(
               waybill
-                ? `✓ Xuất kho · VĐ ${waybill} · #${order.orderSn}`
-                : `✓ Xuất kho #${order.orderSn}`,
+                ? `� Xu?t kho � VD ${waybill} � #${order.orderSn}`
+                : `� Xu?t kho #${order.orderSn}`,
             );
             showScanToast(
               waybill
-                ? `Xuất kho #${order.orderSn} — mã VĐ: ${waybill}`
-                : `Đơn chờ lấy hàng (đã xử lý) #${order.orderSn} — đã ghi nhận xuất kho`,
+                ? `Xu?t kho #${order.orderSn} - ma VD: ${waybill}`
+                : `Don ch? l?y h�ng (da x? ly) #${order.orderSn} - da ghi nh?n xu?t kho`,
               'success',
             );
-            // KHÔNG ghi DB ngay ở đây — giữ quét nhẹ (chỉ push list cục bộ).
-            // Ghi Mongo dồn 1 lần lúc bấm "Kết thúc" (handleFinishContinuousScan → scan-bulk-update).
+            // KHONG ghi DB ngay ? d�y - gi? qu�t nh? (ch? push list c?c b?).
+            // Ghi Mongo d?n 1 l?n l�c b?m "K?t th�c" (handleFinishContinuousScan  scan-bulk-update).
             return;
           }
 
@@ -3940,8 +3933,8 @@ export default function OrderManager({
             playScanSound('error');
             vibrateScan('error');
             flashViewfinder('error', 500);
-            setCameraScanResult(`Đơn #${order.orderSn} còn Chưa xử lý — không xuất kho ĐVVC`);
-            showScanToast('Chỉ quét đơn Chờ lấy hàng (đã xử lý) hoặc đơn hủy', 'error');
+            setCameraScanResult(`Don #${order.orderSn} c�n Chua x? ly - kh�ng xu?t kho DVVC`);
+            showScanToast('Ch? qu�t don Ch? l?y h�ng (da x? ly) ho?c don h?y', 'error');
             return;
           }
 
@@ -3951,10 +3944,10 @@ export default function OrderManager({
           flashViewfinder('error', 500);
           setCameraScanResult(
             reason
-              ? `Đơn #${order.orderSn} — ${reason}`
-              : `Đơn #${order.orderSn} — trạng thái không xử lý được`,
+              ? `Don #${order.orderSn} - ${reason}`
+              : `Don #${order.orderSn} - tr?ng th�i kh�ng x? ly du?c`,
           );
-          showScanToast(reason || `Đơn #${order.orderSn} không thuộc pool bàn giao`, 'error');
+          showScanToast(reason || `Don #${order.orderSn} kh�ng thu?c pool b�n giao`, 'error');
           return;
         }
 
@@ -3969,9 +3962,9 @@ export default function OrderManager({
             vibrateScan('error');
             flashViewfinder('error', 500);
             setCameraScanResult(
-              `Đơn chờ bàn giao #${order.orderSn} — chuyển sang chế độ Bàn giao đơn`,
+              `Don ch? b�n giao #${order.orderSn} - chuy?n sang ch? d? B�n giao don`,
             );
-            showScanToast('Đơn chờ xuất kho — dùng chế độ Bàn giao đơn', 'error');
+            showScanToast('Don ch? xu?t kho - d�ng ch? d? B�n giao don', 'error');
             return;
           }
 
@@ -3986,13 +3979,13 @@ export default function OrderManager({
             });
             setCameraScanResult(
               waybill
-                ? `✓ YCTH · VĐ hoàn ${waybill} · #${order.orderSn}`
-                : `✓ Yêu cầu trả hàng #${order.orderSn}`,
+                ? `� YCTH � VD ho�n ${waybill} � #${order.orderSn}`
+                : `� Y�u c?u tr? h�ng #${order.orderSn}`,
             );
             showScanToast(
               waybill
-                ? `Yêu cầu trả hàng #${order.orderSn} — mã VĐ hoàn: ${waybill}`
-                : `Đơn hoàn #${order.orderSn} — đã ghi nhận nhận kiện`,
+                ? `Y�u c?u tr? h�ng #${order.orderSn} - ma VD ho�n: ${waybill}`
+                : `Don ho�n #${order.orderSn} - da ghi nh?n nh?n ki?n`,
               'success',
             );
             return;
@@ -4012,16 +4005,16 @@ export default function OrderManager({
               setCameraScanResult(
                 waybill
                   ? isFailedDelivery
-                    ? `✓ Giao thất bại · VĐ ${waybill} · #${order.orderSn}`
-                    : `✓ Nhận kiện hủy · VĐ ${waybill} · #${order.orderSn}`
+                    ? `� Giao th?t b?i � VD ${waybill} � #${order.orderSn}`
+                    : `� Nh?n ki?n h?y � VD ${waybill} � #${order.orderSn}`
                   : isFailedDelivery
-                    ? `✓ Giao thất bại #${order.orderSn}`
-                    : `✓ Nhận kiện hủy #${order.orderSn}`,
+                    ? `� Giao th?t b?i #${order.orderSn}`
+                    : `� Nh?n ki?n h?y #${order.orderSn}`,
               );
               showScanToast(
                 isFailedDelivery
-                  ? `Giao không thành công #${order.orderSn} — đã ghi nhận nhận kiện`
-                  : `Đơn hủy #${order.orderSn} — đã ghi nhận nhận kiện`,
+                  ? `Giao kh�ng th�nh c�ng #${order.orderSn} - da ghi nh?n nh?n ki?n`
+                  : `Don h?y #${order.orderSn} - da ghi nh?n nh?n ki?n`,
                 'success',
               );
               return;
@@ -4031,16 +4024,16 @@ export default function OrderManager({
           playScanSound('error');
           vibrateScan('error');
           flashViewfinder('error', 500);
-          setCameraScanResult(`Mã #${order.orderSn} không thuộc pool nhận hàng hoàn (30 ngày)`);
-          showScanToast(`Mã không thuộc pool Quét hàng hoàn: #${order.orderSn}`, 'error');
+          setCameraScanResult(`Ma #${order.orderSn} kh�ng thu?c pool nh?n h�ng ho�n (30 ng�y)`);
+          showScanToast(`Ma kh�ng thu?c pool Qu�t h�ng ho�n: #${order.orderSn}`, 'error');
           return;
         }
 
         playScanSound('error');
         vibrateScan('error');
         flashViewfinder('error', 500);
-        setCameraScanResult('Chưa chọn chế độ quét');
-        showScanToast('Chưa chọn chế độ quét', 'error');
+        setCameraScanResult('Chua ch?n ch? d? qu�t');
+        showScanToast('Chua ch?n ch? d? qu�t', 'error');
       } finally {
         isScanBusyRef.current = false;
         setIsVerifyingScan(false);
@@ -4071,7 +4064,7 @@ export default function OrderManager({
     };
   }, [verifySingleOrder]);
 
-  // Súng USB: bắt phím ở document — không focus input (tránh bàn phím ảo mobile).
+  // S�ng USB: b?t ph�m ? document - kh�ng focus input (tr�nh b�n ph�m ?o mobile).
   useEffect(() => {
     if (!focusScanner || !scannerMode || !scannerSyncReady) return;
     try {
@@ -4116,7 +4109,7 @@ export default function OrderManager({
     let isMounted = true;
 
     if (focusScanner && scannerMode && scannerSyncReady) {
-      // Tránh restart camera khi đang graceful teardown / đang ghi DB.
+      // Tr�nh restart camera khi dang graceful teardown / dang ghi DB.
       if (isTearingDownScannerRef.current) {
         return () => {
           isMounted = false;
@@ -4130,17 +4123,17 @@ export default function OrderManager({
       pendingScanQueueRef.current = [];
       isScanBusyRef.current = false;
       setCameraScanResult((prev) =>
-        prev.includes('Xuất kho') ||
-        prev.includes('ĐƠN HỦY') ||
-        prev.includes('Nhận hoàn') ||
-        prev.includes('sẵn sàng quét tiếp') ||
-        prev.includes('Đã lưu') ||
-        prev.includes('Lưu thất bại') ||
-        prev.includes('tải')
+        prev.includes('Xu?t kho') ||
+        prev.includes('DON H?Y') ||
+        prev.includes('Nh?n ho�n') ||
+        prev.includes('s?n s�ng qu�t ti?p') ||
+        prev.includes('Da luu') ||
+        prev.includes('Luu th?t b?i') ||
+        prev.includes('t?i')
           ? prev
           : scannerMode === 'handover'
-            ? 'Bàn giao đơn — quét QR/mã vạch vận đơn'
-            : 'Quét hàng hoàn — quét mã kiện trả về',
+            ? 'B�n giao don - qu�t QR/ma v?ch v?n don'
+            : 'Qu�t h�ng ho�n - qu�t ma ki?n tr? v?',
       );
 
       const timer = setTimeout(() => {
@@ -4149,13 +4142,13 @@ export default function OrderManager({
         const element = document.getElementById('camera-reader');
         if (!element) {
           console.error('camera-reader element not found');
-          setCameraError('Không tìm thấy vùng hiển thị camera.');
+          setCameraError('Kh�ng t�m th?y v�ng hi?n th? camera.');
           return;
         }
 
         const qrCodeSuccessCallback = (decodedText: string) => {
           if (!decodedText?.trim() || isTearingDownScannerRef.current) return;
-          // Realtime: verify ngay — không xếp hàng đợi batch.
+          // Realtime: verify ngay - kh�ng x?p h�ng d?i batch.
           verifyScanRef.current(decodedText);
         };
 
@@ -4170,7 +4163,7 @@ export default function OrderManager({
             setScannerCameraLabel(info.cameraLabel || '');
             if (info.zoom.supported) {
               const cur = info.zoom.current;
-              // Mặc định UX = 2x: chỉ đổi highlight khi track thật sự lệch khỏi 2x.
+              // M?c d?nh UX = 2x: ch? d?i highlight khi track th?t s? l?ch kh?i 2x.
               if (cur >= 2.5) setScannerZoomPreset(3);
               else if (cur >= 1.5) setScannerZoomPreset(2);
               else setScannerZoomPreset(2);
@@ -4189,11 +4182,11 @@ export default function OrderManager({
           .catch((err: unknown) => {
             console.error('Camera scanner start failed:', err);
             const msg =
-              err instanceof Error ? err.message : 'Không thể khởi động camera.';
+              err instanceof Error ? err.message : 'Kh�ng th? kh?i d?ng camera.';
             setCameraError(
               msg === HTTPS_CAMERA_MESSAGE
                 ? msg
-                : `Không thể khởi động Camera${msg ? `: ${msg}` : ''}. Bấm "Thử lại".`,
+                : `Kh�ng th? kh?i d?ng Camera${msg ? `: ${msg}` : ''}. B?m "Th? l?i".`,
             );
           });
       }, 200);
@@ -4201,7 +4194,7 @@ export default function OrderManager({
       return () => {
         isMounted = false;
         clearTimeout(timer);
-        // Nếu finish handler đã/đang teardown — không stop lần 2 (tránh race removeChild).
+        // N?u finish handler da/dang teardown - kh�ng stop l?n 2 (tr�nh race removeChild).
         if (isTearingDownScannerRef.current) return;
         stopTapToFocusAssist(CAMERA_TAP_LAYER_ID);
         const handle = liveScannerRef.current;
@@ -4233,7 +4226,7 @@ export default function OrderManager({
     return () => { window.clearTimeout(timer); controller.abort(); };
   }, [focusScanner]);
 
-  /** Làm mới thủ công cả 2 pool quét (bỏ qua cache) — dùng khi prefetch nền quá lâu/lỗi. */
+  /** L�m m?i th? c�ng c? 2 pool qu�t (b? qua cache) - d�ng khi prefetch n?n qu� l�u/l?i. */
   const manualRefreshScannerPools = React.useCallback(() => {
     scannerPrefetchAbortRef.current?.abort();
     const controller = new AbortController();
@@ -4258,7 +4251,7 @@ export default function OrderManager({
     })();
   }, [applyPoolEntryToActive]);
 
-  // Gắn cache / fetch 1 mode khi đã chọn; SWR nếu gần hết hạn.
+  // G?n cache / fetch 1 mode khi da ch?n; SWR n?u g?n h?t h?n.
   useEffect(() => {
     if (!focusScanner || !scannerMode) return;
     let cancelled = false;
@@ -4329,8 +4322,8 @@ export default function OrderManager({
         setScannerSyncReady(false);
         if (scannerSyncMapRef.current.size === 0) {
           setScannerSyncCodeCount(0);
-          showScanToast('Không tải được danh sách mã quét — thử lại', 'error');
-          setCameraScanResult('Lỗi tải dữ liệu — bấm Quay lại và chọn lại chế độ');
+          showScanToast('Kh�ng t?i du?c danh s�ch ma qu�t - th? l?i', 'error');
+          setCameraScanResult('L?i t?i d? li?u - b?m Quay l?i v� ch?n l?i ch? d?');
         }
       }
     })();
@@ -4338,7 +4331,7 @@ export default function OrderManager({
     return () => {
       cancelled = true;
       controller.abort();
-      // Đóng scanner / đổi deps → hủy scanner-sync còn treo.
+      // D�ng scanner / d?i deps  h?y scanner-sync c�n treo.
       if (scannerPrefetchAbortRef.current === controller) {
         scannerPrefetchAbortRef.current = null;
       }
@@ -8063,7 +8056,7 @@ export default function OrderManager({
 
   /** Kết thúc: ghi DB ngay (timeout 90s) — tắt camera song song, không chờ 3s trước API. */
   const handleFinishContinuousScan = async () => {
-    // Chống double-click / gọi trùng khi đang ghi DB.
+    // Ch?ng double-click / g?i tr�ng khi dang ghi DB.
     if (isFlushingQueue) return;
     setShowEndConfirm(false);
 
@@ -8095,7 +8088,7 @@ export default function OrderManager({
       }
     };
 
-    /** Camera stop tối đa 3s — không được treo loading vì ZXing/DOM. */
+    /** Camera stop t?i da 3s - kh�ng du?c treo loading v� ZXing/DOM. */
     const stopCameraWithTimeout = async () => {
       await Promise.race([
         stopCameraHard(),
@@ -8105,7 +8098,7 @@ export default function OrderManager({
       ]);
     };
 
-    // Không có mã đã verify → thoát phiên (đóng UI quét, vẫn ở tab Đơn hàng).
+    // Kh�ng c� ma da verify  tho�t phi�n (d�ng UI qu�t, v?n ? tab Don h�ng).
     if (codes.length === 0) {
       await stopCameraWithTimeout();
       isTearingDownScannerRef.current = false;
@@ -8121,15 +8114,15 @@ export default function OrderManager({
 
     setFlushingDbCount(codes.length);
     setIsFlushingQueue(true);
-    setCameraScanResult(`Đang ghi DB ${codes.length} đơn đã phân loại...`);
+    setCameraScanResult(`Dang ghi DB ${codes.length} don da ph�n lo?i...`);
 
     try {
-      // Tắt camera song song — không block gọi API ghi DB.
+      // T?t camera song song - kh�ng block g?i API ghi DB.
       void stopCameraWithTimeout();
 
       const token = localStorage.getItem('admin_token');
       if (!token) {
-        throw new Error('Chưa đăng nhập — không thể cập nhật đơn đã quét.');
+        throw new Error('Chua dang nh?p - kh�ng th? c?p nh?t don da qu�t.');
       }
 
       const pickCodes = (items: ScanVerifiedItem[]) =>
@@ -8158,7 +8151,7 @@ export default function OrderManager({
       try {
         const allCodes = [...new Set([...huyCodes, ...hoanCodes, ...xuatCodes])];
         if (allCodes.length === 0) {
-          throw new Error('Không có mã đơn để lưu.');
+          throw new Error('Kh�ng c� ma don d? luu.');
         }
         const res = await fetch('/api/orders/scan-bulk-update', {
           method: 'POST',
@@ -8181,11 +8174,11 @@ export default function OrderManager({
             String(
               bulkData?.error ||
                 bulkData?.message ||
-                `HTTP ${res.status} — lưu đơn đã quét thất bại`,
+                `HTTP ${res.status} - luu don da qu�t th?t b?i`,
             ),
           );
         }
-        // Dùng nguyên response server — KHÔNG ghi đè processedCount / summary bằng số mã FE.
+        // D�ng nguy�n response server - KHONG ghi d� processedCount / summary b?ng s? ma FE.
         dhhFromSave = (bulkData?.donHoanHuy || null) as typeof dhhFromSave;
         data = bulkData;
       } catch (fetchErr: unknown) {
@@ -8197,10 +8190,10 @@ export default function OrderManager({
           );
         throw new Error(
           aborted
-            ? `Hết thời gian chờ ${Math.round(SCAN_SAVE_TIMEOUT_MS / 1000)} giây — server chưa phản hồi. Kiểm tra MongoDB / mạng rồi thử lại.`
+            ? `H?t th?i gian ch? ${Math.round(SCAN_SAVE_TIMEOUT_MS / 1000)} gi�y - server chua ph?n h?i. Ki?m tra MongoDB / m?ng r?i th? l?i.`
             : fetchErr instanceof Error
               ? fetchErr.message
-              : 'Không kết nối được API lưu đơn.',
+              : 'Kh�ng k?t n?i du?c API luu don.',
         );
       }
 
@@ -8228,12 +8221,12 @@ export default function OrderManager({
           String(
             failedScans[0]?.reason ||
               data?.message ||
-              'Không có đơn nào được lưu thành công!',
+              'Kh�ng c� don n�o du?c luu th�nh c�ng!',
           ),
         );
       }
 
-      // Hủy/hoàn bắt buộc phải có bản ghi don_hoan_huy (ok hoặc already).
+      // H?y/ho�n b?t bu?c ph?i c� b?n ghi don_hoan_huy (ok ho?c already).
       const needDonHoanHuy = cancelled.length + returned.length > 0;
       if (needDonHoanHuy) {
         const dhh = (data?.donHoanHuy || dhhFromSave || null) as {
@@ -8245,7 +8238,7 @@ export default function OrderManager({
         } | null;
         if (!dhh) {
           throw new Error(
-            'Backend chưa ghi collection don_hoan_huy — dữ liệu hủy/hoàn không được lưu. Kiểm tra server Mongo.',
+            'Backend chua ghi collection don_hoan_huy - d? li?u h?y/ho�n kh�ng du?c luu. Ki?m tra server Mongo.',
           );
         }
         const ensured = Number(
@@ -8256,11 +8249,13 @@ export default function OrderManager({
             String(
               dhh.errors?.[0] ||
                 data?.message ||
-                'Không ghi được đơn hủy/hoàn vào don_hoan_huy. Thử lại.',
+                'Kh�ng ghi du?c don h?y/ho�n v�o don_hoan_huy. Th? l?i.',
             ),
           );
         }
       }
+
+      rememberCommittedScans(data.results);
 
       const updatedOrders = Array.isArray(data?.orders) ? (data.orders as Order[]) : [];
       if (updatedOrders.length > 0) {
@@ -8302,21 +8297,21 @@ export default function OrderManager({
         channel: 'shopee',
         type: 'stock_sync',
         status: 'success',
-        message: `[QUÉT QR COMMIT] xuất kho ${safeXuat}, đơn hủy ${safeHuy}, nhận hoàn ${safeHoan}.`,
+        message: `[QU�T QR COMMIT] xu?t kho ${safeXuat}, don h?y ${safeHuy}, nh?n ho�n ${safeHoan}.`,
       });
 
-      // Toast trên màn quét + global — đọc ~1.5s rồi mới đóng UI.
-      const successMsg = `Đã lưu thành công — Xuất kho ${safeXuat} / Hủy ${safeHuy} / Nhận hoàn ${safeHoan}${
-        failedScans.length ? ` · Bỏ qua ${failedScans.length}` : ''
+      // Toast tr�n m�n qu�t + global - d?c ~1.5s r?i m?i d�ng UI.
+      const successMsg = `Da luu th�nh c�ng - Xu?t kho ${safeXuat} / H?y ${safeHuy} / Nh?n ho�n ${safeHoan}${
+        failedScans.length ? ` � B? qua ${failedScans.length}` : ''
       }`;
       showScanToast(successMsg, 'success');
       showToast(successMsg, 5500);
       setCameraScanResult(
-        `✓ Đã lưu DB: Xuất kho ${safeXuat} · Hủy ${safeHuy} · Nhận hoàn ${safeHoan}`,
+        `� Da luu DB: Xu?t kho ${safeXuat} � H?y ${safeHuy} � Nh?n ho�n ${safeHoan}`,
       );
       if (failedScans.length > 0) {
         const dup = failedScans.find((f) =>
-          String(f.reason || '').includes('ĐÃ ĐƯỢC QUÉT XÁC NHẬN'),
+          String(f.reason || '').includes('DA DU?C QU�T XAC NH?N'),
         );
         window.setTimeout(() => {
           if (dup?.reason) {
@@ -8326,36 +8321,36 @@ export default function OrderManager({
           showToast(
             dup?.reason
               ? String(dup.reason)
-              : `Bỏ qua ${failedScans.length} mã (trùng/không hợp lệ)`,
+              : `B? qua ${failedScans.length} ma (tr�ng/kh�ng h?p l?)`,
             4500,
           );
         }, 1600);
       }
 
-      // Pool đã cũ sau ghi DB — invalidate mode vừa quét để lần sau prefetch fresh.
+      // Pool da cu sau ghi DB - invalidate mode v?a qu�t d? l?n sau prefetch fresh.
       const finishedMode = scannerModeRef.current;
       if (finishedMode) invalidateScannerPoolMode(finishedMode);
 
       shouldCloseScanner = true;
     } catch (err: unknown) {
-      // Giữ 3 list đã verify — cho phép bấm lại GHI DB.
+      // Gi? 3 list da verify - cho ph�p b?m l?i GHI DB.
       const msg = err instanceof Error ? err.message : String(err);
       const failMsg =
-        msg?.trim() || 'Lưu thất bại — không rõ nguyên nhân. Xem log server.';
-      if (failMsg.includes('ĐÃ ĐƯỢC QUÉT XÁC NHẬN')) {
+        msg?.trim() || 'Luu th?t b?i - kh�ng ro nguy�n nh�n. Xem log server.';
+      if (failMsg.includes('DA DU?C QU�T XAC NH?N')) {
         playScanSound('error');
         vibrateScan('error');
       }
       showToast(failMsg, 7000);
       showScanToast(failMsg, 'error');
-      setCameraScanResult(`${failMsg} — còn ${codes.length} mã. Bấm Kết thúc để thử lại`);
+      setCameraScanResult(`${failMsg} - c�n ${codes.length} ma. B?m K?t th�c d? th? l?i`);
       shouldResumeCamera = true;
     } finally {
       window.clearTimeout(timeoutId);
       setIsFlushingQueue(false);
       setFlushingDbCount(0);
       if (shouldCloseScanner) {
-        // Giữ teardown lock — tránh camera useEffect tự bật lại trước khi unmount.
+        // Gi? teardown lock - tr�nh camera useEffect t? b?t l?i tru?c khi unmount.
         isTearingDownScannerRef.current = true;
         window.setTimeout(() => {
           isTearingDownScannerRef.current = false;
@@ -8885,7 +8880,7 @@ export default function OrderManager({
                 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                 : cameraScanError
                   ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                  : cameraScanResult.includes('ĐÃ QUÉT GIAO ĐVVC')
+                  : cameraScanResult === SCANNED_ORDER_MESSAGE
                     ? 'bg-amber-500/20 text-yellow-500 border border-amber-500/40'
                   : cameraScanResult.includes('sẵn sàng') || cameraScanResult.includes('realtime')
                     ? 'text-zinc-500'
