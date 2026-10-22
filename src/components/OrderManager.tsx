@@ -6104,10 +6104,6 @@ export default function OrderManager({
         setProgressTotal(tot);
         setShipJobResults(Array.isArray(job.results) ? job.results : []);
         if (job.status === 'done' || job.status === 'failed') return job;
-        // Đủ kết quả từng đơn → đóng poll ngay, không chờ server ghi Mongo (hàng đợi ghi chung có thể nghẽn).
-        if (tot > 0 && completed >= tot && Array.isArray(job.results) && job.results.length > 0) {
-          return { ...job, status: 'done' };
-        }
         setProgressMessage(
           job.message || `Đang xác nhận ${completed}/${tot} đơn...`,
         );

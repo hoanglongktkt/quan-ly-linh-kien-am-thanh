@@ -77983,6 +77983,103 @@ async function yieldSyncIfWebhookWaiting() {
   }
 }
 
+// utils/workGate.js
+function createWorkGate(limit, maxPending = 200) {
+  let active = 0;
+  const pending = [];
+  const drain = () => {
+    while (active < limit && pending.length) {
+      const job = pending.shift();
+      job.signal?.removeEventListener("abort", job.abort);
+      if (job.signal?.aborted) {
+        job.reject(job.signal.reason);
+        continue;
+      }
+      active++;
+      let released = false;
+      job.resolve(() => {
+        if (released) return;
+        released = true;
+        active--;
+        drain();
+      });
+    }
+  };
+  const acquire = (signal) => new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    if (pending.length >= maxPending) {
+      return reject(Object.assign(new Error("Hang doi dang day, vui long thu lai sau."), { code: "work_queue_full" }));
+    }
+    const job = { resolve, reject, signal, abort: null };
+    job.abort = () => {
+      const index = pending.indexOf(job);
+      if (index >= 0) pending.splice(index, 1);
+      signal.removeEventListener("abort", job.abort);
+      reject(signal.reason);
+    };
+    signal?.addEventListener("abort", job.abort, { once: true });
+    pending.push(job);
+    drain();
+  });
+  return {
+    acquire,
+    async run(work, signal) {
+      const release = await acquire(signal);
+      try {
+        return await work();
+      } finally {
+        release();
+      }
+    },
+    snapshot: () => ({ active, pending: pending.length, limit, maxPending })
+  };
+}
+var shopeeHttpGate = createWorkGate(3, 200);
+var confirmOrderGate = createWorkGate(2, 200);
+var labelBatchGate = createWorkGate(1, 40);
+var pdfMergeGate = createWorkGate(1, 2);
+function createKeyedBatchWork(gate, maxKeys = 1e3) {
+  const inFlight = /* @__PURE__ */ new Map();
+  return async (keys, worker, signal) => {
+    const unique = [...new Set(keys)];
+    const owned = unique.filter((key) => !inFlight.has(key));
+    if (inFlight.size + owned.length > maxKeys) {
+      throw Object.assign(new Error("Hang doi PDF dang day, vui long thu lai sau."), { code: "work_queue_full" });
+    }
+    if (owned.length) {
+      const batch = gate.run(() => worker(owned));
+      for (const key of owned) {
+        const task = batch.then((values) => {
+          if (!values.has(key)) throw new Error(`Missing batch result: ${key}`);
+          return values.get(key);
+        });
+        inFlight.set(key, task);
+        void task.then(
+          () => {
+            if (inFlight.get(key) === task) inFlight.delete(key);
+          },
+          () => {
+            if (inFlight.get(key) === task) inFlight.delete(key);
+          }
+        );
+      }
+    }
+    const result = Promise.all(unique.map((key) => inFlight.get(key)));
+    if (!signal) return result;
+    return new Promise((resolve, reject) => {
+      const abort = () => reject(signal.reason);
+      if (signal.aborted) {
+        result.catch(() => {
+        });
+        reject(signal.reason);
+        return;
+      }
+      signal.addEventListener("abort", abort, { once: true });
+      void result.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+    });
+  };
+}
+
 // modules/shopee-sync/client.js
 var import_meta = {};
 var SHOPEE_API_MAX_RETRY = 3;
@@ -78056,12 +78153,16 @@ async function fetchWithTimeout(url2, init = {}, timeoutMs = SHOPEE_HTTP_TIMEOUT
   const timer2 = setTimeout(() => controller.abort(), timeoutMs);
   let hardTimer;
   let bodyOwnsDeadline = false;
+  let releaseSlot;
   const cleanup = () => {
     clearTimeout(timer2);
     if (hardTimer) clearTimeout(hardTimer);
     externalSignal?.removeEventListener?.("abort", abortFromExternal);
+    releaseSlot?.();
   };
   try {
+    releaseSlot = await shopeeHttpGate.acquire(controller.signal);
+    assertSyncActive();
     const fetchInit = {
       ...init,
       signal: controller.signal
@@ -78077,6 +78178,7 @@ async function fetchWithTimeout(url2, init = {}, timeoutMs = SHOPEE_HTTP_TIMEOUT
         } catch {
         }
         reject(Object.assign(new Error(`Shopee API timeout sau ${timeoutMs / 1e3}s`), { code: "shopee_http_timeout" }));
+        cleanup();
       }, timeoutMs + 1e3);
     });
     const response = await Promise.race([fetchPromise, hardTimeoutPromise]);
@@ -87859,71 +87961,6 @@ async function markOrdersPrintedInStore(orderSns, isPrinted, meta) {
     });
   }
   return matched;
-}
-async function markOrdersHasPdfInStore(orderSns, meta) {
-  if (!isMongoReady()) return 0;
-  requireMongo();
-  const sns = [
-    ...new Set(
-      (Array.isArray(orderSns) ? orderSns : []).map((s2) => String(s2 || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
-    )
-  ];
-  if (sns.length === 0) return 0;
-  const shopIdStr = meta?.shopId != null ? String(meta.shopId).trim() : "";
-  const labelUrl = String(
-    meta?.labelUrl || meta?.pdfUrl || meta?.waybill_url || ""
-  ).trim();
-  const pdfFilename = String(meta?.pdfFilename || "").trim();
-  const ops = sns.map((sn) => {
-    const _id = `shopee-${sn}`;
-    const $set = {
-      hasPdf: true,
-      "data.hasPdf": true,
-      "data.readyToPrint": true
-    };
-    if (labelUrl) {
-      $set.waybill_url = labelUrl;
-      $set["data.waybill_url"] = labelUrl;
-      $set["data.labelUrl"] = labelUrl;
-      $set["data.pdfUrl"] = labelUrl;
-    }
-    if (pdfFilename) $set["data.pdfFilename"] = pdfFilename;
-    if (shopIdStr) {
-      $set.shopId = shopIdStr;
-      $set["data.shopId"] = shopIdStr;
-    }
-    return {
-      updateOne: {
-        filter: buildOrderCompoundFilter(sn, _id, shopIdStr || null),
-        update: {
-          $set,
-          $setOnInsert: {
-            _id,
-            orderSn: sn,
-            isPrinted: false,
-            "data.isPrinted": false,
-            "data.id": _id,
-            "data.orderSn": sn,
-            "data.channel": "shopee"
-          }
-        },
-        upsert: true
-      }
-    };
-  });
-  await withWriteTimeout(
-    enqueueWrite(async () => {
-      const result = await OrderModel.bulkWrite(ops, {
-        ordered: false,
-        maxTimeMS: 8e3
-      });
-      console.log(
-        `[MongoDB] markOrdersHasPdfInStore sns=${sns.length} modified=${result.modifiedCount || 0} upserted=${result.upsertedCount || 0}`
-      );
-    }),
-    "mark_has_pdf"
-  );
-  return sns.length;
 }
 async function markOrderLocalStatusInStore(orderSn, localStatus, meta) {
   if (!isMongoReady()) return false;
@@ -149851,7 +149888,7 @@ function arrangeShipmentLocal(order, method) {
 }
 async function arrangeShipment(order, method, signal, opts) {
   if (order.channel === "shopee") {
-    return shipShopeeOrderReal(order, method, signal, opts);
+    return confirmOrderGate.run(() => shipShopeeOrderReal(order, method, signal, opts), signal);
   }
   return arrangeShipmentLocal(order, method);
 }
@@ -150209,7 +150246,7 @@ async function readCachedOrderWaybillPdf(orderSn) {
 }
 var PRINT_WAYBILL_BATCH_POLL_INTERVAL_MS = 2500;
 var PRINT_WAYBILL_BATCH_POLL_MAX_ATTEMPTS = 40;
-var PRINT_WAYBILL_DOWNLOAD_CONCURRENCY = 3;
+var PRINT_WAYBILL_DOWNLOAD_CONCURRENCY = 1;
 var PRINT_WAYBILL_DOWNLOAD_PAUSE_MS = 200;
 var SHOPEE_SHIPPING_DOC_BULK_MAX = 50;
 function toShippingDocApiItems(rows) {
@@ -152711,7 +152748,7 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
     }
   };
   await Promise.all(
-    Array.from({ length: Math.min(3, orders.length) }, () => enrichWorker())
+    Array.from({ length: Math.min(1, orders.length) }, () => enrichWorker())
   );
 }
 function applyShopeePackageListTracking(order, shopeeOrder) {
@@ -156840,6 +156877,7 @@ var CONFIRM_ASYNC_BATCH_SIZE = 20;
 var CONFIRM_ASYNC_BATCH_PAUSE_MS = 300;
 var CONFIRM_ASYNC_DB_TIMEOUT_MS = 15e3;
 var confirmOnlyAsyncJobChain = Promise.resolve();
+var confirmOnlyAsyncPending = 0;
 function createShipOrderJobId() {
   return `ship-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -158043,55 +158081,14 @@ async function startServer() {
           `\u0110\u01A1n ${orderSn} thi\u1EBFu shopId/accountId n\xEAn kh\xF4ng th\u1EC3 ch\u1ECDn \u0111\xFAng Token Shop.`
         );
       }
-      const auth = await getShopeeAccessTokenForApi(storedShopId);
-      const accessToken = String(auth?.token || "").trim();
-      const shopId = String(auth?.apiShopId || "").trim();
-      if (!accessToken || !shopId) {
-        return failDownload(
-          new Error(`no_valid_access_token shop=${storedShopId} order_sn=${orderSn}`),
-          `Kh\xF4ng c\xF3 Token Shop h\u1EE3p l\u1EC7 cho shop ${storedShopId}.`
-        );
-      }
-      console.log(
-        `[Delegated PDF] order_sn=${orderSn} DB shop=${storedShopId} API shop=${shopId}`
+      const result = await fetchBatchPdfDocumentsByShop(
+        rows,
+        [orderSn],
+        Date.now() + 9e4,
+        "Delegated PDF"
       );
       if (streamDelegatedPdf(res, expectedPath, expectedFilename)) return;
-      try {
-        await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, [order]);
-      } catch (err) {
-        console.warn(`[Delegated PDF] enrich ${orderSn}:`, err?.message || err);
-      }
-      const shippingRows = buildShopeeShippingDocOrderRows(order);
-      if (shippingRows.length === 0) {
-        return failDownload(
-          new Error(`missing_package_number order_sn=${orderSn} shop=${shopId}`),
-          `\u0110\u01A1n ${orderSn} thi\u1EBFu package_number; \u0111\xE3 ch\u1EB7n Create/Poll/Download.`
-        );
-      }
-      const batch = await batchDownloadShopeeWaybillPdf(shopId, shippingRows, {
-        deadlineAt: Date.now() + 9e4
-      });
-      if (!batch.success || !batch.filename || !batch.filePath) {
-        return failDownload(
-          { error: batch.error, message: batch.message },
-          batch.message || "Shopee ch\u01B0a s\u1EB5n s\xE0ng ho\u1EB7c sai Token Shop."
-        );
-      }
-      if (streamDelegatedPdf(res, batch.filePath, batch.filename)) {
-        void markOrdersHasPdfInStore([orderSn], {
-          shopId,
-          labelUrl: `/api/public/labels/${batch.filename}`,
-          waybill_url: `/api/public/labels/${batch.filename}`,
-          pdfFilename: batch.filename
-        }).catch(
-          (err) => console.warn(`[Delegated PDF] persist ${orderSn}:`, err?.message || err)
-        );
-        return;
-      }
-      return failDownload(
-        { error: batch.error, message: batch.message },
-        "Shopee ch\u01B0a s\u1EB5n s\xE0ng ho\u1EB7c sai Token Shop."
-      );
+      return failDownload(result.failedOrders[0], "Shopee chua tao xong PDF.");
     } catch (err) {
       return failDownload(
         err,
@@ -158213,7 +158210,7 @@ async function startServer() {
         toShip,
         ({ order }) => resolveOrderShopId(order) || order?.shopId,
         confirmOneOrder,
-        { perShopChunk: 4, pauseMs: 250, maxParallelShops: 6 }
+        { perShopChunk: 2, pauseMs: 250, maxParallelShops: 1 }
       );
       console.log(`[Confirm Only] DONE ${successSns.length}/${toShip.length} success (${Date.now() - t0}ms)`);
       const successOrders = results.filter((result) => result?.success).map((result) => ({
@@ -158397,7 +158394,7 @@ async function startServer() {
             batch,
             ({ order }) => resolveOrderShopId(order) || order?.shopId,
             confirmOneOrder,
-            { perShopChunk: 5, pauseMs: 150, maxParallelShops: 3 }
+            { perShopChunk: 2, pauseMs: 200, maxParallelShops: 1 }
           );
         } catch (batchErr) {
           console.error(
@@ -158508,6 +158505,13 @@ async function startServer() {
         ...Array.isArray(orderSns) ? orderSns : [],
         ...Array.isArray(order_sns) ? order_sns : []
       ].map(String);
+      if (Math.max(idList.length, snList.length) > 500) {
+        return res.status(400).json({ success: false, message: "Moi lo toi da 500 don. Vui long chia nho danh sach." });
+      }
+      if (confirmOnlyAsyncPending >= 10) {
+        res.setHeader("Retry-After", "5");
+        return res.status(429).json({ success: false, error: "work_queue_full", message: "Hang doi xac nhan dang day. Vui long cho cac lo truoc hoan tat." });
+      }
       if (idList.length === 0 && snList.length === 0) {
         return res.status(400).json({
           success: false,
@@ -158535,11 +158539,14 @@ async function startServer() {
         createdAt: Date.now(),
         updatedAt: Date.now()
       });
+      confirmOnlyAsyncPending += 1;
       res.once("finish", () => {
         setImmediate(() => {
           confirmOnlyAsyncJobChain = confirmOnlyAsyncJobChain.catch((chainErr) => {
             console.error("[Confirm Async] previous queue job failed:", chainErr?.stack || chainErr);
-          }).then(() => executeConfirmOnlyBackgroundJob(jobId, shipMethod, idList, snList));
+          }).then(() => executeConfirmOnlyBackgroundJob(jobId, shipMethod, idList, snList)).finally(() => {
+            confirmOnlyAsyncPending = Math.max(0, confirmOnlyAsyncPending - 1);
+          });
         });
       });
       return res.status(202).json({ accepted: true, jobId, total: estimatedTotal });
@@ -158582,129 +158589,27 @@ async function startServer() {
           message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n n\xE0o trong database."
         });
       }
-      const pdfResults = [];
-      const groups = /* @__PURE__ */ new Map();
-      for (const orderSn of cleanSns) {
-        const order = rows.find(
-          (item) => String(item?.orderSn || item?.order_sn || "").replace(/^shopee-/i, "").trim() === orderSn
-        );
-        if (!order || String(order.channel || "").toLowerCase() !== "shopee") {
-          pdfResults.push({
-            orderSn,
-            success: false,
-            error: "order_not_found",
-            message: `Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n ${orderSn} trong database.`
-          });
-          continue;
-        }
-        const storedShopId = String(
-          order.shopId || order.shop_id || order.accountId || order.account_id || ""
-        ).trim();
-        if (!storedShopId) {
-          pdfResults.push({
-            orderSn,
-            success: false,
-            error: "missing_shop_id",
-            message: `\u0110\u01A1n ${orderSn} thi\u1EBFu shopId.`
-          });
-          continue;
-        }
-        const list = groups.get(storedShopId) || [];
-        list.push(order);
-        groups.set(storedShopId, list);
-      }
-      await Promise.all(
-        [...groups.entries()].map(async ([storedShopId, shopOrders]) => {
-          try {
-            const auth = await getShopeeAccessTokenForApi(storedShopId);
-            const accessToken = String(auth?.token || "").trim();
-            const shopId = String(auth?.apiShopId || "").trim();
-            if (!accessToken || !shopId) {
-              for (const order of shopOrders) {
-                const orderSn = String(order.orderSn || "").replace(/^shopee-/i, "").trim();
-                pdfResults.push({
-                  orderSn,
-                  success: false,
-                  error: "no_valid_token",
-                  message: `Kh\xF4ng c\xF3 token h\u1EE3p l\u1EC7 cho shop ${storedShopId}.`
-                });
-              }
-              return;
-            }
-            try {
-              await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, shopOrders);
-            } catch (err) {
-              console.warn(`[Get PDF] enrich shop=${shopId}:`, err?.message || err);
-            }
-            const shippingRows = [];
-            for (const order of shopOrders) {
-              const orderSn = String(order.orderSn || "").replace(/^shopee-/i, "").trim();
-              if (order.__shopeeOrderNotFound) {
-                pdfResults.push({
-                  orderSn,
-                  success: false,
-                  error: "order_not_found",
-                  message: `\u0110\u01A1n ${orderSn} kh\xF4ng t\u1ED3n t\u1EA1i tr\xEAn Shopee (not found).`
-                });
-                continue;
-              }
-              const orderRows = buildShopeeShippingDocOrderRows(order);
-              if (orderRows.length === 0) {
-                pdfResults.push({
-                  orderSn,
-                  success: false,
-                  error: "missing_package_number",
-                  message: `\u0110\u01A1n ${orderSn} thi\u1EBFu package_number; \u0111\xE3 ch\u1EB7n Create/Poll/Download.`
-                });
-                continue;
-              }
-              shippingRows.push(...orderRows);
-            }
-            if (shippingRows.length === 0) return;
-            console.log(`[Get PDF] BULK shop=${shopId} n=${shopOrders.length} \u2014 kh\xF4ng sleep 3s/\u0111\u01A1n`);
-            const batch = await batchDownloadShopeeWaybillPdf(shopId, shippingRows, {
-              deadlineAt: Date.now() + WAYBILL_BATCH_DEADLINE_MS
-            });
-            const readySet = new Set(batch.readyOrderSns || []);
-            for (const order of shopOrders) {
-              const orderSn = String(order.orderSn || "").replace(/^shopee-/i, "").trim();
-              if (pdfResults.some((r2) => r2.orderSn === orderSn)) continue;
-              if (!readySet.has(orderSn)) {
-                const skip = (batch.skippedOrders || []).find((s2) => s2.orderSn === orderSn);
-                pdfResults.push({
-                  orderSn,
-                  success: false,
-                  error: skip?.error || "document_not_ready",
-                  message: skip?.message || "Shopee ch\u01B0a xu\u1EA5t PDF."
-                });
-                continue;
-              }
-              const filename = `order_${orderSn}.pdf`;
-              const url2 = absoluteLabelUrl(`/api/public/labels/${filename}`);
-              pdfResults.push({
-                orderSn,
-                success: Boolean(url2),
-                url: url2 || void 0,
-                filename,
-                message: url2 ? "PDF \u0111\xE3 s\u1EB5n s\xE0ng." : "\u0110\xE3 t\u1EA3i PDF nh\u01B0ng kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c URL."
-              });
-              console.log(`[Get PDF] OK ${orderSn} -> ${url2}`);
-            }
-          } catch (err) {
-            console.error(`[Get PDF] L\u1ED7i shop=${storedShopId}:`, err?.stack || err);
-            for (const order of shopOrders) {
-              const orderSn = String(order.orderSn || "").replace(/^shopee-/i, "").trim();
-              if (pdfResults.some((r2) => r2.orderSn === orderSn)) continue;
-              pdfResults.push({
-                orderSn,
-                success: false,
-                error: "processing_error",
-                message: err?.message || String(err)
-              });
-            }
-          }
-        })
+      const batch = await fetchBatchPdfDocumentsByShop(
+        rows,
+        cleanSns,
+        Date.now() + WAYBILL_BATCH_DEADLINE_MS,
+        "Get PDF"
       );
+      const ready = new Set(batch.documents.flatMap((document2) => document2.orderSns));
+      const pdfResults = cleanSns.map((orderSn) => {
+        if (ready.has(orderSn)) {
+          const filename = buildCachedLabelFilename([orderSn]);
+          const url2 = absoluteLabelUrl(`/api/public/labels/${filename}`);
+          return { orderSn, success: Boolean(url2), url: url2 || void 0, filename };
+        }
+        const failure = batch.failedOrders.find((item) => item.orderSn === orderSn);
+        return {
+          orderSn,
+          success: false,
+          error: failure?.error || "document_not_ready",
+          message: failure?.message || "Shopee chua tao xong PDF."
+        };
+      });
       const successCount = pdfResults.filter((r2) => r2.success).length;
       return res.json({
         success: successCount > 0,
@@ -158895,6 +158800,15 @@ async function startServer() {
     );
   }
   async function mergeBatchPdfBuffers(pdfBuffers, logPrefix, onInvalid) {
+    if (pdfBuffers.reduce((bytes, item) => bytes + item.buffer.length, 0) > 64 * 1024 * 1024) {
+      throw new Error("File in qua lon. Vui long chia thanh cac lo nho hon.");
+    }
+    return pdfMergeGate.run(async () => {
+      const pdf = await mergeBatchPdfBuffersUnqueued(pdfBuffers, logPrefix, onInvalid);
+      return { pdf, bytes: await pdf.save() };
+    });
+  }
+  async function mergeBatchPdfBuffersUnqueued(pdfBuffers, logPrefix, onInvalid) {
     const startedAt = Date.now();
     const mergedPdf = await import_pdf_lib.PDFDocument.create();
     for (let index = 0; index < pdfBuffers.length; index++) {
@@ -158914,7 +158828,52 @@ async function startServer() {
     );
     return mergedPdf;
   }
+  const sharedLabelWork = createKeyedBatchWork(labelBatchGate);
   async function fetchBatchPdfDocumentsByShop(orders, orderSns, deadlineAt, logPrefix, options) {
+    const sns = uniquePreserveOrder(orderSns);
+    if (sns.length > 500) throw new Error("Moi lo in toi da 500 don. Vui long chia nho danh sach.");
+    const documents = [];
+    const pending = [];
+    let cachedBytes = 0;
+    for (const sn of sns) {
+      options?.signal?.throwIfAborted();
+      const buffer = await readCachedOrderWaybillPdf(sn);
+      if (buffer) {
+        cachedBytes += buffer.length;
+        if (cachedBytes > 64 * 1024 * 1024) throw new Error("File in qua lon. Vui long chia nho danh sach.");
+        documents.push({ orderSns: [sn], buffer });
+      } else pending.push(sn);
+    }
+    if (!pending.length) return sortBatchPdfResultByRequestedOrder(sns, documents, []);
+    const waitSignal = AbortSignal.any([
+      AbortSignal.timeout(Math.max(1, deadlineAt - Date.now())),
+      ...options?.signal ? [options.signal] : []
+    ]);
+    const values = await sharedLabelWork(pending, async (owned) => {
+      if (Date.now() >= deadlineAt) throw new Error("batch_deadline:pdf_queue");
+      const result = await fetchBatchPdfDocumentsByShopUnshared(orders, owned, deadlineAt, logPrefix);
+      return new Map(owned.map((sn) => {
+        const document2 = result.documents.find((doc) => doc.orderSns.includes(sn));
+        const failure = result.failedOrders.find((item) => item.orderSn === sn);
+        return [sn, { document: document2, failure: document2 ? void 0 : failure || {
+          orderSn: sn,
+          error: "document_not_ready",
+          message: "Shopee chua tao xong PDF."
+        } }];
+      }));
+    }, waitSignal);
+    const failedOrders = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const value of values) {
+      if (value.document && !seen.has(value.document)) {
+        seen.add(value.document);
+        documents.push(value.document);
+      }
+      if (value.failure) failedOrders.push(value.failure);
+    }
+    return sortBatchPdfResultByRequestedOrder(sns, documents, failedOrders);
+  }
+  async function fetchBatchPdfDocumentsByShopUnshared(orders, orderSns, deadlineAt, logPrefix, options) {
     const startedAt = Date.now();
     const failedBySn = /* @__PURE__ */ new Map();
     const documents = [];
@@ -158968,8 +158927,10 @@ async function startServer() {
       group.orders.push(order);
       groups.set(storedShopId, group);
     }
-    await Promise.all(
-      [...groups.entries()].map(async ([storedShopId, group]) => {
+    await mapWithConcurrency(
+      [...groups.entries()],
+      1,
+      async ([storedShopId, group]) => {
         const deadlineController = new AbortController();
         const deadlineTimer = setTimeout(
           () => deadlineController.abort(new Error("batch_deadline:shopee_pdf")),
@@ -158995,6 +158956,11 @@ async function startServer() {
             `enrich_shop:${storedShopId}`,
             () => enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, group.orders)
           );
+          for (const order of group.orders) {
+            if (!order.__shopeeOrderNotFound && buildShopeeShippingDocOrderRows(order).length === 0) {
+              await runBeforeBatchDeadline(deadlineAt, "retry_package", () => retryFillPackageNumberForPrint(shopId, accessToken, order));
+            }
+          }
           const allRows = [];
           for (const order of group.orders) {
             const orderSn = String(order?.orderSn || order?.order_sn || "").replace(/^shopee-/i, "").trim();
@@ -159093,7 +159059,7 @@ async function startServer() {
         } finally {
           clearTimeout(deadlineTimer);
         }
-      })
+      }
     );
     console.log(
       `[${logPrefix}] timing total=${Date.now() - startedAt}ms ok=${documents.length} failed=${failedBySn.size}`
@@ -159282,7 +159248,7 @@ async function startServer() {
         });
       }
       console.log(`[Batch Confirm Print] G\u1ED9p ${pdfBuffers.length} PDF...`);
-      const mergedPdf = await mergeBatchPdfBuffers(
+      const { pdf: mergedPdf, bytes: mergedBytes } = await mergeBatchPdfBuffers(
         pdfBuffers,
         "Batch Confirm Print",
         (orderSn) => {
@@ -159303,7 +159269,6 @@ async function startServer() {
           failedOrders: [...failedResults, ...pdfFailures.values()]
         });
       }
-      const mergedBytes = await mergedPdf.save();
       const batchFilename = `batch-${Date.now()}.pdf`;
       putLabelMem(batchFilename, Buffer.from(mergedBytes), "application/pdf");
       const batchUrl = absoluteLabelUrl(`/api/public/labels/${batchFilename}`);
@@ -159413,7 +159378,7 @@ async function startServer() {
         });
       }
       console.log(`[Batch Print Only] G\u1ED9p ${pdfBuffers.length} PDF...`);
-      const mergedPdf = await mergeBatchPdfBuffers(
+      const { pdf: mergedPdf, bytes: mergedBytes } = await mergeBatchPdfBuffers(
         pdfBuffers,
         "Batch Print Only",
         (orderSn) => {
@@ -159433,7 +159398,6 @@ async function startServer() {
           failedOrders: [...pdfFailures.values()]
         });
       }
-      const mergedBytes = await mergedPdf.save();
       const batchFilename = `reprint-${Date.now()}.pdf`;
       putLabelMem(batchFilename, Buffer.from(mergedBytes), "application/pdf");
       const batchUrl = absoluteLabelUrl(`/api/public/labels/${batchFilename}`);
@@ -160498,6 +160462,12 @@ async function startServer() {
     return buildCachedLabelFilename(orderSns);
   }
   async function mergePdfLabelBuffers(buffers) {
+    if (buffers.reduce((bytes, buffer) => bytes + (buffer?.length || 0), 0) > 64 * 1024 * 1024) {
+      throw new Error("File in qua lon. Vui long chia thanh cac lo nho hon.");
+    }
+    return pdfMergeGate.run(() => mergePdfLabelBuffersUnqueued(buffers));
+  }
+  async function mergePdfLabelBuffersUnqueued(buffers) {
     const valid = buffers.filter((b) => b && Buffer.isBuffer(b) && b.length > 0 && isPdfBuffer(b));
     if (valid.length === 0) {
       throw new Error("Kh\xF4ng c\xF3 buffer PDF h\u1EE3p l\u1EC7 \u0111\u1EC3 gh\xE9p.");
@@ -161082,71 +161052,22 @@ async function startServer() {
         }
         if (queue.length === 0) return;
         console.log(`[Label Prepare BG] START n=${queue.length}`);
-        await mapBatchConcurrently(queue, 5, async (order) => {
-          const sn = String(order.orderSn || "").trim();
-          try {
-            const shopId = String(order.shopId || resolveOrderShopId(order) || "").trim();
-            if (!shopId) {
-              console.warn(`[Label Prepare BG] skip ${sn}: missing shopId`);
-              return;
-            }
-            let accessToken = "";
-            try {
-              accessToken = await getValidShopeeAccessToken(shopId) || "";
-            } catch {
-            }
-            if (!accessToken) {
-              console.warn(`[Label Prepare BG] skip ${sn}: no token shop=${shopId}`);
-              return;
-            }
-            try {
-              await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, [order]);
-            } catch (enrErr) {
-              console.warn(`[Label Prepare BG] enrich ${sn}:`, enrErr?.message || enrErr);
-            }
-            if (order.__shopeeOrderNotFound) {
-              console.warn(`[Label Prepare BG] FAILED ${sn}: order_not_found \u2014 skip create`);
-              return;
-            }
-            let shippingRows = buildShopeeShippingDocOrderRows(order);
-            if (shippingRows.length === 0) {
-              const filled = await retryFillPackageNumberForPrint(shopId, accessToken, order);
-              shippingRows = buildShopeeShippingDocOrderRows(order);
-              if (!filled || shippingRows.length === 0) {
-                console.warn(
-                  `[Label Prepare BG] FAILED ${sn}: missing_package_number after ${LABEL_PKG_RETRY_MAX} retries`
-                );
-                return;
-              }
-            }
-            const gen = await generateShopeeShippingDocument(shopId, shippingRows);
-            const pdfFilename = String(gen?.filename || "").trim();
-            if (!gen?.success || !gen.url || !pdfFilename) {
-              console.warn(
-                `[Label Prepare BG] fail ${sn}:`,
-                gen?.message || gen?.error || "no_url"
-              );
-              return;
-            }
-            await markOrdersHasPdfInStore([sn], {
-              shopId,
-              labelUrl: String(gen.url),
-              waybill_url: String(gen.url),
-              pdfFilename
-            });
-            order.labelUrl = gen.url;
-            order.pdfUrl = gen.url;
-            order.waybill_url = gen.url;
-            order.pdfFilename = pdfFilename;
-            order.hasPdf = true;
-            order.readyToPrint = true;
-            console.log(`[Label Prepare BG] OK ${sn} file=${pdfFilename} hasPdf=true waybill_url=set isPrinted=unchanged`);
-          } catch (err) {
-            console.warn(`[Label Prepare BG] ${sn}:`, err?.message || err);
-          } finally {
-            labelPrepareInFlight.delete(sn);
+        try {
+          const sns = queue.map((order) => String(order.orderSn));
+          const result = await fetchBatchPdfDocumentsByShop(
+            queue,
+            sns,
+            Date.now() + WAYBILL_BATCH_DEADLINE_MS,
+            "Label Prepare BG"
+          );
+          for (const failure of result.failedOrders) {
+            console.warn("[Label Prepare BG] failed", failure.orderSn, failure.error);
           }
-        });
+        } catch (error) {
+          console.warn("[Label Prepare BG] batch failed:", error?.message || error);
+        } finally {
+          for (const order of queue) labelPrepareInFlight.delete(String(order.orderSn));
+        }
         console.log("[Label Prepare BG] DONE");
       })();
     });
