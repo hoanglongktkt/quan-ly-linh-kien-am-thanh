@@ -51,5 +51,26 @@ await assert.rejects(scan.fetchScannerSyncPool('handover'), /Invalid scanner res
 assert.equal(localStorage.getItem(key), '{broken', 'error responses do not replace cached data');
 scan.clearScannerPoolCache('handover');
 assert.equal(localStorage.getItem(key), null);
+
+// A pool may still say "processed" after the DB commit; it must not authorize a rescan.
+localStorage.setItem(key, JSON.stringify({ rows, codeCount: 1, fetchedAt: Date.now() }));
+let lookups = 0;
+let current = { id: 'shopee-ORDER123', orderSn: 'ORDER123', status: 'processed', is_handed_over: true };
+globalThis.fetch = async (url, options) => {
+  lookups++;
+  assert.match(url, /\/api\/orders\/lookup\?code=SPX123456789&lean=scanner/);
+  assert.equal(options.cache, 'no-store');
+  return { ok: true, json: async () => current };
+};
+assert.equal(scan.loadScannerPoolCache().handover.rows[0].status, 'processed');
+assert.equal((await scan.lookupCurrentScannerOrder('SPX123456789')).is_handed_over, true);
+current = { ...current, isReturnReceived: true, local_status: 'CANCELLED_STORED' };
+assert.equal((await scan.lookupCurrentScannerOrder('SPX123456789')).isReturnReceived, true);
+assert.equal(lookups, 2, 'a second session must check DB again even with a fresh pool');
+globalThis.fetch = async () => ({ ok: false, status: 404 });
+assert.equal(await scan.lookupCurrentScannerOrder('SPX123456789'), null, 'missing DB rows must not fall back to cached orders');
+globalThis.fetch = async () => { throw new Error('offline'); };
+await assert.rejects(scan.lookupCurrentScannerOrder('SPX123456789'), /offline/, 'network failures must not accept stale scans');
 console.log('PASS: deduplication, independent cancellation, persistence, account isolation, stale/expired data, corrupt storage, API failures, invalidation');
+console.log('PASS: current handover/return state across sessions, no stale fallback on missing orders or network errors');
 

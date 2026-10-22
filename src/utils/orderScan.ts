@@ -303,7 +303,12 @@ export async function lookupOrderByScanCode(
   }
 }
 
-/** Ghi don v?a lookup v�o HashMap s�ng - l?n qu�t sau O(1), kh�ng g?i l?i HTTP. */
+/** Cached pools never authorize a scan, even immediately after a pool refresh. */
+export function lookupCurrentScannerOrder(raw: string, token?: string | null): Promise<Order | null> {
+  return lookupOrderByScanCode(raw, [], token, undefined, { lean: true });
+}
+
+/** Update the display map only; scan acceptance still requires a current DB lookup. */
 export function putOrderIntoScannerSyncMap(
   map: Map<string, ScannerSyncEntry>,
   order: Order,
