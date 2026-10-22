@@ -5,7 +5,7 @@ import { decodeJwtPayload } from './jwtClient';
 
 export type ScannerMode = 'handover' | 'return';
 
-export const SCANNED_ORDER_MESSAGE = 'DON DA QU�T';
+export const SCANNED_ORDER_MESSAGE = 'ĐƠN ĐÃ QUÉT';
 
 function scanReceiptKey(): string | null {
   try {
@@ -54,7 +54,7 @@ export function missingScannerOrderMessage(raw: string, pool?: Map<string, Scann
     known?.status === 'handed_over' || known?.status === 'return_received' ||
     buildScanLookupKeys(raw).some((key) => Boolean(receipts[key]))
     ? SCANNED_ORDER_MESSAGE
-    : 'Kh�ng t�m th?y don trong h? th?ng';
+    : 'Không tìm thấy đơn trong hệ thống';
 }
 
 /** Normalize for comparison: uppercase, strip common separators. */
@@ -65,12 +65,12 @@ export function normalizeOrderScanKey(raw: string): string {
     .replace(/[\s\-_#./\\|:;,]+/g, '');
 }
 
-/** Heuristic: QR waybill - prefix hang, alphanumeric, ho?c to�n s? 6-40 (GHN). */
+/** Heuristic: QR waybill — prefix hãng, alphanumeric, hoặc toàn số 6–40 (GHN). */
 export function isLikelyTrackingCode(raw: string): boolean {
   const key = normalizeOrderScanKey(raw);
   if (!key || key.length < 6 || key.length > 40) return false;
   if (isShopeeInternalTrackingCode(key)) return false;
-  // Shopee order_sn ki?u 240814N2XXXX - kh�ng ph?i ma v?n don.
+  // Shopee order_sn kiểu 240814N2XXXX — không phải mã vận đơn.
   if (/^\d{6}[A-Z][A-Z0-9]{5,}$/i.test(key)) return false;
   if (/^\d{6,40}$/.test(key)) return true;
   return /^[A-Z0-9][A-Z0-9\-]{5,39}$/.test(key);
@@ -79,7 +79,7 @@ export function isLikelyTrackingCode(raw: string): boolean {
 function flexibleCodeMatch(scanKey: string, fieldKey: string): boolean {
   if (!scanKey || !fieldKey) return false;
   if (scanKey === fieldKey) return true;
-  // Ma d? d�i: endsWith b?t prefix/suffix du t? m�y qu�t; includes b?t do?n gi?a.
+  // Mã đủ dài: endsWith bắt prefix/suffix dư từ máy quét; includes bắt đoạn giữa.
   if (scanKey.length >= 8 && fieldKey.length >= 8) {
     if (fieldKey.endsWith(scanKey) || scanKey.endsWith(fieldKey)) return true;
   }
@@ -233,7 +233,7 @@ function lookupExactFromScanIndex(index: OrderScanIndex, scanKeys: string[]): Or
   return null;
 }
 
-/** Fallback sau exact: endsWith / includes tr�n to�n b? key trong index. */
+/** Fallback sau exact: endsWith / includes trên toàn bộ key trong index. */
 function lookupFlexibleFromScanIndex(index: OrderScanIndex, scanKeys: string[]): Order | null {
   const maps = [index.byTracking, index.byInternal, index.byOrderSn, index.byPackage, index.byId];
   for (const sk of scanKeys) {
@@ -248,7 +248,7 @@ function lookupFlexibleFromScanIndex(index: OrderScanIndex, scanKeys: string[]):
   return null;
 }
 
-/** Find order - prioritizes tracking match when scan looks like waybill code. */
+/** Find order — prioritizes tracking match when scan looks like waybill code. */
 export function findOrderByScanPayload(
   orders: Order[],
   raw: string,
@@ -355,9 +355,13 @@ export async function lookupOrderByScanCode(
   }
 }
 
-/** Cached pools never authorize a scan, even immediately after a pool refresh. */
+/**
+ * Read current DB state. Existing cPanel versions validate lean responses using
+ * omitted channel/items fields and incorrectly return 404 for valid new orders.
+ * Use their supported full lookup until the backend projection is upgraded.
+ */
 export function lookupCurrentScannerOrder(raw: string, token?: string | null): Promise<Order | null> {
-  return lookupOrderByScanCode(raw, [], token, undefined, { lean: true });
+  return lookupOrderByScanCode(raw, [], token, undefined, { lean: false });
 }
 
 /** Update the display map only; scan acceptance still requires a current DB lookup. */
@@ -420,7 +424,7 @@ export function putOrderIntoScannerSyncMap(
   return next;
 }
 
-/** Am thanh public t?m (mp3 ng?n) - success / warning(h?y) / error / pending(d� ng?m). */
+/** Âm thanh public tạm (mp3 ngắn) — success / warning(hủy) / error / pending(dò ngầm). */
 export const SCAN_SOUND_URLS = {
   success:
     'https://actions.google.com/sounds/v1/cartoon/pop.ogg',
@@ -430,7 +434,7 @@ export const SCAN_SOUND_URLS = {
     'https://actions.google.com/sounds/v1/cartoon/wood_plank_flicks.ogg',
   pending:
     'https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg',
-  /** Qu�t tr�ng don da b�n giao DVVC - file local, kh�c success/h?y/ho�n. */
+  /** Quét trùng đơn đã bàn giao ĐVVC — file local, khác success/hủy/hoàn. */
   duplicate: '/sounds/warning.mp3',
 } as const;
 
@@ -447,8 +451,8 @@ function playHtmlAudio(url: string) {
 }
 
 /**
- * Am ri�ng khi qu�t tr�ng don DA giao DVVC.
- * Uu ti�n /sounds/warning.mp3; fallback Web Audio n?u file l?i / autoplay b? ch?n.
+ * Âm riêng khi quét trùng đơn ĐÃ giao ĐVVC.
+ * Ưu tiên /sounds/warning.mp3; fallback Web Audio nếu file lỗi / autoplay bị chặn.
  */
 export function playDuplicateHandedOverSound() {
   try {
@@ -466,7 +470,7 @@ export function playDuplicateHandedOverSound() {
   }
 }
 
-/** Web Audio fallback - success (2 tone cao), warning (c�i), error (tr?m d�i). */
+/** Web Audio fallback — success (2 tone cao), warning (còi), error (trầm dài). */
 function playWebAudioTone(type: ScanSoundType) {
   try {
     const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -493,12 +497,12 @@ function playWebAudioTone(type: ScanSoundType) {
       beep(420, 0.14, 0.16, 0.4, 'square');
       beep(620, 0.32, 0.14, 0.35, 'square');
     } else if (type === 'pending') {
-      // 3 tone ng?n trung b�nh - kh�c success/warning/error, b�o "dang d� ng?m".
+      // 3 tone ngắn trung bình — khác success/warning/error, báo "đang dò ngầm".
       beep(740, 0, 0.07, 0.3, 'sine');
       beep(880, 0.1, 0.07, 0.28, 'sine');
       beep(740, 0.2, 0.1, 0.25, 'sine');
     } else if (type === 'duplicate') {
-      // 4 beep v�ng nhanh - kh�c h?n success (xanh) / warning h?y (c�i) / error.
+      // 4 beep vàng nhanh — khác hẳn success (xanh) / warning hủy (còi) / error.
       beep(880, 0, 0.09, 0.38, 'sawtooth');
       beep(660, 0.11, 0.09, 0.38, 'sawtooth');
       beep(880, 0.22, 0.09, 0.36, 'sawtooth');
@@ -520,7 +524,7 @@ export function playScanSound(type: ScanSoundType = 'success') {
   playWebAudioTone(type);
 }
 
-/** @deprecated - d�ng playScanSound */
+/** @deprecated — dùng playScanSound */
 export function playScanBeep(type: 'success' | 'error' = 'success') {
   playScanSound(type === 'success' ? 'success' : 'error');
 }
@@ -547,7 +551,7 @@ export function scanFeedback(type: ScanSoundType | 'success' | 'error') {
   vibrateScan(type);
 }
 
-/** Payload lean t? GET /api/orders/scanner-sync */
+/** Payload lean từ GET /api/orders/scanner-sync */
 export type ScannerSyncRow = {
   order_id: string;
   tracking_code: string;
@@ -561,11 +565,11 @@ export type ScannerSyncRow = {
 };
 
 export type ScannerSyncEntry = ScannerSyncRow & {
-  /** true n?u key map kh?p return_waybill */
+  /** true nếu key map khớp return_waybill */
   matchedReturn?: boolean;
 };
 
-/** Hash map ma VD  row - lookup O(1) khi qu�t. */
+/** Hash map mã VĐ → row — lookup O(1) khi quét. */
 export function buildScannerSyncMap(rows: ScannerSyncRow[]): Map<string, ScannerSyncEntry> {
   const map = new Map<string, ScannerSyncEntry>();
   for (const row of rows) {
@@ -603,7 +607,7 @@ export function lookupScannerSyncMap(
     const hit = map.get(sk);
     if (hit) return hit;
   }
-  // Flexible endsWith / includes cho ma �8 ky t? (m�y qu�t du prefix/suffix).
+  // Flexible endsWith / includes cho mã ≥8 ký tự (máy quét dư prefix/suffix).
   for (const sk of keys) {
     if (sk.length < 8) continue;
     for (const [mapKey, entry] of map) {
@@ -615,13 +619,13 @@ export function lookupScannerSyncMap(
 }
 
 /**
- * TTL cache phi�n FE cho pool scanner-sync (ms) - kh?p TTL cache server (240s)
- * d? tr�nh client coi "c�n h?n" trong khi server da �m th?m query l?i.
+ * TTL cache phiên FE cho pool scanner-sync (ms) — khớp TTL cache server (240s)
+ * để tránh client coi "còn hạn" trong khi server đã âm thầm query lại.
  */
 export const SCANNER_POOL_CACHE_TTL_MS = 240_000;
-/** Coi g?n h?t h?n  refresh n?n (stale-while-revalidate). */
+/** Coi gần hết hạn → refresh nền (stale-while-revalidate). */
 export const SCANNER_POOL_STALE_MS = 180_000;
-/** Timeout 1 l?n g?i scanner-sync - kh�ng ch? proxy 60s. */
+/** Timeout 1 lần gọi scanner-sync — không chờ proxy 60s. */
 export const SCANNER_SYNC_FETCH_TIMEOUT_MS = 12_000;
 
 export type ScannerPoolCacheEntry = {
@@ -795,7 +799,7 @@ async function requestScannerSyncPool(
   }
 }
 
-/** Prefetch song song c? 2 mode (1 retry ng?n n?u fail). */
+/** Prefetch song song cả 2 mode (1 retry ngắn nếu fail). */
 export async function prefetchBothScannerPools(opts?: {
   token?: string;
   signal?: AbortSignal;
@@ -821,7 +825,7 @@ export async function prefetchBothScannerPools(opts?: {
   return { handover, return: ret };
 }
 
-/** Stub Order t?i thi?u t? scanner-sync - d? ph�n lo?i + b�n giao. */
+/** Stub Order tối thiểu từ scanner-sync — đủ phân loại + bàn giao. */
 export function scannerSyncEntryToOrder(entry: ScannerSyncEntry): Order {
   const sn = String(entry.order_id || '').replace(/^shopee-/i, '').trim();
   const statusRaw = String(entry.status || '').toLowerCase();
@@ -912,4 +916,3 @@ export function scannerSyncEntryToOrder(entry: ScannerSyncEntry): Order {
     revenue: 0,
   } as Order;
 }
-

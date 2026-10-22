@@ -58,7 +58,7 @@ let lookups = 0;
 let current = { id: 'shopee-ORDER123', orderSn: 'ORDER123', status: 'processed', is_handed_over: true };
 globalThis.fetch = async (url, options) => {
   lookups++;
-  assert.match(url, /\/api\/orders\/lookup\?code=SPX123456789&lean=scanner/);
+  assert.equal(url, '/api/orders/lookup?code=SPX123456789');
   assert.equal(options.cache, 'no-store');
   return { ok: true, json: async () => current };
 };
@@ -67,6 +67,17 @@ assert.equal((await scan.lookupCurrentScannerOrder('SPX123456789')).is_handed_ov
 current = { ...current, isReturnReceived: true, local_status: 'CANCELLED_STORED' };
 assert.equal((await scan.lookupCurrentScannerOrder('SPX123456789')).isReturnReceived, true);
 assert.equal(lookups, 2, 'a second session must check DB again even with a fresh pool');
+globalThis.fetch = async (url) => {
+  // Reproduce the installed backend rejecting its projection without channel/items.
+  if (url.includes('lean=scanner')) return { ok: false, status: 404 };
+  return { ok: true, json: async () => ({
+    id: 'shopee-NEWORDER123', orderSn: 'NEWORDER123', channel: 'shopee',
+    status: 'processed', is_handed_over: false, items: [{ quantity: 1 }],
+  }) };
+};
+const newOrder = await scan.lookupCurrentScannerOrder('SPXNEW123456');
+assert.equal(newOrder.orderSn, 'NEWORDER123', 'new orders are found on the existing cPanel backend');
+assert.equal(newOrder.is_handed_over, false);
 globalThis.fetch = async () => ({ ok: false, status: 404 });
 assert.equal(await scan.lookupCurrentScannerOrder('SPX123456789'), null, 'missing DB rows must not fall back to cached orders');
 globalThis.fetch = async () => { throw new Error('offline'); };
@@ -74,17 +85,16 @@ await assert.rejects(scan.lookupCurrentScannerOrder('SPX123456789'), /offline/, 
 console.log('PASS: deduplication, independent cancellation, persistence, account isolation, stale/expired data, corrupt storage, API failures, invalidation');
 console.log('PASS: current handover/return state across sessions, no stale fallback on missing orders or network errors');
 
-assert.equal(scan.missingScannerOrderMessage('SPX-123456789'), 'Kh�ng t�m th?y don trong h? th?ng');
+assert.equal(scan.missingScannerOrderMessage('SPX-123456789'), 'Không tìm thấy đơn trong hệ thống');
 assert.equal(scan.missingScannerOrderMessage('SPX123456789', scan.buildScannerSyncMap([
   { ...rows[0], isReturnReceived: true },
-])), 'DON DA QU�T');
-assert.notEqual(scan.missingScannerOrderMessage('SPX123456789', scan.buildScannerSyncMap(rows)), 'DON DA QU�T');
+])), 'ĐƠN ĐÃ QUÉT');
+assert.notEqual(scan.missingScannerOrderMessage('SPX123456789', scan.buildScannerSyncMap(rows)), 'ĐƠN ĐÃ QUÉT');
 scan.rememberCommittedScans([{ code: 'SPX123456789', orderSn: 'ORDER123', action: 'rejected' }]);
-assert.notEqual(scan.missingScannerOrderMessage('SPX123456789'), 'DON DA QU�T');
+assert.notEqual(scan.missingScannerOrderMessage('SPX123456789'), 'ĐƠN ĐÃ QUÉT');
 scan.rememberCommittedScans([{ code: 'SPX123456789', orderSn: 'ORDER123', action: 'handed_over' }]);
-assert.equal(scan.missingScannerOrderMessage('SPX-123456789'), 'DON DA QU�T');
-assert.equal(scan.missingScannerOrderMessage('ORDER123'), 'DON DA QU�T');
+assert.equal(scan.missingScannerOrderMessage('SPX-123456789'), 'ĐƠN ĐÃ QUÉT');
+assert.equal(scan.missingScannerOrderMessage('ORDER123'), 'ĐƠN ĐÃ QUÉT');
 localStorage.setItem('admin_token', token('another-account'));
-assert.notEqual(scan.missingScannerOrderMessage('SPX123456789'), 'DON DA QU�T');
+assert.notEqual(scan.missingScannerOrderMessage('SPX123456789'), 'ĐƠN ĐÃ QUÉT');
 console.log('PASS: exact duplicate message, confirmed DB receipts, code aliases, unknown/rejected scans, account isolation');
-
