@@ -27,6 +27,9 @@ import {
   fetchScannerSyncPool,
   prefetchBothScannerPools,
   isScannerPoolFresh,
+  isScannerPoolUsable,
+  loadScannerPoolCache,
+  clearScannerPoolCache,
   isScannerPoolStale,
   ScanLookupError,
   type ScannerSyncEntry,
@@ -2462,10 +2465,7 @@ export default function OrderManager({
   const [scannerSyncLoading, setScannerSyncLoading] = useState(false);
   const [scannerSyncReady, setScannerSyncReady] = useState(false);
   /** Pool cache phiên — giữ khi đổi mode / quay picker; không lưu localStorage. */
-  const [scannerPoolCache, setScannerPoolCache] = useState<ScannerPoolCache>({
-    handover: null,
-    return: null,
-  });
+  const [scannerPoolCache, setScannerPoolCache] = useState<ScannerPoolCache>(loadScannerPoolCache);
   const scannerPoolCacheRef = React.useRef(scannerPoolCache);
   const [scannerPoolPrefetching, setScannerPoolPrefetching] = useState(false);
   const scannerModeRef = React.useRef<ScannerMode | null>(null);
@@ -2511,6 +2511,7 @@ export default function OrderManager({
     () => new Map(),
   );
   const scannerSyncMapRef = React.useRef(scannerSyncMap);
+  const scannerPoolFetchedAtRef = React.useRef(0);
   const [scannerSyncCodeCount, setScannerSyncCodeCount] = useState(0);
   /** Tổng mã VĐ đã tải local — UI "Đã dò x/{n}". */
   const continuousScanTarget = scannerSyncCodeCount;
@@ -2640,6 +2641,7 @@ export default function OrderManager({
   }, []);
 
   const applyPoolEntryToActive = React.useCallback((entry: ScannerPoolCacheEntry, mode: ScannerMode) => {
+    scannerPoolFetchedAtRef.current = entry.fetchedAt;
     scannerSyncMapRef.current = entry.map;
     setScannerSyncMap(entry.map);
     setScannerSyncCodeCount(entry.codeCount || entry.map.size);
@@ -2653,6 +2655,7 @@ export default function OrderManager({
   }, []);
 
   const invalidateScannerPoolMode = React.useCallback((mode: ScannerMode) => {
+    clearScannerPoolCache(mode);
     setScannerPoolCache((prev) => {
       const next = { ...prev, [mode]: null };
       scannerPoolCacheRef.current = next;
@@ -2685,7 +2688,7 @@ export default function OrderManager({
       setScannerMode(mode);
       setCameraError('');
       const cached = scannerPoolCacheRef.current[mode];
-      if (isScannerPoolFresh(cached)) {
+      if (isScannerPoolUsable(cached)) {
         applyPoolEntryToActive(cached!, mode);
       } else {
         setScannerSyncLoading(true);
@@ -3180,7 +3183,9 @@ export default function OrderManager({
 
       try {
         // Local HashMap từ scanner-sync — miss thì fallback HTTP lookup (Mongo + Shopee live).
-        const syncHit = lookupScannerSyncMap(scannerSyncMapRef.current, trimmed);
+        const syncHit = Date.now() - scannerPoolFetchedAtRef.current < 180_000
+          ? lookupScannerSyncMap(scannerSyncMapRef.current, trimmed)
+          : null;
         let order: Order | null = null;
         if (syncHit) {
           const fromPool = findOrderByScanPayload(ordersRef.current, trimmed, orderScanIndex);
@@ -3193,9 +3198,9 @@ export default function OrderManager({
           try {
             order = await lookupOrderByScanCode(
               trimmed,
-              ordersRef.current,
+              [],
               token,
-              orderScanIndex,
+              undefined,
             );
             if (order) {
               const nextMap = putOrderIntoScannerSyncMap(
@@ -3701,7 +3706,9 @@ export default function OrderManager({
       lastQrScanRef.current = { key, at: now };
 
       // Local HashMap O(1) từ scanner-sync — miss thì fallback HTTP lookup (1 mã).
-      const syncHit = lookupScannerSyncMap(scannerSyncMapRef.current, trimmed);
+      const syncHit = Date.now() - scannerPoolFetchedAtRef.current < 180_000
+          ? lookupScannerSyncMap(scannerSyncMapRef.current, trimmed)
+          : null;
       let localOrder: Order | null = null;
       if (syncHit) {
         localOrder = scannerSyncEntryToOrder(syncHit);
@@ -4228,54 +4235,23 @@ export default function OrderManager({
     };
   }, [focusScanner, scannerMode, scannerSyncReady, cameraRestartKey]);
 
-  // Prefetch cả 2 mode khi mở Quét mã — không abort khi chọn mode; abort khi đóng scanner.
+  // Warm only the common handover pool while idle. The selected mode loads independently.
   const scannerPrefetchAbortRef = React.useRef<AbortController | null>(null);
   useEffect(() => {
-    if (!focusScanner) {
-      scannerPrefetchAbortRef.current?.abort();
-      scannerPrefetchAbortRef.current = null;
-      setScannerPoolPrefetching(false);
-      return;
-    }
-    let cancelled = false;
+    if (focusScanner || isScannerPoolFresh(scannerPoolCacheRef.current.handover)) return;
     const controller = new AbortController();
-    scannerPrefetchAbortRef.current = controller;
-    const now = Date.now();
-    const needHandover = !isScannerPoolFresh(scannerPoolCacheRef.current.handover, now);
-    const needReturn = !isScannerPoolFresh(scannerPoolCacheRef.current.return, now);
-    if (!needHandover && !needReturn) {
-      setScannerPoolPrefetching(false);
-      return () => {
-        cancelled = true;
-      };
-    }
-    setScannerPoolPrefetching(true);
-    void (async () => {
-      const result = await prefetchBothScannerPools({ signal: controller.signal });
-      if (cancelled || controller.signal.aborted) return;
-      setScannerPoolCache((prev) => {
-        const next: ScannerPoolCache = {
-          handover: result.handover ?? prev.handover,
-          return: result.return ?? prev.return,
-        };
-        scannerPoolCacheRef.current = next;
-        const active = scannerModeRef.current;
-        if (active && next[active] && isScannerPoolFresh(next[active])) {
-          applyPoolEntryToActive(next[active]!, active);
-        }
-        return next;
-      });
-      setScannerPoolPrefetching(false);
-    })();
-    return () => {
-      cancelled = true;
-      // Abort prefetch khi unmount / đóng scanner / re-run deps.
-      controller.abort();
-      if (scannerPrefetchAbortRef.current === controller) {
-        scannerPrefetchAbortRef.current = null;
-      }
-    };
-  }, [focusScanner, applyPoolEntryToActive]);
+    const timer = window.setTimeout(() => {
+      void fetchScannerSyncPool('handover', { signal: controller.signal }).then((entry) => {
+        if (controller.signal.aborted) return;
+        setScannerPoolCache((prev) => {
+          const next = { ...prev, handover: entry };
+          scannerPoolCacheRef.current = next;
+          return next;
+        });
+      }).catch(() => undefined);
+    }, 1500);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [focusScanner]);
 
   /** Làm mới thủ công cả 2 pool quét (bỏ qua cache) — dùng khi prefetch nền quá lâu/lỗi. */
   const manualRefreshScannerPools = React.useCallback(() => {
@@ -4324,7 +4300,6 @@ export default function OrderManager({
       try {
         const entry = await fetchScannerSyncPool(mode, {
           signal: controller.signal,
-          fresh: true,
         });
         if (cancelled) return;
         mergePool({ [mode]: entry });
@@ -4337,7 +4312,7 @@ export default function OrderManager({
     };
 
     const cached = scannerPoolCacheRef.current[mode];
-    if (isScannerPoolFresh(cached)) {
+    if (isScannerPoolUsable(cached)) {
       applyPoolEntryToActive(cached!, mode);
       if (isScannerPoolStale(cached)) {
         void refreshModeInBackground();

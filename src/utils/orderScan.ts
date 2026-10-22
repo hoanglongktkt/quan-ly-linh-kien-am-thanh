@@ -1,6 +1,7 @@
 import type { Order } from '../types';
 import { isShopeeInternalTrackingCode } from './orderTracking';
 import { isReturnScanLocked } from './orderLocalStatus';
+import { decodeJwtPayload } from './jwtClient';
 
 export type ScannerMode = 'handover' | 'return';
 
@@ -12,12 +13,12 @@ export function normalizeOrderScanKey(raw: string): string {
     .replace(/[\s\-_#./\\|:;,]+/g, '');
 }
 
-/** Heuristic: QR waybill — prefix hãng, alphanumeric, hoặc toàn số 6–40 (GHN). */
+/** Heuristic: QR waybill - prefix hang, alphanumeric, ho?c to�n s? 6-40 (GHN). */
 export function isLikelyTrackingCode(raw: string): boolean {
   const key = normalizeOrderScanKey(raw);
   if (!key || key.length < 6 || key.length > 40) return false;
   if (isShopeeInternalTrackingCode(key)) return false;
-  // Shopee order_sn kiểu 240814N2XXXX — không phải mã vận đơn.
+  // Shopee order_sn ki?u 240814N2XXXX - kh�ng ph?i ma v?n don.
   if (/^\d{6}[A-Z][A-Z0-9]{5,}$/i.test(key)) return false;
   if (/^\d{6,40}$/.test(key)) return true;
   return /^[A-Z0-9][A-Z0-9\-]{5,39}$/.test(key);
@@ -26,7 +27,7 @@ export function isLikelyTrackingCode(raw: string): boolean {
 function flexibleCodeMatch(scanKey: string, fieldKey: string): boolean {
   if (!scanKey || !fieldKey) return false;
   if (scanKey === fieldKey) return true;
-  // Mã đủ dài: endsWith bắt prefix/suffix dư từ máy quét; includes bắt đoạn giữa.
+  // Ma d? d�i: endsWith b?t prefix/suffix du t? m�y qu�t; includes b?t do?n gi?a.
   if (scanKey.length >= 8 && fieldKey.length >= 8) {
     if (fieldKey.endsWith(scanKey) || scanKey.endsWith(fieldKey)) return true;
   }
@@ -180,7 +181,7 @@ function lookupExactFromScanIndex(index: OrderScanIndex, scanKeys: string[]): Or
   return null;
 }
 
-/** Fallback sau exact: endsWith / includes trên toàn bộ key trong index. */
+/** Fallback sau exact: endsWith / includes tr�n to�n b? key trong index. */
 function lookupFlexibleFromScanIndex(index: OrderScanIndex, scanKeys: string[]): Order | null {
   const maps = [index.byTracking, index.byInternal, index.byOrderSn, index.byPackage, index.byId];
   for (const sk of scanKeys) {
@@ -195,7 +196,7 @@ function lookupFlexibleFromScanIndex(index: OrderScanIndex, scanKeys: string[]):
   return null;
 }
 
-/** Find order — prioritizes tracking match when scan looks like waybill code. */
+/** Find order - prioritizes tracking match when scan looks like waybill code. */
 export function findOrderByScanPayload(
   orders: Order[],
   raw: string,
@@ -302,7 +303,7 @@ export async function lookupOrderByScanCode(
   }
 }
 
-/** Ghi đơn vừa lookup vào HashMap súng — lần quét sau O(1), không gọi lại HTTP. */
+/** Ghi don v?a lookup v�o HashMap s�ng - l?n qu�t sau O(1), kh�ng g?i l?i HTTP. */
 export function putOrderIntoScannerSyncMap(
   map: Map<string, ScannerSyncEntry>,
   order: Order,
@@ -362,7 +363,7 @@ export function putOrderIntoScannerSyncMap(
   return next;
 }
 
-/** Âm thanh public tạm (mp3 ngắn) — success / warning(hủy) / error / pending(dò ngầm). */
+/** Am thanh public t?m (mp3 ng?n) - success / warning(h?y) / error / pending(d� ng?m). */
 export const SCAN_SOUND_URLS = {
   success:
     'https://actions.google.com/sounds/v1/cartoon/pop.ogg',
@@ -372,7 +373,7 @@ export const SCAN_SOUND_URLS = {
     'https://actions.google.com/sounds/v1/cartoon/wood_plank_flicks.ogg',
   pending:
     'https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg',
-  /** Quét trùng đơn đã bàn giao ĐVVC — file local, khác success/hủy/hoàn. */
+  /** Qu�t tr�ng don da b�n giao DVVC - file local, kh�c success/h?y/ho�n. */
   duplicate: '/sounds/warning.mp3',
 } as const;
 
@@ -389,8 +390,8 @@ function playHtmlAudio(url: string) {
 }
 
 /**
- * Âm riêng khi quét trùng đơn ĐÃ giao ĐVVC.
- * Ưu tiên /sounds/warning.mp3; fallback Web Audio nếu file lỗi / autoplay bị chặn.
+ * Am ri�ng khi qu�t tr�ng don DA giao DVVC.
+ * Uu ti�n /sounds/warning.mp3; fallback Web Audio n?u file l?i / autoplay b? ch?n.
  */
 export function playDuplicateHandedOverSound() {
   try {
@@ -408,7 +409,7 @@ export function playDuplicateHandedOverSound() {
   }
 }
 
-/** Web Audio fallback — success (2 tone cao), warning (còi), error (trầm dài). */
+/** Web Audio fallback - success (2 tone cao), warning (c�i), error (tr?m d�i). */
 function playWebAudioTone(type: ScanSoundType) {
   try {
     const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -435,12 +436,12 @@ function playWebAudioTone(type: ScanSoundType) {
       beep(420, 0.14, 0.16, 0.4, 'square');
       beep(620, 0.32, 0.14, 0.35, 'square');
     } else if (type === 'pending') {
-      // 3 tone ngắn trung bình — khác success/warning/error, báo "đang dò ngầm".
+      // 3 tone ng?n trung b�nh - kh�c success/warning/error, b�o "dang d� ng?m".
       beep(740, 0, 0.07, 0.3, 'sine');
       beep(880, 0.1, 0.07, 0.28, 'sine');
       beep(740, 0.2, 0.1, 0.25, 'sine');
     } else if (type === 'duplicate') {
-      // 4 beep vàng nhanh — khác hẳn success (xanh) / warning hủy (còi) / error.
+      // 4 beep v�ng nhanh - kh�c h?n success (xanh) / warning h?y (c�i) / error.
       beep(880, 0, 0.09, 0.38, 'sawtooth');
       beep(660, 0.11, 0.09, 0.38, 'sawtooth');
       beep(880, 0.22, 0.09, 0.36, 'sawtooth');
@@ -462,7 +463,7 @@ export function playScanSound(type: ScanSoundType = 'success') {
   playWebAudioTone(type);
 }
 
-/** @deprecated — dùng playScanSound */
+/** @deprecated - d�ng playScanSound */
 export function playScanBeep(type: 'success' | 'error' = 'success') {
   playScanSound(type === 'success' ? 'success' : 'error');
 }
@@ -489,7 +490,7 @@ export function scanFeedback(type: ScanSoundType | 'success' | 'error') {
   vibrateScan(type);
 }
 
-/** Payload lean từ GET /api/orders/scanner-sync */
+/** Payload lean t? GET /api/orders/scanner-sync */
 export type ScannerSyncRow = {
   order_id: string;
   tracking_code: string;
@@ -503,11 +504,11 @@ export type ScannerSyncRow = {
 };
 
 export type ScannerSyncEntry = ScannerSyncRow & {
-  /** true nếu key map khớp return_waybill */
+  /** true n?u key map kh?p return_waybill */
   matchedReturn?: boolean;
 };
 
-/** Hash map mã VĐ → row — lookup O(1) khi quét. */
+/** Hash map ma VD  row - lookup O(1) khi qu�t. */
 export function buildScannerSyncMap(rows: ScannerSyncRow[]): Map<string, ScannerSyncEntry> {
   const map = new Map<string, ScannerSyncEntry>();
   for (const row of rows) {
@@ -545,7 +546,7 @@ export function lookupScannerSyncMap(
     const hit = map.get(sk);
     if (hit) return hit;
   }
-  // Flexible endsWith / includes cho mã ≥8 ký tự (máy quét dư prefix/suffix).
+  // Flexible endsWith / includes cho ma �8 ky t? (m�y qu�t du prefix/suffix).
   for (const sk of keys) {
     if (sk.length < 8) continue;
     for (const [mapKey, entry] of map) {
@@ -557,13 +558,13 @@ export function lookupScannerSyncMap(
 }
 
 /**
- * TTL cache phiên FE cho pool scanner-sync (ms) — khớp TTL cache server (240s)
- * để tránh client coi "còn hạn" trong khi server đã âm thầm query lại.
+ * TTL cache phi�n FE cho pool scanner-sync (ms) - kh?p TTL cache server (240s)
+ * d? tr�nh client coi "c�n h?n" trong khi server da �m th?m query l?i.
  */
 export const SCANNER_POOL_CACHE_TTL_MS = 240_000;
-/** Coi gần hết hạn → refresh nền (stale-while-revalidate). */
+/** Coi g?n h?t h?n  refresh n?n (stale-while-revalidate). */
 export const SCANNER_POOL_STALE_MS = 180_000;
-/** Timeout 1 lần gọi scanner-sync — không chờ proxy 60s. */
+/** Timeout 1 l?n g?i scanner-sync - kh�ng ch? proxy 60s. */
 export const SCANNER_SYNC_FETCH_TIMEOUT_MS = 12_000;
 
 export type ScannerPoolCacheEntry = {
@@ -577,6 +578,71 @@ export type ScannerPoolCache = {
   handover: ScannerPoolCacheEntry | null;
   return: ScannerPoolCacheEntry | null;
 };
+
+// Persist only lean scan rows, scoped to the signed-in account. Never store tokens.
+const SCANNER_DISPLAY_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+function scannerStorageKey(mode: ScannerMode): string | null {
+  try {
+    const username = decodeJwtPayload(localStorage.getItem('admin_token') || '')?.username;
+    return username ? `scanner_pool_v1:${username}:${mode}` : null;
+  } catch { return null; }
+}
+
+export function isScannerPoolUsable(entry: ScannerPoolCacheEntry | null | undefined): boolean {
+  return isScannerPoolFresh(entry, Date.now(), SCANNER_DISPLAY_MAX_AGE_MS);
+}
+
+export function loadScannerPoolCache(): ScannerPoolCache {
+  const load = (mode: ScannerMode): ScannerPoolCacheEntry | null => {
+    try {
+      const key = scannerStorageKey(mode);
+      if (!key) return null;
+      const saved = JSON.parse(localStorage.getItem(key) || 'null');
+      if (!saved || !Array.isArray(saved.rows) || !Number.isFinite(saved.fetchedAt) || saved.fetchedAt > Date.now()) return null;
+      const entry = { ...saved, map: buildScannerSyncMap(saved.rows) };
+      return isScannerPoolUsable(entry) ? entry : null;
+    } catch { return null; }
+  };
+  return { handover: load('handover'), return: load('return') };
+}
+
+export function clearScannerPoolCache(mode: ScannerMode): void {
+  try {
+    const key = scannerStorageKey(mode);
+    if (key) localStorage.removeItem(key);
+  } catch { /* Storage may be unavailable. */ }
+}
+
+type ScannerFetchOptions = {
+  lookbackDays?: number;
+  token?: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  fresh?: boolean;
+};
+const scannerPoolRequests = new Map<string, Promise<ScannerPoolCacheEntry>>();
+
+/** Each caller can leave without cancelling another caller's shared request. */
+export async function fetchScannerSyncPool(mode: ScannerMode, opts?: ScannerFetchOptions): Promise<ScannerPoolCacheEntry> {
+  if (opts?.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  const token = opts?.token ?? (typeof localStorage !== 'undefined' ? localStorage.getItem('admin_token') || '' : '');
+  const key = JSON.stringify([token, mode, opts?.lookbackDays ?? 30]);
+  let request = scannerPoolRequests.get(key);
+  if (!request) {
+    request = requestScannerSyncPool(mode, { ...opts, token, signal: undefined });
+    scannerPoolRequests.set(key, request);
+    void request.finally(() => {
+      if (scannerPoolRequests.get(key) === request) scannerPoolRequests.delete(key);
+    }).catch(() => undefined);
+  }
+  if (!opts?.signal) return request;
+  const signal = opts.signal;
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(new DOMException('Aborted', 'AbortError'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    request!.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
+}
 
 export function isScannerPoolFresh(
   entry: ScannerPoolCacheEntry | null | undefined,
@@ -609,7 +675,7 @@ export function countScannerSyncCodes(rows: ScannerSyncRow[]): number {
  * Fetch lean pool cho 1 mode scanner-sync.
  * Timeout 12s + optional AbortSignal; cache: no-store.
  */
-export async function fetchScannerSyncPool(
+async function requestScannerSyncPool(
   mode: ScannerMode,
   opts?: {
     lookbackDays?: number;
@@ -623,6 +689,7 @@ export async function fetchScannerSyncPool(
   const token =
     opts?.token ??
     (typeof localStorage !== 'undefined' ? localStorage.getItem('admin_token') || '' : '');
+  const storageKey = scannerStorageKey(mode);
   const params = new URLSearchParams();
   params.set('mode', mode);
   if (mode === 'return') {
@@ -652,19 +719,26 @@ export async function fetchScannerSyncPool(
       code_count?: number;
       success?: boolean;
     };
-    const rows = Array.isArray(data.orders) ? data.orders : [];
+    if (data.success === false || !Array.isArray(data.orders)) throw new Error('Invalid scanner response');
+    const rows = data.orders;
     const map = buildScannerSyncMap(rows);
     const codeCount = Number.isFinite(Number(data.code_count))
       ? Number(data.code_count)
       : countScannerSyncCodes(rows);
-    return { map, rows, codeCount, fetchedAt: Date.now() };
+    const entry = { map, rows, codeCount, fetchedAt: Date.now() };
+    try {
+      if (storageKey && storageKey === scannerStorageKey(mode) && (mode !== 'return' || !opts?.lookbackDays || opts.lookbackDays === 30)) {
+        localStorage.setItem(storageKey, JSON.stringify({ rows, codeCount, fetchedAt: entry.fetchedAt }));
+      }
+    } catch { /* Cache failure must not prevent scanning. */ }
+    return entry;
   } finally {
     clearTimeout(timer);
     if (opts?.signal) opts.signal.removeEventListener('abort', onAbort);
   }
 }
 
-/** Prefetch song song cả 2 mode (1 retry ngắn nếu fail). */
+/** Prefetch song song c? 2 mode (1 retry ng?n n?u fail). */
 export async function prefetchBothScannerPools(opts?: {
   token?: string;
   signal?: AbortSignal;
@@ -690,7 +764,7 @@ export async function prefetchBothScannerPools(opts?: {
   return { handover, return: ret };
 }
 
-/** Stub Order tối thiểu từ scanner-sync — đủ phân loại + bàn giao. */
+/** Stub Order t?i thi?u t? scanner-sync - d? ph�n lo?i + b�n giao. */
 export function scannerSyncEntryToOrder(entry: ScannerSyncEntry): Order {
   const sn = String(entry.order_id || '').replace(/^shopee-/i, '').trim();
   const statusRaw = String(entry.status || '').toLowerCase();
@@ -781,3 +855,4 @@ export function scannerSyncEntryToOrder(entry: ScannerSyncEntry): Order {
     revenue: 0,
   } as Order;
 }
+
