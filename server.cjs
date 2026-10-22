@@ -60590,7 +60590,7 @@ var require_gaxios = __commonJS({
     var retry_js_1 = require_retry3();
     var stream_1 = require("stream");
     var interceptor_js_1 = require_interceptor();
-    var randomUUID2 = async () => globalThis.crypto?.randomUUID() || (await import("crypto")).randomUUID();
+    var randomUUID = async () => globalThis.crypto?.randomUUID() || (await import("crypto")).randomUUID();
     var HTTP_STATUS_NO_CONTENT = 204;
     var Gaxios = class {
       agentCache = /* @__PURE__ */ new Map();
@@ -60863,7 +60863,7 @@ var require_gaxios = __commonJS({
          */
         ["Blob", "File", "FormData"].includes(opts.data?.constructor?.name || "");
         if (opts.multipart?.length) {
-          const boundary = await randomUUID2();
+          const boundary = await randomUUID();
           preparedHeaders.set("content-type", `multipart/related; boundary=${boundary}`);
           opts.body = stream_1.Readable.from(this.getMultipartRequest(opts.multipart, boundary));
         } else if (shouldDirectlyPassData) {
@@ -79902,59 +79902,6 @@ var import_crypto6 = __toESM(require("crypto"), 1);
 var import_dotenv2 = __toESM(require_main(), 1);
 var import_pdf_lib = __toESM(require_cjs(), 1);
 
-// utils/printJobs.js
-var import_node_crypto3 = require("node:crypto");
-function createPrintJobs({ timeoutMs = 14e4, ttlMs = 10 * 6e4, maxActive = 3 } = {}) {
-  const jobs = /* @__PURE__ */ new Map();
-  const prune = () => {
-    for (const [id, job] of jobs) {
-      if (!job.running && job.finishedAt && Date.now() - job.finishedAt > ttlMs) jobs.delete(id);
-    }
-  };
-  return {
-    start(owner, work) {
-      prune();
-      if ([...jobs.values()].filter((job2) => job2.running).length >= maxActive || jobs.size >= 100) {
-        throw new Error("H\xE0ng \u0111\u1EE3i in \u0111ang \u0111\u1EA7y. Vui l\xF2ng th\u1EED l\u1EA1i sau.");
-      }
-      const id = (0, import_node_crypto3.randomUUID)();
-      const controller = new AbortController();
-      const job = { id, owner, status: "running", message: "\u0110ang ch\u1EDD Shopee t\u1EA1o PDF v\u1EADn \u0111\u01A1n...", finishedAt: 0 };
-      jobs.set(id, job);
-      const timer2 = setTimeout(() => {
-        controller.abort(new Error("print_job_timeout"));
-        job.status = "failed";
-        job.message = "H\u1EBFt th\u1EDDi gian ch\u1EDD file in. \u0110\u01A1n \u0111\xE3 x\xE1c nh\u1EADn \u0111\u01B0\u1EE3c gi\u1EEF nguy\xEAn; h\xE3y b\u1EA5m In l\u1EA1i.";
-        job.finishedAt = Date.now();
-      }, timeoutMs);
-      timer2.unref?.();
-      job.running = true;
-      void Promise.resolve().then(() => work(controller.signal, (message) => {
-        if (!job.finishedAt) job.message = message;
-      })).then((result) => {
-        if (job.finishedAt) return;
-        job.status = "done";
-        job.result = result;
-      }, (error) => {
-        if (job.finishedAt) return;
-        job.status = "failed";
-        job.message = String(error?.message || error);
-      }).finally(() => {
-        clearTimeout(timer2);
-        job.running = false;
-        job.finishedAt ||= Date.now();
-      });
-      return id;
-    },
-    get(id, owner) {
-      prune();
-      const job = jobs.get(id);
-      if (!job || job.owner !== owner) return null;
-      return { id: job.id, status: job.status, message: job.message, result: job.result };
-    }
-  };
-}
-
 // modules/shopee-sync/schedulers/orders.js
 var import_node_cron = __toESM(require("node-cron"), 1);
 
@@ -80023,7 +79970,7 @@ var WebhookJob = import_mongoose3.default.models.WebhookJob || import_mongoose3.
 var WebhookJob_default = WebhookJob;
 
 // modules/jobs/webhookJobQueue.js
-var import_node_crypto4 = __toESM(require("node:crypto"), 1);
+var import_node_crypto3 = __toESM(require("node:crypto"), 1);
 
 // modules/operations/stallDiagnostics.js
 var import_node_os2 = __toESM(require("node:os"), 1);
@@ -80452,8 +80399,8 @@ async function enqueueOrderSyncJob(payload = {}, priority = 0) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload) || !Number.isFinite(priority) || priority < 0 || priority > 10 || payload.mode && !["quick", "full", "task"].includes(payload.mode) || payload.shopIds && (!Array.isArray(payload.shopIds) || payload.shopIds.some((id) => !/^\d+$/.test(String(id)))) || payload.lookbackSec != null && (!Number.isFinite(Number(payload.lookbackSec)) || Number(payload.lookbackSec) < 60)) {
     throw new Error("sync_job_invalid");
   }
-  const jobId = `sync:${import_node_crypto4.default.randomUUID()}`;
-  const activeKey = priority < 10 ? import_node_crypto4.default.createHash("sha256").update(JSON.stringify({
+  const jobId = `sync:${import_node_crypto3.default.randomUUID()}`;
+  const activeKey = priority < 10 ? import_node_crypto3.default.createHash("sha256").update(JSON.stringify({
     mode: payload.mode || "incremental",
     task: payload.task || "",
     shopIds: [...payload.shopIds || []].sort(),
@@ -80589,7 +80536,7 @@ async function claimNextJob() {
           worker_revision: 5,
           processing_stage: "starting",
           stage_started_at: now,
-          claim_token: import_node_crypto4.default.randomUUID(),
+          claim_token: import_node_crypto3.default.randomUUID(),
           next_run_at: leaseUntil
         }
       }
@@ -82039,7 +81986,7 @@ function readRawWebhookBody(req) {
 var import_express2 = __toESM(require_express2(), 1);
 
 // modules/webhooks/shopeeSignature.ts
-var import_node_crypto5 = __toESM(require("node:crypto"), 1);
+var import_node_crypto4 = __toESM(require("node:crypto"), 1);
 function normalizeSignature(value) {
   return value.trim().replace(/^(?:Bearer|HMAC)\s+/i, "").replace(/^sha256=/i, "").trim().toLowerCase();
 }
@@ -82047,7 +81994,7 @@ function timingSafeEqualHex(a, b) {
   try {
     const aBuf = Buffer.from(a, "hex");
     const bBuf = Buffer.from(b, "hex");
-    return aBuf.length === bBuf.length && import_node_crypto5.default.timingSafeEqual(aBuf, bBuf);
+    return aBuf.length === bBuf.length && import_node_crypto4.default.timingSafeEqual(aBuf, bBuf);
   } catch {
     return false;
   }
@@ -82101,7 +82048,7 @@ function verifyShopeeWebhookSignature(rawBody, authorization, requestUrls = []) 
   }
   for (const url2 of candidates) {
     const baseString = `${url2}|${bodyStr}`;
-    const expected = import_node_crypto5.default.createHmac("sha256", secret).update(baseString).digest("hex");
+    const expected = import_node_crypto4.default.createHmac("sha256", secret).update(baseString).digest("hex");
     if (timingSafeEqualHex(expected, supplied)) {
       console.log(`[Shopee Webhook] HMAC OK (url=${url2})`);
       return true;
@@ -82112,86 +82059,6 @@ function verifyShopeeWebhookSignature(rawBody, authorization, requestUrls = []) 
     urlCandidates: candidates
   });
   return false;
-}
-
-// utils/chatContent.js
-function safeChatUrl(value) {
-  if (typeof value !== "string") return "";
-  try {
-    const url2 = new URL(value.trim());
-    return ["https:", "http:"].includes(url2.protocol) ? url2.href : "";
-  } catch {
-    return "";
-  }
-}
-function scalar(value) {
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  return typeof value === "string" && value.trim() !== "[object Object]" ? value.trim() : "";
-}
-function parseChatContent(content, messageType = "") {
-  const nodes = [];
-  const seen = /* @__PURE__ */ new Set();
-  function visit(value, depth = 0) {
-    if (value == null || depth > 8 || nodes.length >= 250) return;
-    if (typeof value === "string") {
-      const trimmed = value.trim();
-      if (/^[{\[]/.test(trimmed) && trimmed.length <= 1e5) {
-        try {
-          visit(JSON.parse(trimmed), depth + 1);
-          return;
-        } catch {
-        }
-      }
-      nodes.push(value);
-    } else if (typeof value === "object" && !seen.has(value)) {
-      seen.add(value);
-      if (Array.isArray(value)) {
-        value.slice(0, 50).forEach((v) => visit(v, depth + 1));
-        return;
-      }
-      nodes.push(value);
-      for (const key of ["content", "text", "data", "order", "order_info", "order_card", "item", "item_info", "item_card", "product", "product_info", "product_card", "source_content", "message", "items", "item_list", "image", "images"]) {
-        if (value[key] != null) visit(value[key], depth + 1);
-      }
-    }
-  }
-  visit(content);
-  let orderSn = "", orderId = "", itemId = "", shopId = "", itemName = "", imageUrl = "", url2 = "", orderUrl = "", text = "";
-  const types3 = /* @__PURE__ */ new Set([String(messageType).toLowerCase()]);
-  for (const node of nodes) {
-    if (typeof node === "string") {
-      if (!text) text = scalar(node);
-      continue;
-    }
-    for (const hint of [node.message_type, node.type]) if (scalar(hint)) types3.add(scalar(hint).toLowerCase());
-    if (node.item_name || node.itemName || node.product_name || node.item_info || node.product_info || node.item_card || node.product_card) types3.add("product");
-    if (node.order_info || node.order_card) types3.add("order");
-    if (node.sticker || node.sticker_id || node.sticker_package_id) types3.add("sticker");
-    orderSn ||= scalar(node.order_sn) || scalar(node.ordersn) || scalar(node.orderSn);
-    orderId ||= scalar(node.order_id) || scalar(node.orderId);
-    itemId ||= scalar(node.item_id) || scalar(node.itemId) || scalar(node.product_id);
-    shopId ||= scalar(node.shop_id) || scalar(node.shopid) || scalar(node.shopId);
-    itemName ||= scalar(node.item_name) || scalar(node.itemName) || scalar(node.product_name) || scalar(node.name) || scalar(node.title);
-    imageUrl ||= safeChatUrl(node.image_url) || safeChatUrl(node.imageUrl) || safeChatUrl(node.thumb_url) || safeChatUrl(node.thumbnail_url) || safeChatUrl(node.image) || safeChatUrl(node.thumb);
-    url2 ||= safeChatUrl(node.item_url) || safeChatUrl(node.product_url) || safeChatUrl(node.order_url) || safeChatUrl(node.link) || safeChatUrl(node.url);
-    orderUrl ||= safeChatUrl(node.order_url);
-    if (node.order_sn || node.order_id || ["order", "order_card"].includes(scalar(node.message_type || node.type).toLowerCase())) {
-      orderUrl ||= safeChatUrl(node.url) || safeChatUrl(node.link);
-    }
-    text ||= scalar(node.text) || scalar(node.caption) || scalar(node.description);
-  }
-  const hasType = (...names) => names.some((name) => types3.has(name));
-  let kind = "empty";
-  if (orderSn || orderId || hasType("order", "order_card")) kind = "order";
-  else if (itemId || hasType("item", "product", "item_card", "product_card")) kind = "product";
-  else if (hasType("image") || imageUrl) kind = "image";
-  else if (text || url2) kind = "text";
-  else if (hasType("sticker")) kind = "sticker";
-  if (kind === "image" && !imageUrl) imageUrl = url2;
-  if (kind === "order") url2 = orderUrl;
-  if (kind === "product" && !url2 && /^\d+$/.test(itemId) && /^\d+$/.test(shopId)) url2 = `https://shopee.vn/product/${shopId}/${itemId}`;
-  const label = kind === "order" ? `[\u0110\u01A1n h\xE0ng] ${orderSn || orderId}`.trim() : kind === "product" ? `[S\u1EA3n ph\u1EA9m] ${itemName || itemId}`.trim() : kind === "image" ? "[H\xECnh \u1EA3nh]" : kind === "sticker" ? "[Sticker]" : text || url2;
-  return { kind, text: label, orderSn, orderId, itemId, itemName, imageUrl, url: url2 };
 }
 
 // models/Chat.js
@@ -82300,8 +82167,71 @@ function plainText(value) {
   if (!trimmed || trimmed === "[object Object]") return "";
   return trimmed;
 }
+function collectContentNodes(raw, depth, out) {
+  if (raw == null || depth > 4) return out;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if ((trimmed.startsWith("{") || trimmed.startsWith("[")) && trimmed.length <= 8e3) {
+      try {
+        collectContentNodes(JSON.parse(trimmed), depth + 1, out);
+        return out;
+      } catch {
+      }
+    }
+    out.push(raw);
+    return out;
+  }
+  const record = asRecord(raw);
+  if (!record) return out;
+  out.push(record);
+  const nestedKeys = ["content", "text", "data", "order", "order_info", "source_content", "message"];
+  for (let i2 = 0; i2 < nestedKeys.length; i2 += 1) {
+    const nested = record[nestedKeys[i2]];
+    if (nested && typeof nested === "object") collectContentNodes(nested, depth + 1, out);
+  }
+  return out;
+}
 function snippetFromContent(content, messageType) {
-  return parseChatContent(content, messageType).text.slice(0, 300);
+  try {
+    const nodes = collectContentNodes(content, 0, []);
+    const typeHint = String(messageType || "").trim().toLowerCase();
+    let orderSn = "";
+    let hasItem = false;
+    let hasImage = false;
+    let hasSticker = false;
+    let text = "";
+    let type = typeHint;
+    for (let i2 = 0; i2 < nodes.length; i2 += 1) {
+      const node = nodes[i2];
+      if (typeof node === "string") {
+        if (!text) text = plainText(node);
+        continue;
+      }
+      const nodeType = String(node.message_type || node.type || "").trim().toLowerCase();
+      if (nodeType) type = type || nodeType;
+      const sn = plainText(node.order_sn) || plainText(node.ordersn) || plainText(node.orderSn);
+      if (sn && !orderSn) orderSn = sn;
+      if (node.item_id || node.itemId || plainText(node.item_name) || plainText(node.itemName)) {
+        hasItem = true;
+      }
+      if (nodeType === "image" || node.image_url || node.imageUrl || node.thumb_url || node.image) {
+        hasImage = true;
+      }
+      if (node.sticker_id || node.sticker || node.sticker_package_id) hasSticker = true;
+      const nodeText = plainText(node.text) || plainText(node.caption);
+      if (nodeText && !text) text = nodeText;
+    }
+    if (orderSn) return `\u{1F4E6} [\u0110\u01A1n h\xE0ng] ${orderSn}`.slice(0, 300);
+    if (type === "order" || type === "order_card") return "\u{1F4E6} [\u0110\u01A1n h\xE0ng]";
+    if (hasItem || type === "item" || type === "product") return "\u{1F6CD}\uFE0F [S\u1EA3n ph\u1EA9m]";
+    if (hasImage || type === "image") return "\u{1F5BC}\uFE0F [H\xECnh \u1EA3nh]";
+    if (text) return text.slice(0, 300);
+    if (hasSticker || type === "sticker") return "[Sticker]";
+    return "";
+  } catch (error) {
+    logChatError("[Shopee Chat] snippetFromContent", error);
+    return "";
+  }
 }
 function forceSnippet(value, content, messageType) {
   try {
@@ -82320,14 +82250,7 @@ function normalizeStoredContent(raw, messageType) {
     return messageType ? { ...raw, message_type: raw.message_type || messageType } : raw;
   }
   if (typeof raw === "string" && raw.trim()) {
-    try {
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === "object") {
-        return { content: parsed, message_type: messageType || "unknown" };
-      }
-    } catch {
-    }
-    return { type: messageType || "text", text: raw.trim(), message_type: messageType || "text" };
+    return { type: "text", text: raw.trim(), message_type: messageType || "text" };
   }
   return { type: messageType || "unknown", message_type: messageType || "unknown" };
 }
@@ -125797,7 +125720,7 @@ var import_ip_address = __toESM(require_ip_address(), 1);
 var import_node_net3 = require("node:net");
 var import_debug = __toESM(require_src5(), 1);
 var import_node_buffer3 = require("node:buffer");
-var import_node_crypto6 = require("node:crypto");
+var import_node_crypto5 = require("node:crypto");
 var import_node_net4 = require("node:net");
 var ipv4CompatibleSubnet = new import_ip_address.Address6("::/96");
 function ipKeyGenerator(ip, ipv6Subnet = 56) {
@@ -125979,7 +125902,7 @@ var getResetSeconds = (windowMs, resetTime) => {
   return resetSeconds;
 };
 var getPartitionKey = (key) => {
-  const hash = (0, import_node_crypto6.createHash)("sha256");
+  const hash = (0, import_node_crypto5.createHash)("sha256");
   hash.update(key);
   const partitionKey = hash.digest("hex").slice(0, 12);
   return import_node_buffer3.Buffer.from(partitionKey).toString("base64");
@@ -140240,7 +140163,7 @@ async function updateWooCommerceOrderStatus(req, res) {
 init_wooCommerce();
 
 // modules/orders/orderWorkLock.js
-var import_node_crypto7 = __toESM(require("node:crypto"), 1);
+var import_node_crypto6 = __toESM(require("node:crypto"), 1);
 var import_mongoose18 = __toESM(require("mongoose"), 1);
 var import_node_os4 = __toESM(require("node:os"), 1);
 var completedOwners = /* @__PURE__ */ new Map();
@@ -140252,7 +140175,7 @@ async function withOrderWorkLock(shopId, orderSn, work) {
   if (import_mongoose18.default.connection.readyState !== 1 || !db) throw new Error("mongodb_not_ready");
   const locks = db.collection("shopee_order_work_locks");
   const key = `${shopId}:${orderSn}`;
-  const owner = import_node_crypto7.default.randomUUID();
+  const owner = import_node_crypto6.default.randomUUID();
   if (completedOwners.has(key)) {
     await locks.deleteOne({ _id: key, owner: completedOwners.get(key) });
     completedOwners.delete(key);
@@ -158876,22 +158799,19 @@ async function startServer() {
       list.map((sn) => String(sn || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
     );
   }
-  async function mergeBatchPdfBuffers(pdfBuffers, logPrefix, onInvalid, signal = AbortSignal.timeout(2e4)) {
+  async function mergeBatchPdfBuffers(pdfBuffers, logPrefix, onInvalid) {
     if (pdfBuffers.reduce((bytes, item) => bytes + item.buffer.length, 0) > 64 * 1024 * 1024) {
       throw new Error("File in qua lon. Vui long chia thanh cac lo nho hon.");
     }
     return pdfMergeGate.run(async () => {
-      signal.throwIfAborted();
-      const pdf = await mergeBatchPdfBuffersUnqueued(pdfBuffers, logPrefix, onInvalid, signal);
-      signal.throwIfAborted();
+      const pdf = await mergeBatchPdfBuffersUnqueued(pdfBuffers, logPrefix, onInvalid);
       return { pdf, bytes: await pdf.save() };
-    }, signal);
+    });
   }
-  async function mergeBatchPdfBuffersUnqueued(pdfBuffers, logPrefix, onInvalid, signal) {
+  async function mergeBatchPdfBuffersUnqueued(pdfBuffers, logPrefix, onInvalid) {
     const startedAt = Date.now();
     const mergedPdf = await import_pdf_lib.PDFDocument.create();
     for (let index = 0; index < pdfBuffers.length; index++) {
-      signal?.throwIfAborted();
       const { orderSn, buffer } = pdfBuffers[index];
       try {
         const sourcePdf = await import_pdf_lib.PDFDocument.load(buffer, { ignoreEncryption: true });
@@ -158929,10 +158849,9 @@ async function startServer() {
       AbortSignal.timeout(Math.max(1, deadlineAt - Date.now())),
       ...options?.signal ? [options.signal] : []
     ]);
-    const workDeadlineAt = Date.now() + WAYBILL_BATCH_DEADLINE_MS;
     const values = await sharedLabelWork(pending, async (owned) => {
-      if (Date.now() >= workDeadlineAt) throw new Error("batch_deadline:pdf_queue");
-      const result = await fetchBatchPdfDocumentsByShopUnshared(orders, owned, workDeadlineAt, logPrefix);
+      if (Date.now() >= deadlineAt) throw new Error("batch_deadline:pdf_queue");
+      const result = await fetchBatchPdfDocumentsByShopUnshared(orders, owned, deadlineAt, logPrefix);
       return new Map(owned.map((sn) => {
         const document2 = result.documents.find((doc) => doc.orderSns.includes(sn));
         const failure = result.failedOrders.find((item) => item.orderSn === sn);
@@ -159385,10 +159304,6 @@ async function startServer() {
     const t0 = Date.now();
     const deadlineAt = t0 + BATCH_PRINT_ONLY_DEADLINE_MS;
     const requestAbortController = new AbortController();
-    const jobSignal = req.printJobSignal;
-    const abortFromJob = () => requestAbortController.abort(jobSignal?.reason);
-    if (jobSignal?.aborted) abortFromJob();
-    else jobSignal?.addEventListener("abort", abortFromJob, { once: true });
     const abortOnClientDisconnect = () => requestAbortController.abort(new Error("client_disconnected"));
     req.once("aborted", abortOnClientDisconnect);
     beginLogisticsWork("batch-print-only");
@@ -159430,7 +159345,6 @@ async function startServer() {
       const pdfFailures = /* @__PURE__ */ new Map();
       const pendingSns = new Set(mergeSns);
       const printedFromBatch = [];
-      req.printProgress?.("\u0110ang ch\u1EDD Shopee t\u1EA1o v\xE0 t\u1EA3i PDF v\u1EADn \u0111\u01A1n...");
       const batchPdfResult = await fetchBatchPdfDocumentsByShop(
         orders,
         mergeSns,
@@ -159456,13 +159370,6 @@ async function startServer() {
       for (const failure of batchPdfResult.failedOrders) {
         if (pendingSns.has(failure.orderSn)) pdfFailures.set(failure.orderSn, failure);
       }
-      for (const sn of pendingSns) {
-        if (!pdfFailures.has(sn)) pdfFailures.set(sn, {
-          orderSn: sn,
-          error: "document_not_ready",
-          message: "Shopee ch\u01B0a t\u1EA1o xong PDF."
-        });
-      }
       if (pdfBuffers.length === 0) {
         return res.status(400).json({
           success: false,
@@ -159471,8 +159378,6 @@ async function startServer() {
         });
       }
       console.log(`[Batch Print Only] G\u1ED9p ${pdfBuffers.length} PDF...`);
-      req.printProgress?.(`\u0110ang g\u1ED9p PDF cho ${pdfBuffers.length}/${payloadOrderSns.length} \u0111\u01A1n...`);
-      requestAbortController.signal.throwIfAborted();
       const { pdf: mergedPdf, bytes: mergedBytes } = await mergeBatchPdfBuffers(
         pdfBuffers,
         "Batch Print Only",
@@ -159484,8 +159389,7 @@ async function startServer() {
               message: "D\u1EEF li\u1EC7u PDF b\u1ECB h\u1ECFng ho\u1EB7c kh\xF4ng th\u1EC3 g\u1ED9p."
             });
           }
-        },
-        AbortSignal.any([requestAbortController.signal, AbortSignal.timeout(2e4)])
+        }
       );
       if (mergedPdf.getPageCount() === 0) {
         return res.status(400).json({
@@ -159517,7 +159421,6 @@ async function startServer() {
         url: batchUrl,
         filename: batchFilename,
         pdfCount: printedCount,
-        total: cleanSns.length,
         totalPages: mergedPdf.getPageCount(),
         printedOrders,
         failedOrders,
@@ -159530,7 +159433,6 @@ async function startServer() {
         message: "L\u1ED7i server: " + error.message
       });
     } finally {
-      jobSignal?.removeEventListener("abort", abortFromJob);
       req.off("aborted", abortOnClientDisconnect);
       endLogisticsWork();
     }
@@ -159713,51 +159615,6 @@ async function startServer() {
   app.post("/api/orders/batch-confirm-async", authMiddleware, confirmOnlyAsyncRoute);
   app.post("/api/orders/get-pdf", authMiddleware, getPdfRoute);
   app.post("/api/orders/batch-confirm-print", authMiddleware, batchConfirmPrintRoute);
-  const mergedPrintJobs = createPrintJobs();
-  const printJobOwner = (req) => String(req.user?.username || req.user?.id || req.user?.sub || "");
-  app.post("/api/orders/batch-print-async", authMiddleware, (req, res) => {
-    const sns = parseBatchPrintOrderSns(req.body);
-    if (!sns.length || sns.length > 500) return res.status(400).json({ success: false, message: "M\u1ED7i l\xF4 in c\u1EA7n t\u1EEB 1 \u0111\u1EBFn 500 \u0111\u01A1n." });
-    try {
-      const jobId = mergedPrintJobs.start(printJobOwner(req), async (signal, progress) => {
-        const backgroundReq = {
-          body: { ...req.body, orderSns: sns, ordersn: sns },
-          path: "/api/orders/batch-print-only",
-          user: req.user,
-          printJobSignal: signal,
-          printProgress: progress,
-          once() {
-          },
-          off() {
-          }
-        };
-        let result;
-        let status = 200;
-        const backgroundRes = {
-          status(code) {
-            status = code;
-            return this;
-          },
-          json(data) {
-            result = data;
-            return this;
-          }
-        };
-        await batchPrintOnlyRoute(backgroundReq, backgroundRes);
-        if (status >= 400 || !result?.success) throw new Error(result?.message || "Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c file in.");
-        return result;
-      });
-      return res.status(202).json({ success: true, jobId });
-    } catch (error) {
-      return res.status(429).json({ success: false, message: error.message });
-    }
-  });
-  app.get("/api/orders/batch-print-jobs/:id", authMiddleware, (req, res) => {
-    const job = mergedPrintJobs.get(String(req.params.id), printJobOwner(req));
-    res.setHeader("Cache-Control", "no-store");
-    if (!job) return res.status(404).json({ success: false, message: "Phi\xEAn in \u0111\xE3 h\u1EBFt h\u1EA1n ho\u1EB7c m\xE1y ch\u1EE7 v\u1EEBa kh\u1EDFi \u0111\u1ED9ng l\u1EA1i. H\xE3y b\u1EA5m In l\u1EA1i." });
-    return res.json({ success: true, ...job });
-  });
   app.post("/api/orders/batch-print", authMiddleware, batchPrintOnlyRoute);
   app.post("/api/orders/batch-print-only", authMiddleware, batchPrintOnlyRoute);
   app.post("/api/orders/silent-prefetch-pdfs", authMiddleware, silentPrefetchPdfsRoute);

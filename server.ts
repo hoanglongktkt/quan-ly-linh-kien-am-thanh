@@ -8,7 +8,6 @@ import fs from "fs";
 import crypto from "crypto";
 import dotenv from "dotenv";
 import { PDFDocument } from "pdf-lib";
-import { createPrintJobs } from "./utils/printJobs.js";
 import { scheduleAutoIncrementalOrdersSync, scheduleHandedOverStatusReconcile, scheduleShopeeReturnRequestsSync, scheduleReadyToShipBackfill, scheduleLabelPdfCleanup, scheduleGhnStatusSync, scheduleKeepAlivePing } from "./cron/index.js";
 import {
   initOrderSyncService,
@@ -24307,29 +24306,24 @@ async function startServer() {
   async function mergeBatchPdfBuffers(
     pdfBuffers: Array<{ orderSn: string; buffer: Buffer }>, logPrefix: string,
     onInvalid: (orderSn: string) => void,
-    signal: AbortSignal = AbortSignal.timeout(20_000),
   ): Promise<{ pdf: PDFDocument; bytes: Uint8Array }> {
     if (pdfBuffers.reduce((bytes, item) => bytes + item.buffer.length, 0) > 64 * 1024 * 1024) {
       throw new Error("File in qua lon. Vui long chia thanh cac lo nho hon.");
     }
     return pdfMergeGate.run(async () => {
-      signal.throwIfAborted();
-      const pdf = await mergeBatchPdfBuffersUnqueued(pdfBuffers, logPrefix, onInvalid, signal);
-      signal.throwIfAborted();
+      const pdf = await mergeBatchPdfBuffersUnqueued(pdfBuffers, logPrefix, onInvalid);
       return { pdf, bytes: await pdf.save() };
-    }, signal);
+    });
   }
 
   async function mergeBatchPdfBuffersUnqueued(
     pdfBuffers: Array<{ orderSn: string; buffer: Buffer }>,
     logPrefix: string,
     onInvalid: (orderSn: string) => void,
-    signal?: AbortSignal,
   ): Promise<PDFDocument> {
     const startedAt = Date.now();
     const mergedPdf = await PDFDocument.create();
     for (let index = 0; index < pdfBuffers.length; index++) {
-      signal?.throwIfAborted();
       const { orderSn, buffer } = pdfBuffers[index];
       try {
         const sourcePdf = await PDFDocument.load(buffer, { ignoreEncryption: true });
@@ -24373,13 +24367,10 @@ async function startServer() {
       AbortSignal.timeout(Math.max(1, deadlineAt - Date.now())),
       ...(options?.signal ? [options.signal] : []),
     ]);
-    // Generation has its own bounded budget. A short prefetch reader must not
-    // terminate the shared job that an interactive print reader is still using.
-    const workDeadlineAt = Date.now() + WAYBILL_BATCH_DEADLINE_MS;
     // A disconnected reader must not cancel a shared generation used by another reader.
     const values = await sharedLabelWork(pending, async (owned: string[]) => {
-      if (Date.now() >= workDeadlineAt) throw new Error("batch_deadline:pdf_queue");
-      const result = await fetchBatchPdfDocumentsByShopUnshared(orders, owned, workDeadlineAt, logPrefix);
+      if (Date.now() >= deadlineAt) throw new Error("batch_deadline:pdf_queue");
+      const result = await fetchBatchPdfDocumentsByShopUnshared(orders, owned, deadlineAt, logPrefix);
       return new Map(owned.map((sn) => {
         const document = result.documents.find((doc) => doc.orderSns.includes(sn));
         const failure = result.failedOrders.find((item) => item.orderSn === sn);
@@ -24915,10 +24906,6 @@ async function startServer() {
     const t0 = Date.now();
     const deadlineAt = t0 + BATCH_PRINT_ONLY_DEADLINE_MS;
     const requestAbortController = new AbortController();
-    const jobSignal = req.printJobSignal as AbortSignal | undefined;
-    const abortFromJob = () => requestAbortController.abort(jobSignal?.reason);
-    if (jobSignal?.aborted) abortFromJob();
-    else jobSignal?.addEventListener("abort", abortFromJob, { once: true });
     const abortOnClientDisconnect = () =>
       requestAbortController.abort(new Error("client_disconnected"));
     req.once("aborted", abortOnClientDisconnect);
@@ -24976,7 +24963,6 @@ async function startServer() {
       // Cache → enrich → create → poll READY (bỏ đơn kẹt) → download, rồi gộp đúng thứ tự payload.
       const pendingSns = new Set(mergeSns);
       const printedFromBatch: string[] = [];
-      req.printProgress?.("Đang chờ Shopee tạo và tải PDF vận đơn...");
       const batchPdfResult = await fetchBatchPdfDocumentsByShop(
         orders,
         mergeSns,
@@ -25004,12 +24990,6 @@ async function startServer() {
         if (pendingSns.has(failure.orderSn)) pdfFailures.set(failure.orderSn, failure);
       }
 
-      for (const sn of pendingSns) {
-        if (!pdfFailures.has(sn)) pdfFailures.set(sn, {
-          orderSn: sn, error: "document_not_ready", message: "Shopee chưa tạo xong PDF.",
-        });
-      }
-
       if (pdfBuffers.length === 0) {
         return res.status(400).json({
           success: false,
@@ -25020,8 +25000,6 @@ async function startServer() {
 
       // Gộp tất cả PDF
       console.log(`[Batch Print Only] Gộp ${pdfBuffers.length} PDF...`);
-      req.printProgress?.(`Đang gộp PDF cho ${pdfBuffers.length}/${payloadOrderSns.length} đơn...`);
-      requestAbortController.signal.throwIfAborted();
       const { pdf: mergedPdf, bytes: mergedBytes } = await mergeBatchPdfBuffers(
         pdfBuffers,
         "Batch Print Only",
@@ -25034,7 +25012,6 @@ async function startServer() {
             });
           }
         },
-        AbortSignal.any([requestAbortController.signal, AbortSignal.timeout(20_000)]),
       );
 
       if (mergedPdf.getPageCount() === 0) {
@@ -25072,7 +25049,6 @@ async function startServer() {
         url: batchUrl,
         filename: batchFilename,
         pdfCount: printedCount,
-        total: cleanSns.length,
         totalPages: mergedPdf.getPageCount(),
         printedOrders,
         failedOrders,
@@ -25087,7 +25063,6 @@ async function startServer() {
         message: "Lỗi server: " + error.message,
       });
     } finally {
-      jobSignal?.removeEventListener("abort", abortFromJob);
       req.off("aborted", abortOnClientDisconnect);
       endLogisticsWork();
     }
@@ -25300,42 +25275,6 @@ async function startServer() {
   app.post("/api/orders/batch-confirm-async", authMiddleware, confirmOnlyAsyncRoute);
   app.post("/api/orders/get-pdf", authMiddleware, getPdfRoute);
   app.post("/api/orders/batch-confirm-print", authMiddleware, batchConfirmPrintRoute);
-  const mergedPrintJobs = createPrintJobs();
-  const printJobOwner = (req: any) => String(req.user?.username || req.user?.id || req.user?.sub || "");
-  app.post("/api/orders/batch-print-async", authMiddleware, (req: any, res: any) => {
-    const sns = parseBatchPrintOrderSns(req.body);
-    if (!sns.length || sns.length > 500) return res.status(400).json({ success: false, message: "Mỗi lô in cần từ 1 đến 500 đơn." });
-    try {
-      const jobId = mergedPrintJobs.start(printJobOwner(req), async (signal, progress) => {
-        // Existing JSON route stores the merged PDF in the normal label cache.
-        // This detached request must not inherit the acknowledgement connection.
-        const backgroundReq: any = {
-          body: { ...req.body, orderSns: sns, ordersn: sns },
-          path: "/api/orders/batch-print-only", user: req.user,
-          printJobSignal: signal, printProgress: progress,
-          once() {}, off() {},
-        };
-        let result: any;
-        let status = 200;
-        const backgroundRes: any = {
-          status(code: number) { status = code; return this; },
-          json(data: any) { result = data; return this; },
-        };
-        await batchPrintOnlyRoute(backgroundReq, backgroundRes);
-        if (status >= 400 || !result?.success) throw new Error(result?.message || "Không tạo được file in.");
-        return result;
-      });
-      return res.status(202).json({ success: true, jobId });
-    } catch (error: any) {
-      return res.status(429).json({ success: false, message: error.message });
-    }
-  });
-  app.get("/api/orders/batch-print-jobs/:id", authMiddleware, (req: any, res: any) => {
-    const job = mergedPrintJobs.get(String(req.params.id), printJobOwner(req));
-    res.setHeader("Cache-Control", "no-store");
-    if (!job) return res.status(404).json({ success: false, message: "Phiên in đã hết hạn hoặc máy chủ vừa khởi động lại. Hãy bấm In lại." });
-    return res.json({ success: true, ...job });
-  });
   app.post("/api/orders/batch-print", authMiddleware, batchPrintOnlyRoute);
   app.post("/api/orders/batch-print-only", authMiddleware, batchPrintOnlyRoute);
   app.post("/api/orders/silent-prefetch-pdfs", authMiddleware, silentPrefetchPdfsRoute);
