@@ -25,6 +25,7 @@ let deps = {
   shipOrderJobs: new Map(),
   createShipOrderJobId: () => `ship-${Date.now()}`,
   pruneOldShipOrderJobs: () => {},
+  getDurableShipJob: async () => null,
 };
 
 export function initShopeeShipController(partial) {
@@ -215,7 +216,13 @@ export function shipOrderBulkAsync(req, res) {
 /** GET /api/shopee/ship-order/job/:jobId */
 export async function getShipOrderJob(req, res) {
   deps.pruneOldShipOrderJobs();
-  const job = deps.shipOrderJobs.get(String(req.params.jobId || ""));
+  let job;
+  try {
+    job = await deps.getDurableShipJob(String(req.params.jobId || ""));
+  } catch {
+    return res.status(503).json({ error: 'job_store_unavailable', message: 'Tạm thời chưa đọc được tiến độ. Vui lòng chờ kết nối lại.' });
+  }
+  job ||= deps.shipOrderJobs.get(String(req.params.jobId || ""));
   if (!job) {
     return res.status(404).json({
       error: "job_not_found",

@@ -1,3 +1,4 @@
+import { runLogisticsJob, logisticsRequest, readLogisticsJob, clearLogisticsJob, LogisticsJobPendingError } from '../utils/logisticsJobs';
 import { OrderProductImage } from './OrderProductImage';
 import { getOrderListFinance } from '../utils/orderListFinance';
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
@@ -20,13 +21,17 @@ import {
   buildOrderScanIndex,
   normalizeOrderScanKey,
   buildScanLookupKeys,
-  lookupScannerSyncMap,
-  scannerSyncEntryToOrder,
-  lookupOrderByScanCode,
+  lookupCurrentScannerOrder,
+  SCANNED_ORDER_MESSAGE,
+  missingScannerOrderMessage,
+  rememberCommittedScans,
   putOrderIntoScannerSyncMap,
   fetchScannerSyncPool,
   prefetchBothScannerPools,
   isScannerPoolFresh,
+  isScannerPoolUsable,
+  loadScannerPoolCache,
+  clearScannerPoolCache,
   isScannerPoolStale,
   ScanLookupError,
   type ScannerSyncEntry,
@@ -63,7 +68,6 @@ import {
   matchesReceivedCancelReturnTab,
   isWarehouseReturnReceived,
   isReturnScanLocked,
-  RETURN_SCAN_DUPLICATE_ERROR,
 } from '../utils/orderLocalStatus';
 import {
   enqueueScanBgCodes,
@@ -2462,10 +2466,7 @@ export default function OrderManager({
   const [scannerSyncLoading, setScannerSyncLoading] = useState(false);
   const [scannerSyncReady, setScannerSyncReady] = useState(false);
   /** Pool cache phiên — giữ khi đổi mode / quay picker; không lưu localStorage. */
-  const [scannerPoolCache, setScannerPoolCache] = useState<ScannerPoolCache>({
-    handover: null,
-    return: null,
-  });
+  const [scannerPoolCache, setScannerPoolCache] = useState<ScannerPoolCache>(loadScannerPoolCache);
   const scannerPoolCacheRef = React.useRef(scannerPoolCache);
   const [scannerPoolPrefetching, setScannerPoolPrefetching] = useState(false);
   const scannerModeRef = React.useRef<ScannerMode | null>(null);
@@ -2653,6 +2654,7 @@ export default function OrderManager({
   }, []);
 
   const invalidateScannerPoolMode = React.useCallback((mode: ScannerMode) => {
+    clearScannerPoolCache(mode);
     setScannerPoolCache((prev) => {
       const next = { ...prev, [mode]: null };
       scannerPoolCacheRef.current = next;
@@ -2685,7 +2687,7 @@ export default function OrderManager({
       setScannerMode(mode);
       setCameraError('');
       const cached = scannerPoolCacheRef.current[mode];
-      if (isScannerPoolFresh(cached)) {
+      if (isScannerPoolUsable(cached)) {
         applyPoolEntryToActive(cached!, mode);
       } else {
         setScannerSyncLoading(true);
@@ -2862,10 +2864,10 @@ export default function OrderManager({
       const label = isPrinted ? 'đã in' : 'chưa in';
       if (ids.length === 0) {
         if (!opts?.silent) showToast(`Chưa chọn đơn để đánh dấu ${label}.`);
-        return;
+        return false;
       }
       const batchKey = `${isPrinted ? '1' : '0'}:${[...ids].sort().join(',')}`;
-      if (printStatusInflightRef.current.has(batchKey)) return;
+      if (printStatusInflightRef.current.has(batchKey)) return false;
       printStatusInflightRef.current.add(batchKey);
       const previous: PrintedOptimisticSnapshot[] = targetOrders.map((o) => ({
         key: String(o.orderSn || o.id || '').replace(/^shopee-/i, '').trim().toLowerCase(),
@@ -2880,24 +2882,13 @@ export default function OrderManager({
         ? '/api/orders/mark-printed'
         : '/api/orders/update-print-status';
       try {
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({
-            orderIds: ids,
-            orderSns: ids,
-            order_sns: ids,
-            is_printed: isPrinted,
-            isPrinted,
-          }),
-        });
-        const data = await res.json().catch(() => ({}));
+        const { response: res, data } = await logisticsRequest(endpoint, {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        }, { orderIds: ids, orderSns: ids, order_sns: ids, is_printed: isPrinted, isPrinted });
         if (!res.ok || data?.success === false) {
           throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
         }
+        return true;
       } catch (err: any) {
         console.warn('[Print Status] lưu trạng thái in thất bại:', err?.message || err);
         if (isPrinted) {
@@ -2909,6 +2900,7 @@ export default function OrderManager({
             showToast(err?.message || `Lỗi đánh dấu ${label} — đã hoàn tác.`);
           }
         }
+        return false;
       } finally {
         printStatusInflightRef.current.delete(batchKey);
       }
@@ -3179,24 +3171,14 @@ export default function OrderManager({
       setIsScanBusy(true);
 
       try {
-        // Local HashMap từ scanner-sync — miss thì fallback HTTP lookup (Mongo + Shopee live).
-        const syncHit = lookupScannerSyncMap(scannerSyncMapRef.current, trimmed);
+        // Pool caches speed up opening only; every accepted scan reads current DB state.
         let order: Order | null = null;
-        if (syncHit) {
-          const fromPool = findOrderByScanPayload(ordersRef.current, trimmed, orderScanIndex);
-          order = fromPool || scannerSyncEntryToOrder(syncHit);
-        }
 
         if (!order) {
           setCameraScanResult(`Đang tra cứu mã: ${trimmed}...`);
           const token = localStorage.getItem('admin_token') || '';
           try {
-            order = await lookupOrderByScanCode(
-              trimmed,
-              ordersRef.current,
-              token,
-              orderScanIndex,
-            );
+            order = await lookupCurrentScannerOrder(trimmed, token);
             if (order) {
               const nextMap = putOrderIntoScannerSyncMap(
                 scannerSyncMapRef.current,
@@ -3238,14 +3220,20 @@ export default function OrderManager({
           scanFeedback('error');
           setCameraScanSuccess(false);
           setCameraScanError(true);
-          setCameraScanResult(`Không tìm thấy đơn: ${trimmed}`);
-          showScanToast(
-            isLikelyTrackingCode(trimmed)
-              ? `Không tìm thấy đơn hàng với mã vận đơn "${trimmed}"`
-              : `Không tìm thấy đơn hàng này trong hệ thống (${trimmed})`,
-            'error'
-          );
+          const message = missingScannerOrderMessage(trimmed, scannerSyncMapRef.current);
+          setCameraScanResult(message);
+          showScanToast(message, 'warning');
           setTimeout(() => setCameraScanError(false), 2000);
+          return;
+        }
+
+        if (isReturnScanLocked(order) || isOrderHandedOverToCarrier(order)) {
+          const reason = SCANNED_ORDER_MESSAGE;
+          scanFeedback('warning');
+          setCameraScanSuccess(false);
+          setCameraScanError(false);
+          setCameraScanResult(reason);
+          showScanToast(reason, 'warning');
           return;
         }
 
@@ -3684,8 +3672,8 @@ export default function OrderManager({
         playScanSound('warning');
         vibrateScan('warning');
         flashViewfinder('error', 500);
-        setCameraScanResult(`Mã đã quét trong phiên này: ${trimmed}`);
-        showScanToast('Mã này đã có trong danh sách phiên quét', 'error');
+        setCameraScanResult(SCANNED_ORDER_MESSAGE);
+        showScanToast(SCANNED_ORDER_MESSAGE, 'warning');
         return;
       }
 
@@ -3700,23 +3688,8 @@ export default function OrderManager({
 
       lastQrScanRef.current = { key, at: now };
 
-      // Local HashMap O(1) từ scanner-sync — miss thì fallback HTTP lookup (1 mã).
-      const syncHit = lookupScannerSyncMap(scannerSyncMapRef.current, trimmed);
+      // Do not accept a cached status: another scan/session may already have committed it.
       let localOrder: Order | null = null;
-      if (syncHit) {
-        localOrder = scannerSyncEntryToOrder(syncHit);
-        if (syncHit.matchedReturn && localOrder) {
-          localOrder = {
-            ...localOrder,
-            return_tracking_no: syncHit.return_waybill || localOrder.return_tracking_no,
-            returnTrackingNumber:
-              syncHit.return_waybill || localOrder.returnTrackingNumber,
-            return_sn: localOrder.return_sn || 'scanner-sync',
-            status:
-              localOrder.status === 'return_received' ? 'return_received' : 'return_pending',
-          };
-        }
-      }
 
       isScanBusyRef.current = true;
       setIsVerifyingScan(true);
@@ -3727,7 +3700,7 @@ export default function OrderManager({
           setCameraScanResult(`Đang tra cứu mã: ${trimmed}...`);
           const token = localStorage.getItem('admin_token') || '';
           try {
-            const remote = await lookupOrderByScanCode(trimmed, [], token);
+            const remote = await lookupCurrentScannerOrder(trimmed, token);
             if (remote) {
               const scannedIsReturn =
                 scannedMatchesReturnWaybill(remote, trimmed) ||
@@ -3769,16 +3742,12 @@ export default function OrderManager({
         }
 
         if (!localOrder) {
-          playScanSound('error');
-          vibrateScan('error');
+          const message = missingScannerOrderMessage(trimmed, scannerSyncMapRef.current);
+          playScanSound('warning');
+          vibrateScan('warning');
           flashViewfinder('error', 400);
-          setCameraScanResult(`Không tìm thấy mã: ${trimmed}`);
-          showScanToast(
-            isLikelyTrackingCode(trimmed)
-              ? `Không có trong danh sách đã tải: "${trimmed}"`
-              : `Mã không khớp pool quét đã tải (${trimmed})`,
-            'error',
-          );
+          setCameraScanResult(message);
+          showScanToast(message, 'warning');
           return;
         }
 
@@ -3823,7 +3792,8 @@ export default function OrderManager({
           playScanSound('warning');
           vibrateScan('warning');
           flashViewfinder('error', 500);
-          showScanToast(`Đơn #${order.orderSn} đã quét trong phiên này`, 'error');
+          setCameraScanResult(SCANNED_ORDER_MESSAGE);
+          showScanToast(SCANNED_ORDER_MESSAGE, 'warning');
           return;
         }
 
@@ -3835,6 +3805,15 @@ export default function OrderManager({
           trackingNumber: waybill || order.trackingNumber || order.tracking_no || order.internalTrackingCode,
           at: now,
         };
+
+        if (isReturnScanLocked(order)) {
+          playScanSound('error');
+          vibrateScan('warning');
+          flashViewfinder('error', 500);
+          setCameraScanResult(SCANNED_ORDER_MESSAGE);
+          showScanToast(SCANNED_ORDER_MESSAGE, 'error');
+          return;
+        }
 
         if (activeMode === 'handover') {
           if (isReturnBucket) {
@@ -3886,8 +3865,8 @@ export default function OrderManager({
             // Không flash error (đỏ) — giữ banner vàng mặc định.
             setCameraScanSuccess(false);
             setCameraScanError(false);
-            setCameraScanResult('ĐƠN ĐÃ QUÉT GIAO ĐVVC RỒI');
-            showScanToast('ĐƠN ĐÃ QUÉT GIAO ĐVVC RỒI', 'warning');
+            setCameraScanResult(SCANNED_ORDER_MESSAGE);
+            showScanToast(SCANNED_ORDER_MESSAGE, 'warning');
             return;
           }
 
@@ -3925,17 +3904,8 @@ export default function OrderManager({
               daXuatKhoListRef.current = next;
               return next;
             });
-            setCameraScanResult(
-              waybill
-                ? `✓ Xuất kho · VĐ ${waybill} · #${order.orderSn}`
-                : `✓ Xuất kho #${order.orderSn}`,
-            );
-            showScanToast(
-              waybill
-                ? `Xuất kho #${order.orderSn} — mã VĐ: ${waybill}`
-                : `Đơn chờ lấy hàng (đã xử lý) #${order.orderSn} — đã ghi nhận xuất kho`,
-              'success',
-            );
+            setCameraScanResult('XUẤT KHO');
+            showScanToast('XUẤT KHO', 'success');
             // KHÔNG ghi DB ngay ở đây — giữ quét nhẹ (chỉ push list cục bộ).
             // Ghi Mongo dồn 1 lần lúc bấm "Kết thúc" (handleFinishContinuousScan → scan-bulk-update).
             return;
@@ -3964,14 +3934,6 @@ export default function OrderManager({
         }
 
         if (activeMode === 'return') {
-          if (isReturnScanLocked(order)) {
-            playScanSound('error');
-            vibrateScan('warning');
-            flashViewfinder('error', 500);
-            setCameraScanResult(RETURN_SCAN_DUPLICATE_ERROR);
-            showScanToast(RETURN_SCAN_DUPLICATE_ERROR, 'error');
-            return;
-          }
 
           if (
             isEligibleForHandOverToCarrier(order) &&
@@ -4228,54 +4190,23 @@ export default function OrderManager({
     };
   }, [focusScanner, scannerMode, scannerSyncReady, cameraRestartKey]);
 
-  // Prefetch cả 2 mode khi mở Quét mã — không abort khi chọn mode; abort khi đóng scanner.
+  // Warm only the common handover pool while idle. The selected mode loads independently.
   const scannerPrefetchAbortRef = React.useRef<AbortController | null>(null);
   useEffect(() => {
-    if (!focusScanner) {
-      scannerPrefetchAbortRef.current?.abort();
-      scannerPrefetchAbortRef.current = null;
-      setScannerPoolPrefetching(false);
-      return;
-    }
-    let cancelled = false;
+    if (focusScanner || isScannerPoolFresh(scannerPoolCacheRef.current.handover)) return;
     const controller = new AbortController();
-    scannerPrefetchAbortRef.current = controller;
-    const now = Date.now();
-    const needHandover = !isScannerPoolFresh(scannerPoolCacheRef.current.handover, now);
-    const needReturn = !isScannerPoolFresh(scannerPoolCacheRef.current.return, now);
-    if (!needHandover && !needReturn) {
-      setScannerPoolPrefetching(false);
-      return () => {
-        cancelled = true;
-      };
-    }
-    setScannerPoolPrefetching(true);
-    void (async () => {
-      const result = await prefetchBothScannerPools({ signal: controller.signal });
-      if (cancelled || controller.signal.aborted) return;
-      setScannerPoolCache((prev) => {
-        const next: ScannerPoolCache = {
-          handover: result.handover ?? prev.handover,
-          return: result.return ?? prev.return,
-        };
-        scannerPoolCacheRef.current = next;
-        const active = scannerModeRef.current;
-        if (active && next[active] && isScannerPoolFresh(next[active])) {
-          applyPoolEntryToActive(next[active]!, active);
-        }
-        return next;
-      });
-      setScannerPoolPrefetching(false);
-    })();
-    return () => {
-      cancelled = true;
-      // Abort prefetch khi unmount / đóng scanner / re-run deps.
-      controller.abort();
-      if (scannerPrefetchAbortRef.current === controller) {
-        scannerPrefetchAbortRef.current = null;
-      }
-    };
-  }, [focusScanner, applyPoolEntryToActive]);
+    const timer = window.setTimeout(() => {
+      void fetchScannerSyncPool('handover', { signal: controller.signal }).then((entry) => {
+        if (controller.signal.aborted) return;
+        setScannerPoolCache((prev) => {
+          const next = { ...prev, handover: entry };
+          scannerPoolCacheRef.current = next;
+          return next;
+        });
+      }).catch(() => undefined);
+    }, 1500);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [focusScanner]);
 
   /** Làm mới thủ công cả 2 pool quét (bỏ qua cache) — dùng khi prefetch nền quá lâu/lỗi. */
   const manualRefreshScannerPools = React.useCallback(() => {
@@ -4324,7 +4255,6 @@ export default function OrderManager({
       try {
         const entry = await fetchScannerSyncPool(mode, {
           signal: controller.signal,
-          fresh: true,
         });
         if (cancelled) return;
         mergePool({ [mode]: entry });
@@ -4337,7 +4267,7 @@ export default function OrderManager({
     };
 
     const cached = scannerPoolCacheRef.current[mode];
-    if (isScannerPoolFresh(cached)) {
+    if (isScannerPoolUsable(cached)) {
       applyPoolEntryToActive(cached!, mode);
       if (isScannerPoolStale(cached)) {
         void refreshModeInBackground();
@@ -4498,6 +4428,11 @@ export default function OrderManager({
     fileUrl: string | null;
     message: string;
   };
+  const [pendingPrintedSns, setPendingPrintedSns] = useState<string[]>([]);
+  const [retryPrintSns, setRetryPrintSns] = useState<string[]>([]);
+  const [markPrintBusy, setMarkPrintBusy] = useState(false);
+  const batchPrintRunningRef = useRef(false);
+  const resumedLogisticsRef = useRef(false);
   const [batchPrintModal, setBatchPrintModal] = useState<BatchPrintModalState | null>(null);
   const batchPrintIframeRef = useRef<HTMLIFrameElement | null>(null);
   const batchPrintFileUrlRef = useRef<string | null>(null);
@@ -6086,38 +6021,12 @@ export default function OrderManager({
     };
   };
 
-  const pollShipJobUntilDone = async (jobId: string, total: number): Promise<any | null> => {
-    const deadline = Date.now() + 5 * 60 * 1000;
-    let finalJob: any | null = null;
-    let pollCount = 0;
-    while (Date.now() < deadline) {
-      if (pollCount > 0) await new Promise((resolve) => setTimeout(resolve, 300));
-      pollCount += 1;
-      try {
-        const response = await fetch(`/api/shopee/ship-order/job/${jobId}`, { headers: authHeaders() });
-        if (!response.ok) throw new Error('Không thể đọc tiến độ xác nhận.');
-        const job = await parseJsonResponse<any>(response);
-        finalJob = job;
-        const completed = Number(job.completed) || 0;
-        const tot = Number(job.total) || total;
-        setProgressCompleted(completed);
-        setProgressTotal(tot);
-        setShipJobResults(Array.isArray(job.results) ? job.results : []);
-        if (job.status === 'done' || job.status === 'failed') return job;
-        // Đủ kết quả từng đơn → đóng poll ngay, không chờ server ghi Mongo (hàng đợi ghi chung có thể nghẽn).
-        if (tot > 0 && completed >= tot && Array.isArray(job.results) && job.results.length > 0) {
-          return { ...job, status: 'done' };
-        }
-        setProgressMessage(
-          job.message || `Đang xác nhận ${completed}/${tot} đơn...`,
-        );
-      } catch (error) {
-        setProgressMessage(error instanceof Error ? error.message : 'Không thể đọc tiến độ xác nhận.');
-        return finalJob;
-      }
-    }
-    return finalJob;
-  };
+  const followConfirmJob = async (input: any, total: number) => runLogisticsJob('confirm', input, authHeaders(), (job) => {
+    if (typeof job.completed === 'number') setProgressCompleted(job.completed);
+    if (typeof job.total === 'number') setProgressTotal(job.total || total);
+    if (Array.isArray(job.results)) setShipJobResults(job.results);
+    setProgressMessage(job.message || `Đang xác nhận đơn...`);
+  });
 
   /** Kết thúc xác nhận — giữ optimistic; modal tiến trình chờ user bấm Đóng. */
   const finishShipJobResult = async (finalJob: any | null, total: number) => {
@@ -6435,9 +6344,11 @@ export default function OrderManager({
     })();
   };
 
-  const handleBatchConfirmOnly = async () => {
-    if (!shipConfirmOrders?.length || isShipping) return;
-    const validQueued = shipConfirmOrders.filter(
+  const handleBatchConfirmOnly = async (resumeOrders?: Order[], resumeMethod?: 'pickup' | 'dropoff') => {
+    const queued = resumeOrders || shipConfirmOrders;
+    const methodForBatch = resumeMethod || shipMethod;
+    if (!queued?.length || isShipping) return;
+    const validQueued = queued.filter(
       (order) => String(order.orderSn || order.id || '').trim(),
     );
     const orderIds = validQueued.map((order) => String(order.id || '').trim()).filter(Boolean);
@@ -6462,6 +6373,8 @@ export default function OrderManager({
     }
 
     setShipConfirmOrders(null);
+    setPendingPrintedSns([]);
+    setRetryPrintSns([]);
     setIsShipping(true);
     const queuedKeys = new Set<string>();
     for (const o of validQueued) {
@@ -6481,7 +6394,7 @@ export default function OrderManager({
     patchLabelWaitState(orderSns, 'waiting');
     const optimistic = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys, {
       markPrinted: false,
-      shipMethod,
+      shipMethod: methodForBatch,
     });
     ordersRef.current = optimistic;
     onUpdateOrders(optimistic, { persist: false });
@@ -6490,17 +6403,8 @@ export default function OrderManager({
     setProgressCompleted(0);
     setProgressTotal(orderSns.length);
     try {
-      const response = await fetch('/api/orders/batch-confirm-async', {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ orderIds, orderSns, method: shipMethod }),
-      });
-      const data = await readResponseJson<any>(response);
-      if (!response.ok || !data.accepted || !data.jobId) {
-        throw new Error(data.message || data.error || `HTTP ${response.status}`);
-      }
-
-      const finalJob = await pollShipJobUntilDone(String(data.jobId), orderSns.length);
+      const finalJob = await followConfirmJob({ orderIds, orderSns, method: methodForBatch }, orderSns.length);
+      clearLogisticsJob('confirm', authHeaders());
       if (!finalJob || (finalJob.status !== 'done' && finalJob.status !== 'failed')) {
         throw new Error(finalJob?.message || 'Hết thời gian chờ xác nhận đơn.');
       }
@@ -6512,6 +6416,7 @@ export default function OrderManager({
       }
 
       const summary = await finishShipJobResult(finalJob, orderSns.length);
+      if (finalJob.persistencePending) showToast('Đơn đã xác nhận trên Shopee nhưng chưa lưu đủ trạng thái. Vui lòng tải lại danh sách để đối soát.');
       const successfulSns = [
         ...new Set(
           (summary.successfulOrderIds || [])
@@ -6564,7 +6469,6 @@ export default function OrderManager({
         setProgressTotal(confirmTotal);
         setProgressDone(false);
         beginConfirmAutoPrint(successfulSns);
-        void startSilentPdfPrefetch(successfulSns);
         refreshOrdersStayOnCurrentTab();
       } else {
         confirmAutoPrintPendingRef.current = false;
@@ -6578,6 +6482,14 @@ export default function OrderManager({
         );
       }
     } catch (err) {
+      if (err instanceof LogisticsJobPendingError) {
+        // An accepted shipment may still be running. Never roll it back merely
+        // because this browser cannot read the result right now.
+        confirmAutoPrintPendingRef.current = false;
+        setProgressDone(true);
+        setProgressMessage(err.message);
+        return;
+      }
       const rolled = ordersRef.current.map((o) => {
         const id = String(o.id || '').trim();
         const sn = String(o.orderSn || '').replace(/^shopee-/i, '').trim();
@@ -6599,228 +6511,7 @@ export default function OrderManager({
     }
   };
 
-  const handleConfirmAndPrint = async () => {
-    if (!shipConfirmOrders?.length) return;
-    const validQueued = shipConfirmOrders.filter(
-      (order) => String(order.orderSn || order.id || '').trim(),
-    );
-    if (!validQueued.length) {
-      showToast('Không có mã đơn hàng hợp lệ trong danh sách đã chọn.');
-      return;
-    }
-
-    const orderIds = validQueued
-      .map((order) => String(order.id || '').trim())
-      .filter(Boolean);
-    const orderSns = validQueued
-      .map((order) => String(order.orderSn || '').replace(/^shopee-/i, '').trim())
-      .filter(Boolean);
-
-    setShipConfirmOrders(null);
-    setIsShipping(true);
-    setProgressMessage('Đang xác nhận đơn lên Shopee...');
-    setProgressDone(false);
-    setProgressCompleted(0);
-    setProgressTotal(validQueued.length);
-
-    let reservedBatchWindow: Window | null = null;
-    try {
-      // BATCH PRINT: Nếu nhiều đơn (>= 2) -> gọi API gộp PDF
-      if (orderSns.length >= 2) {
-        console.log('[Confirm&Print] BATCH MODE: Gọi /api/orders/batch-confirm-print với', orderSns.length, 'đơn');
-        setProgressMessage(`Đang xác nhận ${orderSns.length} đơn và gộp PDF...`);
-        reservedBatchWindow = openReservedPrintPlaceholder();
-
-        const controller = new AbortController();
-        const timeoutId = window.setTimeout(() => controller.abort(), 120_000);
-        let batchResponse: Response;
-        try {
-          batchResponse = await fetch('/api/orders/batch-confirm-print', {
-            method: 'POST',
-            headers: authHeaders(),
-            body: JSON.stringify({
-              orderSns,
-              method: shipMethod,
-              groupPicking: smartPickSort && activeSubTab === 'unprocessed',
-            }),
-            signal: controller.signal,
-          });
-        } finally {
-          window.clearTimeout(timeoutId);
-        }
-        const batchData = await readResponseJson<any>(batchResponse);
-        console.log('[Confirm&Print] Batch response:', batchData);
-
-        if (!batchResponse.ok || !batchData.success) {
-          throw new Error(batchData.message || batchData.error || `HTTP ${batchResponse.status}`);
-        }
-
-        if (batchData.url) {
-          console.log('[Confirm&Print] Mở PDF gộp:', batchData.url);
-          if (!navigateReservedPrintWindow(reservedBatchWindow, batchData.url)) {
-            window.open(batchData.url, '_blank');
-          }
-          const failedOrderIds = getBatchFailedOrderIds(batchData);
-          showToast(
-            failedOrderIds.length > 0
-              ? `Đã in gộp ${batchData.pdfCount} đơn. Các đơn lỗi: ${failedOrderIds.join(', ')}`
-              : `Đã in gộp ${batchData.pdfCount} đơn.`,
-          );
-        } else {
-          closeReservedPrintWindow(reservedBatchWindow);
-          showToast(`Đã xác nhận ${batchData.confirmedCount} đơn nhưng không có PDF.`);
-        }
-
-        // Cập nhật trạng thái local
-        const successfulSns = Array.isArray(batchData.printedOrders) ? batchData.printedOrders : orderSns;
-        const expiresAt = Date.now() + 5 * 60 * 1000;
-        for (const sn of successfulSns) {
-          const key = sn.toLowerCase();
-          recentlyPrintedRef.current.set(key, expiresAt);
-          recentlyPrintedRef.current.set(`shopee-${key}`, expiresAt);
-        }
-
-        applyPrintedLocalOptimistic(successfulSns, true, 'processed');
-        void updatePrintStatusForOrders(
-          successfulSns.map((sn: string) => ({ id: `shopee-${sn}`, orderSn: sn }) as Order),
-          true,
-          { silent: true },
-        );
-
-        setSelectedOrderIds([]);
-        setShipConfirmSummary(null);
-        setShipJobResults([]);
-        clearShipProgressOverlay();
-        const queuedBatch = successfulSns.map((sn: string) => ({
-          id: `shopee-${sn}`,
-          orderSn: sn,
-        })) as Order[];
-        void refreshOrdersAfterShip(queuedBatch, { markPrinted: true, shipMethod });
-        
-        onAddLog({
-          id: `log-${Date.now()}`,
-          timestamp: new Date().toISOString(),
-          channel: 'all',
-          type: 'stock_sync',
-          status: 'success',
-          message: `Batch print: Xác nhận và gộp ${successfulSns.length} đơn thành 1 PDF.`,
-        });
-      } else {
-        // ĐƠN LẺ: Xác nhận + lấy PDF riêng biệt
-        console.log('[Confirm&Print] SINGLE MODE: Xử lý 1 đơn');
-        
-        const confirmResponse = await fetch('/api/orders/confirm', {
-          method: 'POST',
-          headers: authHeaders(),
-          body: JSON.stringify({
-            orderIds,
-            orderSns,
-            order_ids: orderIds,
-            order_sns: orderSns,
-            method: shipMethod,
-          }),
-        });
-        const confirmData = await readResponseJson<any>(confirmResponse);
-        if (!confirmResponse.ok) throw new Error(confirmData.message || confirmData.error || `HTTP ${confirmResponse.status}`);
-
-        const successfulResults = (Array.isArray(confirmData.results) ? confirmData.results : []).filter(
-          (result: any) => result?.success,
-        );
-        const successfulSns: string[] = [
-          ...new Set<string>(
-            successfulResults
-              .map((result: any) => String(result.orderSn || '').replace(/^shopee-/i, '').trim())
-              .filter(Boolean),
-          ),
-        ];
-        
-        if (!successfulSns.length) {
-          throw new Error(confirmData.message || 'Shopee không xác nhận được đơn nào.');
-        }
-
-        setProgressMessage(`Đã xác nhận ${successfulSns.length} đơn - đang lấy PDF...`);
-
-        console.log('[Confirm&Print] Gọi /api/orders/get-pdf với orderSns:', successfulSns);
-        const pdfResponse = await fetch('/api/orders/get-pdf', {
-          method: 'POST',
-          headers: authHeaders(),
-          body: JSON.stringify({ orderSns: successfulSns }),
-        });
-        const pdfData = await readResponseJson<any>(pdfResponse);
-        console.log('[Confirm&Print] Response từ /api/orders/get-pdf:', pdfData);
-
-        if (pdfResponse.ok && pdfData.success && Array.isArray(pdfData.results)) {
-          const successPdfs = pdfData.results.filter((r: any) => r.success && r.url);
-          console.log('[Confirm&Print] Danh sách PDF thành công:', successPdfs);
-          if (successPdfs.length > 0) {
-            for (const pdfResult of successPdfs) {
-              console.log('[Confirm&Print] Mở PDF:', pdfResult.url);
-              window.open(pdfResult.url, '_blank');
-            }
-            showToast(`Đã xác nhận & mở ${successPdfs.length} PDF vận đơn.`);
-          } else {
-            console.warn('[Confirm&Print] Không có PDF nào thành công');
-            showToast('Đơn đã xác nhận nhưng chưa có PDF. Vui lòng in lại sau.');
-          }
-        } else {
-          console.error('[Confirm&Print] Lỗi lấy PDF:', pdfData);
-          showToast('Đơn đã xác nhận nhưng không lấy được PDF. Vui lòng in lại sau.');
-        }
-
-        const expiresAt = Date.now() + 5 * 60 * 1000;
-        for (const sn of successfulSns) {
-          const key = sn.toLowerCase();
-          recentlyPrintedRef.current.set(key, expiresAt);
-          recentlyPrintedRef.current.set(`shopee-${key}`, expiresAt);
-        }
-
-        applyPrintedLocalOptimistic(successfulSns, true, 'processed');
-        void updatePrintStatusForOrders(
-          successfulSns.map((sn) => ({ id: `shopee-${sn}`, orderSn: sn }) as Order),
-          true,
-          { silent: true },
-        );
-
-        setSelectedOrderIds([]);
-        setShipConfirmSummary(null);
-        setShipJobResults([]);
-        clearShipProgressOverlay();
-        const queuedSingle = successfulSns.map((sn) => ({
-          id: `shopee-${sn}`,
-          orderSn: sn,
-        })) as Order[];
-        void refreshOrdersAfterShip(queuedSingle, { markPrinted: true, shipMethod });
-        
-        onAddLog({
-          id: `log-${Date.now()}`,
-          timestamp: new Date().toISOString(),
-          channel: 'all',
-          type: 'stock_sync',
-          status: 'success',
-          message: `Xác nhận và in ${successfulSns.length} đơn thành công.`,
-        });
-      }
-    } catch (err) {
-      closeReservedPrintWindow(reservedBatchWindow);
-      const message = err instanceof DOMException && err.name === 'AbortError'
-        ? 'Quá thời gian 120 giây. Vui lòng thử lại hoặc chọn ít đơn hơn.'
-        : err instanceof Error
-          ? err.message
-          : 'Lỗi không xác định';
-      clearShipProgressOverlay();
-      showToast(`Xác nhận thất bại: ${message}`);
-    } finally {
-      setIsShipping(false);
-      closeConfirmProgressBanner();
-      setPrintingOrderId(null);
-    }
-  };
-
-  /**
-   * In gộp 1 PDF qua /api/orders/batch-print (blob) — dùng chung cho
-   * "In đơn đã chọn" và nút "In đơn" trong Modal xác nhận thành công.
-   * Không dùng window.open (bị chặn popup sau await). In ngầm qua iframe ẩn.
-   */
+  // All Shopee print actions share the durable batch print path below.
   const closeBatchPrintModal = () => {
     if (batchPrintIframeRef.current) {
       try {
@@ -6862,6 +6553,7 @@ export default function OrderManager({
         iframe.contentWindow?.print();
       } catch (err) {
         console.error('[BatchPrint] iframe.print() lỗi:', err);
+        showToast('Không tự mở được hộp thoại in. Bấm Mở file PDF để in.');
       }
     };
     iframe.src = fileURL;
@@ -6869,224 +6561,85 @@ export default function OrderManager({
     batchPrintIframeRef.current = iframe;
   };
 
+  const confirmPrintedBatch = async () => {
+    if (!pendingPrintedSns.length || markPrintBusy) return;
+    setMarkPrintBusy(true);
+    try {
+      const targets = pendingPrintedSns.map((sn) => ordersRef.current.find((o) =>
+        String(o.orderSn || o.id || '').replace(/^shopee-/i, '') === sn) || { id: `shopee-${sn}`, orderSn: sn } as Order);
+      if (await updatePrintStatusForOrders(targets, true)) setPendingPrintedSns([]);
+    } finally { setMarkPrintBusy(false); }
+  };
+
   const runBatchPrintOnly = async (
     orderSnsInput: string[],
     opts?: { logTag?: string; groupPicking?: boolean; onConfirmModal?: boolean; flowGen?: number },
   ): Promise<boolean> => {
+    if (batchPrintRunningRef.current) return false;
     const onConfirmModal = opts?.onConfirmModal === true;
-    const flowGen = opts?.flowGen;
-    const confirmUiStale = () =>
-      onConfirmModal && flowGen != null && flowGen !== confirmFlowGenRef.current;
-    const showConfirmPrintError = (message: string) => {
-      if (confirmUiStale()) return;
-      setConfirmMergeBusy(false);
-      setProgressDone(true);
-      setConfirmPrintFileUrl(null);
-      setProgressMessage(message);
+    const stale = () => onConfirmModal && opts?.flowGen != null && opts.flowGen !== confirmFlowGenRef.current;
+    const orderSns = uniquePreserveOrder(orderSnsInput.map((sn) => String(sn || '').replace(/^shopee-/i, '').trim()).filter(Boolean));
+    if (!orderSns.length) return false;
+    batchPrintRunningRef.current = true;
+    setPendingPrintedSns([]);
+    setRetryPrintSns([]);
+    const progress = (message: string) => {
+      if (stale()) return;
+      if (onConfirmModal) { setConfirmMergeBusy(true); setProgressDone(false); setProgressMessage(message); }
+      else setBatchPrintModal({ phase: 'loading', total: orderSns.length, printedCount: 0, failedOrderIds: [], fileUrl: null, message });
     };
-    const orderSns = uniquePreserveOrder(
-      orderSnsInput.map((sn) => String(sn || '').replace(/^shopee-/i, '').trim()).filter(Boolean),
-    );
-    if (!orderSns.length) {
-      if (onConfirmModal) {
-        showConfirmPrintError('Gộp file thất bại: Không tìm thấy mã đơn hợp lệ.');
-        return false;
-      }
-      setBatchPrintModal({
-        phase: 'error',
-        total: 0,
-        printedCount: 0,
-        failedOrderIds: [],
-        fileUrl: null,
-        message: 'Không tìm thấy mã đơn hợp lệ.',
-      });
-      return false;
-    }
-
-    const logTag = opts?.logTag || 'IN LẠI';
-    // Mảng orderSns đã đúng thứ tự màn hình. Không xin server sắp lại.
-    const groupPicking = opts?.groupPicking === true;
-    if (onConfirmModal) {
-      if (!confirmUiStale()) {
-        setConfirmMergeBusy(true);
-        setConfirmPrintFileUrl(null);
-        setProgressDone(false);
-        setProgressCompleted(orderSns.length);
-        setProgressTotal(orderSns.length);
-        setProgressMessage(CONFIRM_AUTO_PRINT_WAIT_MESSAGE);
-      }
-    } else {
-      setBatchPrintModal({
-        phase: 'loading',
-        total: orderSns.length,
-        printedCount: 0,
-        failedOrderIds: [],
-        fileUrl: null,
-        message: `Đang gộp file PDF cho ${orderSns.length} đơn hàng...`,
-      });
-    }
-
+    progress(`Đang chuẩn bị PDF cho ${orderSns.length} đơn...`);
     try {
-      const controller = new AbortController();
-      const timeoutId = window.setTimeout(() => controller.abort(), 150000);
-
-      try {
-        const response = await fetch('/api/orders/batch-print', {
-          method: 'POST',
-          headers: {
-            ...authHeaders(),
-            Accept: 'application/pdf',
-          },
-          body: JSON.stringify({ ordersn: orderSns, orderSns, groupPicking }),
-          signal: controller.signal,
-        });
-
-        window.clearTimeout(timeoutId);
-        const contentType = String(response.headers.get('content-type') || '').toLowerCase();
-
-        if (!response.ok || !contentType.includes('application/pdf')) {
-          let data: { message?: string } = {};
-          try {
-            data = JSON.parse(await response.text());
-          } catch {
-            /* ignore */
-          }
-          const failMessage = data.message || 'In gộp thất bại. Vui lòng thử lại.';
-          if (onConfirmModal) {
-            showConfirmPrintError(`Gộp file thất bại: ${failMessage}`);
-            return false;
-          }
-          setBatchPrintModal({
-            phase: 'error',
-            total: orderSns.length,
-            printedCount: 0,
-            failedOrderIds: [],
-            fileUrl: null,
-            message: failMessage,
-          });
-          clearShipProgressOverlay();
-          return false;
-        }
-
-        const pdfBuffer = await response.arrayBuffer();
-        const file = new Blob([pdfBuffer], { type: 'application/pdf' });
-        if (batchPrintFileUrlRef.current) {
-          try {
-            URL.revokeObjectURL(batchPrintFileUrlRef.current);
-          } catch {
-            /* ignore */
-          }
-        }
-        const fileURL = URL.createObjectURL(file);
-        if (confirmUiStale()) {
-          URL.revokeObjectURL(fileURL);
-          return false;
-        }
-        batchPrintFileUrlRef.current = fileURL;
-        const printTab = window.open(fileURL, '_blank');
-        if (!printTab) printMergedPdfViaHiddenIframe(fileURL);
-
-        const successCount = Number(response.headers.get('X-Print-Success-Count') || 0);
-        const totalCount = Number(response.headers.get('X-Print-Total') || orderSns.length);
-        const filename = String(response.headers.get('X-Print-Filename') || 'batch-print.pdf').trim();
-        const printedSns = String(response.headers.get('X-Print-Printed-Orders') || '')
-          .split(',')
-          .map((sn) => sn.trim())
-          .filter(Boolean);
-        const failedOrderIds = String(response.headers.get('X-Print-Failed-Orders') || '')
-          .split(',')
-          .map((sn) => sn.trim())
-          .filter(Boolean);
-        const printedCount = successCount || printedSns.length || orderSns.length;
-        const completionMessage = onConfirmModal
-          ? (failedOrderIds.length > 0
-              ? `Đã tạo và mở file in thành công! Bỏ qua ${failedOrderIds.length} đơn chưa có file.`
-              : 'Đã tạo và mở file in thành công!')
-          : (failedOrderIds.length > 0
-              ? `Đã tạo file in cho ${printedCount}/${totalCount} đơn. Các đơn lỗi: ${failedOrderIds.join(', ')}`
-              : `Đã tạo file in cho ${printedCount}/${totalCount} đơn`);
-
-        const markSns = printedSns.length ? printedSns : orderSns;
-        if (markSns.length > 0) {
-          const markTargets = markSns.map((sn) => {
-            const key = String(sn).replace(/^shopee-/i, '').trim().toLowerCase();
-            const found = ordersRef.current.find((o) => {
-              const oSn = String(o.orderSn || '').replace(/^shopee-/i, '').trim().toLowerCase();
-              const oId = String(o.id || '').replace(/^shopee-/i, '').trim().toLowerCase();
-              return oSn === key || oId === key;
-            });
-            return (found || { id: `shopee-${sn}`, orderSn: sn }) as Order;
-          });
-          void updatePrintStatusForOrders(markTargets, true, { silent: true });
-        }
-        refetchOrdersPage({ silent: true });
-        setSelectedOrderIds([]);
-        if (onConfirmModal) {
-          if (confirmUiStale()) return false;
-          setConfirmPrintFileUrl(fileURL);
-          setConfirmMergeBusy(false);
-          setProgressDone(true);
-          setProgressCompleted(totalCount || orderSns.length);
-          setProgressTotal(totalCount || orderSns.length);
-          setProgressMessage(completionMessage);
-        } else {
-          setBatchPrintModal({
-            phase: 'success',
-            total: totalCount,
-            printedCount,
-            failedOrderIds,
-            fileUrl: fileURL,
-            message: completionMessage,
-          });
-        }
-
-        onAddLog({
-          id: `log-${Date.now()}`,
-          timestamp: new Date().toISOString(),
-          channel: 'shopee',
-          type: 'stock_sync',
-          status: 'success',
-          message: `[${logTag}] ${printedCount}/${totalCount} đơn → ${filename || 'merged.pdf'}`,
-        });
-        return true;
-      } catch (fetchErr: any) {
-        window.clearTimeout(timeoutId);
-        const timeout = fetchErr?.name === 'AbortError';
-        const failMessage = timeout
-          ? 'Shopee chưa tạo xong PDF sau thời gian chờ. Vui lòng thử lại sau ít phút.'
-          : (fetchErr instanceof Error ? fetchErr.message : 'Không thể kết nối API in gộp. Vui lòng thử lại.');
-        if (onConfirmModal) {
-          showConfirmPrintError(`Gộp file thất bại: ${failMessage}`);
-          return false;
-        }
-        setBatchPrintModal({
-          phase: 'error',
-          total: orderSns.length,
-          printedCount: 0,
-          failedOrderIds: [],
-          fileUrl: null,
-          message: failMessage,
-        });
-        clearShipProgressOverlay();
-        return false;
+      let job = await runLogisticsJob('print', { orderSns }, authHeaders(), (state) => progress(state.message || 'Đang chuẩn bị file in...'));
+      let legacyDownload: Awaited<ReturnType<typeof logisticsRequest>> | null = null;
+      if (job.status === 'legacy') {
+        legacyDownload = await logisticsRequest('/api/orders/batch-print', authHeaders(), { ordersn: orderSns, orderSns }, true, 150000);
+        const splitHeader = (name: string) => String(legacyDownload.response.headers.get(name) || '').split(',').map((sn) => sn.trim()).filter(Boolean);
+        job = { status: legacyDownload.response.ok ? 'done' : 'failed', result: {
+          success: legacyDownload.response.ok, printedOrders: splitHeader('X-Print-Printed-Orders'),
+          failedOrders: splitHeader('X-Print-Failed-Orders').map((orderSn) => ({ orderSn })),
+          message: legacyDownload.response.ok ? '' : legacyDownload.data?.message || 'Chưa tạo được PDF.',
+        } };
       }
-    } catch (err) {
-      console.error('[BatchPrint] Error:', err);
+      if (job.status !== 'done' || !job.result?.success) {
+        clearLogisticsJob('print', authHeaders());
+        throw new Error(job.result?.message || job.message || 'Không tạo được file in.');
+      }
+      progress('File đã sẵn sàng. Đang tải PDF...');
+      const { response, data: pdfBuffer } = legacyDownload || await logisticsRequest(`/api/orders/batch-print/file/${job.id}`, authHeaders(), undefined, true);
+      if (!response.ok || !String(response.headers.get('content-type')).includes('application/pdf')) {
+        if (response.status === 410) clearLogisticsJob('print', authHeaders());
+        throw new Error('Chưa tải được file in. Tải lại trang để thử tải lại file đã tạo.');
+      }
+      clearLogisticsJob('print', authHeaders());
+      if (stale()) return false;
+      const printedSns: string[] = Array.isArray(job.result.printedOrders) ? job.result.printedOrders : [];
+      const failedOrderIds: string[] = (job.result.failedOrders || []).map((item: any) => String(item.orderSn || '')).filter(Boolean);
+      const fileURL = URL.createObjectURL(new Blob([pdfBuffer], { type: 'application/pdf' }));
+      if (batchPrintFileUrlRef.current) URL.revokeObjectURL(batchPrintFileUrlRef.current);
+      batchPrintFileUrlRef.current = fileURL;
+      setPendingPrintedSns(printedSns);
+      patchLocalHasPdfReady(printedSns);
+      refetchOrdersPage({ silent: true });
+      setRetryPrintSns(failedOrderIds);
+      const printTab = window.open(fileURL, '_blank');
+      if (!printTab) printMergedPdfViaHiddenIframe(fileURL);
+      const message = `Đã tạo file ${printedSns.length}/${orderSns.length} đơn.${failedOrderIds.length ? ` Còn ${failedOrderIds.length} đơn chưa có PDF.` : ''} In xong, bấm “Xác nhận đã in”.`;
       if (onConfirmModal) {
-        showConfirmPrintError('Gộp file thất bại: Không thể kết nối API in gộp. Vui lòng thử lại.');
-        return false;
-      }
-      setBatchPrintModal({
-        phase: 'error',
-        total: orderSns.length,
-        printedCount: 0,
-        failedOrderIds: [],
-        fileUrl: null,
-        message: 'Không thể kết nối API in gộp. Vui lòng thử lại.',
-      });
-      clearShipProgressOverlay();
+        setConfirmPrintFileUrl(fileURL); setConfirmMergeBusy(false); setProgressDone(true);
+        setProgressCompleted(orderSns.length); setProgressTotal(orderSns.length); setProgressMessage(message);
+      } else setBatchPrintModal({ phase: 'success', total: orderSns.length, printedCount: printedSns.length, failedOrderIds, fileUrl: fileURL, message });
+      setSelectedOrderIds([]);
+      onAddLog({ id: `log-${Date.now()}`, timestamp: new Date().toISOString(), channel: 'shopee', type: 'stock_sync', status: 'success',
+        message: `[${opts?.logTag || 'IN LẠI'}] Tạo PDF ${printedSns.length}/${orderSns.length} đơn; chờ xác nhận đã in.` });
+      return true;
+    } catch (error) {
+      if (stale()) return false;
+      const message = error instanceof Error ? error.message : 'Không tạo được file in.';
+      if (onConfirmModal) { setConfirmMergeBusy(false); setProgressDone(true); setProgressMessage(message); }
+      else setBatchPrintModal({ phase: 'error', total: orderSns.length, printedCount: 0, failedOrderIds: [], fileUrl: null, message });
       return false;
-    }
+    } finally { batchPrintRunningRef.current = false; }
   };
 
   autoMergeAfterConfirmRef.current = async (sns, flowGen) => {
@@ -7097,6 +6650,19 @@ export default function OrderManager({
       flowGen,
     });
   };
+
+  useEffect(() => {
+    if (resumedLogisticsRef.current) return;
+    resumedLogisticsRef.current = true;
+    const confirm = readLogisticsJob('confirm', authHeaders());
+    const print = readLogisticsJob('print', authHeaders());
+    if (confirm) {
+      const rows = confirm.input.orderSns.map((sn: string, i: number) => ({
+        id: confirm.input.orderIds[i] || `shopee-${sn}`, orderSn: sn, channel: 'shopee',
+      } as Order));
+      void handleBatchConfirmOnly(rows, confirm.input.method);
+    } else if (print) void runBatchPrintOnly(print.input.orderSns, { logTag: 'TIẾP TỤC IN' });
+  }, []);
 
   const handlePrintFromShipSummary = async () => {
     const rawSns = uniquePreserveOrder(
@@ -7994,58 +7560,10 @@ export default function OrderManager({
       return;
     }
 
-    // Deliberately NOT checking order.isPrepared here anymore — Shopee's own
-    // create_shipping_document/get_shipping_document API is the single source
-    // of truth for whether the order's logistics status actually allows a
-    // label to be generated. If it doesn't, Shopee's own error message (surfaced
-    // in the alert below) explains why — no more local pre-check blocking the request.
     setPrintingOrderId(order.id);
-    const sn = String(order.orderSn || '').replace(/^shopee-/i, '').trim();
-    try {
-      if (order.hasPdf && sn) {
-        const cached = tryOpenCachedLabelUrls([order.id || `shopee-${sn}`]);
-        if (cached.opened) return;
-      }
-      if (!order.hasPdf && sn) {
-        if (!confirmProgressActiveRef.current) {
-          confirmProgressActiveRef.current = true;
-          confirmWaitSnsRef.current = [sn];
-        } else if (!confirmWaitSnsRef.current.includes(sn)) {
-          confirmWaitSnsRef.current = [...confirmWaitSnsRef.current, sn];
-        }
-        patchLabelWaitState([sn], 'waiting');
-        setProgressMessage('Đang chờ Shopee tạo mã in...');
-        setProgressDone(false);
-        setProgressCompleted(0);
-        setProgressTotal(Math.max(confirmWaitSnsRef.current.length, 1));
-        const pdfUrl = `/api/orders/download-pdf/${encodeURIComponent(sn)}`;
-        window.open(pdfUrl, '_blank', 'noopener,noreferrer');
-        startHasPdfBackgroundPoll([sn]);
-        return;
-      }
-      showToast('Đang lấy tem vận đơn...');
-      onAddLog({
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        channel: 'shopee',
-        type: 'stock_sync',
-        status: 'success',
-        message: `[SHOPEE PRINT] fast-path 1 đơn ${order.orderSn} — đọc PDF kho nội bộ.`,
-      });
-      const result = await printShopeeDocuments([order.id], {
-        onProgress: () => undefined,
-        onStatus: () => undefined,
-      });
-      if (!result.success) {
-        showToast(`In vận đơn thất bại cho đơn ${order.orderSn}: ${result.message}`);
-      } else {
-        refetchOrdersPage({ silent: true });
-      }
-    } catch (err) {
-      showToast('Không thể kết nối API in vận đơn Shopee. Vui lòng thử lại.');
-    } finally {
-      setPrintingOrderId(null);
-    }
+    const sn = String(order.orderSn || order.id || '').replace(/^shopee-/i, '').trim();
+    try { await runBatchPrintOnly([sn], { logTag: 'IN MỘT ĐƠN' }); }
+    finally { setPrintingOrderId(null); }
   };
 
   // Separate shops for multi-store badges
@@ -8310,6 +7828,8 @@ export default function OrderManager({
           );
         }
       }
+
+      rememberCommittedScans(data.results);
 
       const updatedOrders = Array.isArray(data?.orders) ? (data.orders as Order[]) : [];
       if (updatedOrders.length > 0) {
@@ -8934,7 +8454,7 @@ export default function OrderManager({
                 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                 : cameraScanError
                   ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                  : cameraScanResult.includes('ĐÃ QUÉT GIAO ĐVVC')
+                  : cameraScanResult === SCANNED_ORDER_MESSAGE
                     ? 'bg-amber-500/20 text-yellow-500 border border-amber-500/40'
                   : cameraScanResult.includes('sẵn sàng') || cameraScanResult.includes('realtime')
                     ? 'text-zinc-500'
@@ -9235,6 +8755,19 @@ export default function OrderManager({
                     </p>
                   )}
                   <div className="mt-6 flex flex-col gap-2.5">
+                    {pendingPrintedSns.length > 0 && (
+                      <button type="button" disabled={markPrintBusy} onClick={() => void confirmPrintedBatch()}
+                        className="w-full rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-50">
+                        {markPrintBusy ? 'Đang lưu...' : 'Xác nhận đã in'}
+                      </button>
+                    )}
+                    {retryPrintSns.length > 0 && (
+                      <button type="button" onClick={() => void runBatchPrintOnly(retryPrintSns)}
+                        className="w-full rounded-2xl border border-amber-300 px-4 py-3 text-sm font-bold text-amber-700">
+                        Thử lại {retryPrintSns.length} đơn chưa có PDF
+                      </button>
+                    )}
+
                     {batchPrintModal.fileUrl && (
                       <a
                         href={batchPrintModal.fileUrl}
@@ -10497,6 +10030,19 @@ export default function OrderManager({
             )}
 
             <div className="mt-1 w-full flex flex-col gap-2.5">
+              {pendingPrintedSns.length > 0 && (
+                      <button type="button" disabled={markPrintBusy} onClick={() => void confirmPrintedBatch()}
+                        className="w-full rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-50">
+                        {markPrintBusy ? 'Đang lưu...' : 'Xác nhận đã in'}
+                      </button>
+                    )}
+                    {retryPrintSns.length > 0 && (
+                      <button type="button" onClick={() => void runBatchPrintOnly(retryPrintSns)}
+                        className="w-full rounded-2xl border border-amber-300 px-4 py-3 text-sm font-bold text-amber-700">
+                        Thử lại {retryPrintSns.length} đơn chưa có PDF
+                      </button>
+                    )}
+
               {confirmPrintFileUrl && progressDone && !confirmMergeBusy && (
                 <a
                   href={confirmPrintFileUrl}

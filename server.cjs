@@ -21811,14 +21811,14 @@ var require_etag = __commonJS({
   "node_modules/etag/index.js"(exports2, module2) {
     "use strict";
     module2.exports = etag;
-    var crypto13 = require("crypto");
+    var crypto14 = require("crypto");
     var Stats = require("fs").Stats;
     var toString3 = Object.prototype.toString;
     function entitytag(entity) {
       if (entity.length === 0) {
         return '"0-2jmj7l5rSw0yVb/vlWAYkK/YBwk"';
       }
-      var hash = crypto13.createHash("sha1").update(entity, "utf8").digest("base64").substring(0, 27);
+      var hash = crypto14.createHash("sha1").update(entity, "utf8").digest("base64").substring(0, 27);
       var len = typeof entity === "string" ? Buffer.byteLength(entity, "utf8") : entity.length;
       return '"' + len.toString(16) + "-" + hash + '"';
     }
@@ -24711,11 +24711,11 @@ var require_request = __commonJS({
 // node_modules/cookie-signature/index.js
 var require_cookie_signature = __commonJS({
   "node_modules/cookie-signature/index.js"(exports2) {
-    var crypto13 = require("crypto");
+    var crypto14 = require("crypto");
     exports2.sign = function(val, secret) {
       if ("string" !== typeof val) throw new TypeError("Cookie value must be provided as a string.");
       if (null == secret) throw new TypeError("Secret key must be provided.");
-      return val + "." + crypto13.createHmac("sha256", secret).update(val).digest("base64").replace(/\=+$/, "");
+      return val + "." + crypto14.createHmac("sha256", secret).update(val).digest("base64").replace(/\=+$/, "");
     };
     exports2.unsign = function(val, secret) {
       if ("string" !== typeof val) throw new TypeError("Signed cookie string must be provided.");
@@ -24724,7 +24724,7 @@ var require_cookie_signature = __commonJS({
       return sha1(mac) == sha1(val) ? str : false;
     };
     function sha1(str) {
-      return crypto13.createHash("sha1").update(str).digest("hex");
+      return crypto14.createHash("sha1").update(str).digest("hex");
     }
   }
 });
@@ -25830,8 +25830,8 @@ var require_main = __commonJS({
   "node_modules/dotenv/lib/main.js"(exports2, module2) {
     var fs26 = require("fs");
     var path26 = require("path");
-    var os5 = require("os");
-    var crypto13 = require("crypto");
+    var os6 = require("os");
+    var crypto14 = require("crypto");
     var TIPS = [
       "\u25C8 encrypted .env [www.dotenvx.com]",
       "\u25C8 secrets for agents [www.dotenvx.com]",
@@ -25976,7 +25976,7 @@ var require_main = __commonJS({
       return null;
     }
     function _resolveHome(envPath) {
-      return envPath[0] === "~" ? path26.join(os5.homedir(), envPath.slice(1)) : envPath;
+      return envPath[0] === "~" ? path26.join(os6.homedir(), envPath.slice(1)) : envPath;
     }
     function _configVault(options) {
       const debug = parseBoolean(process.env.DOTENV_CONFIG_DEBUG || options && options.debug);
@@ -26075,7 +26075,7 @@ var require_main = __commonJS({
       const authTag = ciphertext.subarray(-16);
       ciphertext = ciphertext.subarray(12, -16);
       try {
-        const aesgcm = crypto13.createDecipheriv("aes-256-gcm", key, nonce);
+        const aesgcm = crypto14.createDecipheriv("aes-256-gcm", key, nonce);
         aesgcm.setAuthTag(authTag);
         return `${aesgcm.update(ciphertext)}${aesgcm.final()}`;
       } catch (error) {
@@ -48375,14 +48375,14 @@ var require_buffer_equal_constant_time = __commonJS({
 var require_jwa = __commonJS({
   "node_modules/jwa/index.js"(exports2, module2) {
     var Buffer5 = require_safe_buffer().Buffer;
-    var crypto13 = require("crypto");
+    var crypto14 = require("crypto");
     var formatEcdsa = require_ecdsa_sig_formatter();
     var util4 = require("util");
     var MSG_INVALID_ALGORITHM = '"%s" is not a valid algorithm.\n  Supported algorithms are:\n  "HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512" and "none".';
     var MSG_INVALID_SECRET = "secret must be a string or buffer";
     var MSG_INVALID_VERIFIER_KEY = "key must be a string or a buffer";
     var MSG_INVALID_SIGNER_KEY = "key must be a string, a buffer or an object";
-    var supportsKeyObjects = typeof crypto13.createPublicKey === "function";
+    var supportsKeyObjects = typeof crypto14.createPublicKey === "function";
     if (supportsKeyObjects) {
       MSG_INVALID_VERIFIER_KEY += " or a KeyObject";
       MSG_INVALID_SECRET += "or a KeyObject";
@@ -48472,17 +48472,17 @@ var require_jwa = __commonJS({
       return function sign(thing, secret) {
         checkIsSecretKey(secret);
         thing = normalizeInput(thing);
-        var hmac = crypto13.createHmac("sha" + bits, secret);
+        var hmac = crypto14.createHmac("sha" + bits, secret);
         var sig = (hmac.update(thing), hmac.digest("base64"));
         return fromBase64(sig);
       };
     }
     var bufferEqual;
-    var timingSafeEqual = "timingSafeEqual" in crypto13 ? function timingSafeEqual2(a, b) {
+    var timingSafeEqual = "timingSafeEqual" in crypto14 ? function timingSafeEqual2(a, b) {
       if (a.byteLength !== b.byteLength) {
         return false;
       }
-      return crypto13.timingSafeEqual(a, b);
+      return crypto14.timingSafeEqual(a, b);
     } : function timingSafeEqual2(a, b) {
       if (!bufferEqual) {
         bufferEqual = require_buffer_equal_constant_time();
@@ -48499,7 +48499,7 @@ var require_jwa = __commonJS({
       return function sign(thing, privateKey) {
         checkIsPrivateKey(privateKey);
         thing = normalizeInput(thing);
-        var signer = crypto13.createSign("RSA-SHA" + bits);
+        var signer = crypto14.createSign("RSA-SHA" + bits);
         var sig = (signer.update(thing), signer.sign(privateKey, "base64"));
         return fromBase64(sig);
       };
@@ -48509,7 +48509,7 @@ var require_jwa = __commonJS({
         checkIsPublicKey(publicKey);
         thing = normalizeInput(thing);
         signature = toBase64(signature);
-        var verifier = crypto13.createVerify("RSA-SHA" + bits);
+        var verifier = crypto14.createVerify("RSA-SHA" + bits);
         verifier.update(thing);
         return verifier.verify(publicKey, signature, "base64");
       };
@@ -48518,11 +48518,11 @@ var require_jwa = __commonJS({
       return function sign(thing, privateKey) {
         checkIsPrivateKey(privateKey);
         thing = normalizeInput(thing);
-        var signer = crypto13.createSign("RSA-SHA" + bits);
+        var signer = crypto14.createSign("RSA-SHA" + bits);
         var sig = (signer.update(thing), signer.sign({
           key: privateKey,
-          padding: crypto13.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto13.constants.RSA_PSS_SALTLEN_DIGEST
+          padding: crypto14.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto14.constants.RSA_PSS_SALTLEN_DIGEST
         }, "base64"));
         return fromBase64(sig);
       };
@@ -48532,12 +48532,12 @@ var require_jwa = __commonJS({
         checkIsPublicKey(publicKey);
         thing = normalizeInput(thing);
         signature = toBase64(signature);
-        var verifier = crypto13.createVerify("RSA-SHA" + bits);
+        var verifier = crypto14.createVerify("RSA-SHA" + bits);
         verifier.update(thing);
         return verifier.verify({
           key: publicKey,
-          padding: crypto13.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto13.constants.RSA_PSS_SALTLEN_DIGEST
+          padding: crypto14.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto14.constants.RSA_PSS_SALTLEN_DIGEST
         }, signature, "base64");
       };
     }
@@ -52129,11 +52129,11 @@ var DonHoanHuy_exports = {};
 __export(DonHoanHuy_exports, {
   default: () => DonHoanHuy_default
 });
-var import_mongoose7, DonHoanHuySchema, DonHoanHuy, DonHoanHuy_default;
+var import_mongoose8, DonHoanHuySchema, DonHoanHuy, DonHoanHuy_default;
 var init_DonHoanHuy = __esm({
   "models/DonHoanHuy.js"() {
-    import_mongoose7 = __toESM(require("mongoose"), 1);
-    DonHoanHuySchema = new import_mongoose7.default.Schema(
+    import_mongoose8 = __toESM(require("mongoose"), 1);
+    DonHoanHuySchema = new import_mongoose8.default.Schema(
       {
         orderSn: {
           type: String,
@@ -52201,7 +52201,7 @@ var init_DonHoanHuy = __esm({
     DonHoanHuySchema.index({ scannedAt: -1 }, { name: "don_hoan_huy_scannedAt" });
     DonHoanHuySchema.index({ type: 1 }, { name: "don_hoan_huy_type" });
     DonHoanHuySchema.index({ local_status: 1 }, { name: "don_hoan_huy_local_status" });
-    DonHoanHuy = import_mongoose7.default.models.DonHoanHuy || import_mongoose7.default.model("DonHoanHuy", DonHoanHuySchema);
+    DonHoanHuy = import_mongoose8.default.models.DonHoanHuy || import_mongoose8.default.model("DonHoanHuy", DonHoanHuySchema);
     DonHoanHuy_default = DonHoanHuy;
   }
 });
@@ -61991,22 +61991,22 @@ var require_crypto2 = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.NodeCrypto = void 0;
-    var crypto13 = require("crypto");
+    var crypto14 = require("crypto");
     var NodeCrypto = class {
       async sha256DigestBase64(str) {
-        return crypto13.createHash("sha256").update(str).digest("base64");
+        return crypto14.createHash("sha256").update(str).digest("base64");
       }
       randomBytesBase64(count) {
-        return crypto13.randomBytes(count).toString("base64");
+        return crypto14.randomBytes(count).toString("base64");
       }
       async verify(pubkey, data, signature) {
-        const verifier = crypto13.createVerify("RSA-SHA256");
+        const verifier = crypto14.createVerify("RSA-SHA256");
         verifier.update(data);
         verifier.end();
         return verifier.verify(pubkey, signature, "base64");
       }
       async sign(privateKey, data) {
-        const signer = crypto13.createSign("RSA-SHA256");
+        const signer = crypto14.createSign("RSA-SHA256");
         signer.update(data);
         signer.end();
         return signer.sign(privateKey, "base64");
@@ -62024,7 +62024,7 @@ var require_crypto2 = __commonJS({
        *   string in hexadecimal encoding.
        */
       async sha256DigestHex(str) {
-        return crypto13.createHash("sha256").update(str).digest("hex");
+        return crypto14.createHash("sha256").update(str).digest("hex");
       }
       /**
        * Computes the HMAC hash of a message using the provided crypto key and the
@@ -62036,7 +62036,7 @@ var require_crypto2 = __commonJS({
        */
       async signWithHmacSha256(key, msg) {
         const cryptoKey = typeof key === "string" ? key : toBuffer(key);
-        return toArrayBuffer(crypto13.createHmac("sha256", cryptoKey).update(msg).digest());
+        return toArrayBuffer(crypto14.createHmac("sha256", cryptoKey).update(msg).digest());
       }
     };
     exports2.NodeCrypto = NodeCrypto;
@@ -62104,7 +62104,7 @@ var require_util2 = __commonJS({
     exports2.isValidFile = isValidFile;
     exports2.getWellKnownCertificateConfigFileLocation = getWellKnownCertificateConfigFileLocation;
     var fs26 = require("fs");
-    var os5 = require("os");
+    var os6 = require("os");
     var path26 = require("path");
     var WELL_KNOWN_CERTIFICATE_CONFIG_FILE = "certificate_config.json";
     var CLOUDSDK_CONFIG_DIRECTORY = "gcloud";
@@ -62202,7 +62202,7 @@ var require_util2 = __commonJS({
       return path26.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
     }
     function _isWindows() {
-      return os5.platform().startsWith("win");
+      return os6.platform().startsWith("win");
     }
   }
 });
@@ -62727,10 +62727,10 @@ var require_oauth2client = __commonJS({
        * https://github.com/googleapis/google-auth-library-nodejs/blob/main/samples/oauth2-codeVerifier.js
        */
       async generateCodeVerifierAsync() {
-        const crypto13 = (0, crypto_1.createCrypto)();
-        const randomString = crypto13.randomBytesBase64(96);
+        const crypto14 = (0, crypto_1.createCrypto)();
+        const randomString = crypto14.randomBytesBase64(96);
         const codeVerifier = randomString.replace(/\+/g, "~").replace(/=/g, "_").replace(/\//g, "-");
-        const unencodedCodeChallenge = await crypto13.sha256DigestBase64(codeVerifier);
+        const unencodedCodeChallenge = await crypto14.sha256DigestBase64(codeVerifier);
         const codeChallenge = unencodedCodeChallenge.split("=")[0].replace(/\+/g, "-").replace(/\//g, "_");
         return { codeVerifier, codeChallenge };
       }
@@ -63171,7 +63171,7 @@ var require_oauth2client = __commonJS({
        * @return Returns a promise resolving to LoginTicket on verification.
        */
       async verifySignedJwtWithCertsAsync(jwt3, certs, requiredAudience, issuers, maxExpiry) {
-        const crypto13 = (0, crypto_1.createCrypto)();
+        const crypto14 = (0, crypto_1.createCrypto)();
         if (!maxExpiry) {
           maxExpiry = _OAuth2Client.DEFAULT_MAX_TOKEN_LIFETIME_SECS_;
         }
@@ -63184,7 +63184,7 @@ var require_oauth2client = __commonJS({
         let envelope;
         let payload;
         try {
-          envelope = JSON.parse(crypto13.decodeBase64StringUtf8(segments[0]));
+          envelope = JSON.parse(crypto14.decodeBase64StringUtf8(segments[0]));
         } catch (err) {
           if (err instanceof Error) {
             err.message = `Can't parse token envelope: ${segments[0]}': ${err.message}`;
@@ -63195,7 +63195,7 @@ var require_oauth2client = __commonJS({
           throw new Error("Can't parse token envelope: " + segments[0]);
         }
         try {
-          payload = JSON.parse(crypto13.decodeBase64StringUtf8(segments[1]));
+          payload = JSON.parse(crypto14.decodeBase64StringUtf8(segments[1]));
         } catch (err) {
           if (err instanceof Error) {
             err.message = `Can't parse token payload '${segments[0]}`;
@@ -63212,7 +63212,7 @@ var require_oauth2client = __commonJS({
         if (envelope.alg === "ES256") {
           signature = formatEcdsa.joseToDer(signature, "ES256").toString("base64");
         }
-        const verified = await crypto13.verify(cert, signed, signature);
+        const verified = await crypto14.verify(cert, signed, signature);
         if (!verified) {
           throw new Error("Invalid token signature: " + jwt3);
         }
@@ -65782,14 +65782,14 @@ var require_awsrequestsigner = __commonJS({
       }
     };
     exports2.AwsRequestSigner = AwsRequestSigner;
-    async function sign(crypto13, key, msg) {
-      return await crypto13.signWithHmacSha256(key, msg);
+    async function sign(crypto14, key, msg) {
+      return await crypto14.signWithHmacSha256(key, msg);
     }
-    async function getSigningKey(crypto13, key, dateStamp, region, serviceName) {
-      const kDate = await sign(crypto13, `AWS4${key}`, dateStamp);
-      const kRegion = await sign(crypto13, kDate, region);
-      const kService = await sign(crypto13, kRegion, serviceName);
-      const kSigning = await sign(crypto13, kService, "aws4_request");
+    async function getSigningKey(crypto14, key, dateStamp, region, serviceName) {
+      const kDate = await sign(crypto14, `AWS4${key}`, dateStamp);
+      const kRegion = await sign(crypto14, kDate, region);
+      const kService = await sign(crypto14, kRegion, serviceName);
+      const kSigning = await sign(crypto14, kService, "aws4_request");
       return kSigning;
     }
     async function generateAuthenticationHeaderMap(options) {
@@ -66755,7 +66755,7 @@ var require_gdchclient = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GdchClient = exports2.GDCH_SERVICE_ACCOUNT_TYPE = void 0;
-    var crypto13 = require("crypto");
+    var crypto14 = require("crypto");
     var fs26 = require("fs");
     var https3 = require("https");
     var oauth2client_1 = require_oauth2client();
@@ -66946,7 +66946,7 @@ var require_gdchclient = __commonJS({
         const encodedHeader = this.base64UrlEncode(JSON.stringify(header));
         const encodedPayload = this.base64UrlEncode(JSON.stringify(payload));
         const signingInput = `${encodedHeader}.${encodedPayload}`;
-        const signature = crypto13.sign("sha256", Buffer.from(signingInput), {
+        const signature = crypto14.sign("sha256", Buffer.from(signingInput), {
           key: this.privateKey,
           dsaEncoding: "ieee-p1363"
         });
@@ -67042,7 +67042,7 @@ var require_googleauth = __commonJS({
     var fs26 = require("fs");
     var gaxios_1 = require_src6();
     var gcpMetadata = require_src8();
-    var os5 = require("os");
+    var os6 = require("os");
     var path26 = require("path");
     var crypto_1 = require_crypto3();
     var computeclient_1 = require_computeclient();
@@ -67549,7 +67549,7 @@ var require_googleauth = __commonJS({
        * @api private
        */
       _isWindows() {
-        const sys = os5.platform();
+        const sys = os6.platform();
         if (sys && sys.length >= 3) {
           if (sys.substring(0, 3).toLowerCase() === "win") {
             return true;
@@ -67807,24 +67807,24 @@ var require_googleauth = __commonJS({
           const signed = await client.sign(data);
           return signed.signedBlob;
         }
-        const crypto13 = (0, crypto_1.createCrypto)();
+        const crypto14 = (0, crypto_1.createCrypto)();
         if (client instanceof jwtclient_1.JWT && client.key) {
-          const sign = await crypto13.sign(client.key, data);
+          const sign = await crypto14.sign(client.key, data);
           return sign;
         }
         const creds = await this.getCredentials();
         if (!creds.client_email) {
           throw new Error("Cannot sign data without `client_email`.");
         }
-        return this.signBlob(crypto13, creds.client_email, data, endpoint);
+        return this.signBlob(crypto14, creds.client_email, data, endpoint);
       }
-      async signBlob(crypto13, emailOrUniqueId, data, endpoint) {
+      async signBlob(crypto14, emailOrUniqueId, data, endpoint) {
         const url2 = new URL(endpoint + `${emailOrUniqueId}:signBlob`);
         const res = await this.request({
           method: "POST",
           url: url2.href,
           data: {
-            payload: crypto13.encodeBase64StringUtf8(data)
+            payload: crypto14.encodeBase64StringUtf8(data)
           },
           retry: true,
           retryConfig: {
@@ -72456,7 +72456,7 @@ var require_form_data = __commonJS({
     var parseUrl2 = require("url").parse;
     var fs26 = require("fs");
     var Stream4 = require("stream").Stream;
-    var crypto13 = require("crypto");
+    var crypto14 = require("crypto");
     var mime = require_mime_types();
     var asynckit = require_asynckit();
     var setToStringTag = require_es_set_tostringtag();
@@ -72665,7 +72665,7 @@ var require_form_data = __commonJS({
       return Buffer.concat([dataBuffer, Buffer.from(this._lastBoundary())]);
     };
     FormData5.prototype._generateBoundary = function() {
-      this._boundary = "--------------------------" + crypto13.randomBytes(12).toString("hex");
+      this._boundary = "--------------------------" + crypto14.randomBytes(12).toString("hex");
     };
     FormData5.prototype.getLengthSync = function() {
       var knownLength = this._overheadLength + this._valueLength;
@@ -77983,6 +77983,103 @@ async function yieldSyncIfWebhookWaiting() {
   }
 }
 
+// utils/workGate.js
+function createWorkGate(limit, maxPending = 200) {
+  let active = 0;
+  const pending = [];
+  const drain = () => {
+    while (active < limit && pending.length) {
+      const job = pending.shift();
+      job.signal?.removeEventListener("abort", job.abort);
+      if (job.signal?.aborted) {
+        job.reject(job.signal.reason);
+        continue;
+      }
+      active++;
+      let released = false;
+      job.resolve(() => {
+        if (released) return;
+        released = true;
+        active--;
+        drain();
+      });
+    }
+  };
+  const acquire = (signal) => new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    if (pending.length >= maxPending) {
+      return reject(Object.assign(new Error("Hang doi dang day, vui long thu lai sau."), { code: "work_queue_full" }));
+    }
+    const job = { resolve, reject, signal, abort: null };
+    job.abort = () => {
+      const index = pending.indexOf(job);
+      if (index >= 0) pending.splice(index, 1);
+      signal.removeEventListener("abort", job.abort);
+      reject(signal.reason);
+    };
+    signal?.addEventListener("abort", job.abort, { once: true });
+    pending.push(job);
+    drain();
+  });
+  return {
+    acquire,
+    async run(work, signal) {
+      const release = await acquire(signal);
+      try {
+        return await work();
+      } finally {
+        release();
+      }
+    },
+    snapshot: () => ({ active, pending: pending.length, limit, maxPending })
+  };
+}
+var shopeeHttpGate = createWorkGate(3, 200);
+var confirmOrderGate = createWorkGate(2, 200);
+var labelBatchGate = createWorkGate(1, 40);
+var pdfMergeGate = createWorkGate(1, 2);
+function createKeyedBatchWork(gate, maxKeys = 1e3) {
+  const inFlight = /* @__PURE__ */ new Map();
+  return async (keys, worker, signal) => {
+    const unique = [...new Set(keys)];
+    const owned = unique.filter((key) => !inFlight.has(key));
+    if (inFlight.size + owned.length > maxKeys) {
+      throw Object.assign(new Error("Hang doi PDF dang day, vui long thu lai sau."), { code: "work_queue_full" });
+    }
+    if (owned.length) {
+      const batch = gate.run(() => worker(owned));
+      for (const key of owned) {
+        const task = batch.then((values) => {
+          if (!values.has(key)) throw new Error(`Missing batch result: ${key}`);
+          return values.get(key);
+        });
+        inFlight.set(key, task);
+        void task.then(
+          () => {
+            if (inFlight.get(key) === task) inFlight.delete(key);
+          },
+          () => {
+            if (inFlight.get(key) === task) inFlight.delete(key);
+          }
+        );
+      }
+    }
+    const result = Promise.all(unique.map((key) => inFlight.get(key)));
+    if (!signal) return result;
+    return new Promise((resolve, reject) => {
+      const abort = () => reject(signal.reason);
+      if (signal.aborted) {
+        result.catch(() => {
+        });
+        reject(signal.reason);
+        return;
+      }
+      signal.addEventListener("abort", abort, { once: true });
+      void result.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+    });
+  };
+}
+
 // modules/shopee-sync/client.js
 var import_meta = {};
 var SHOPEE_API_MAX_RETRY = 3;
@@ -78056,12 +78153,16 @@ async function fetchWithTimeout(url2, init = {}, timeoutMs = SHOPEE_HTTP_TIMEOUT
   const timer2 = setTimeout(() => controller.abort(), timeoutMs);
   let hardTimer;
   let bodyOwnsDeadline = false;
+  let releaseSlot;
   const cleanup = () => {
     clearTimeout(timer2);
     if (hardTimer) clearTimeout(hardTimer);
     externalSignal?.removeEventListener?.("abort", abortFromExternal);
+    releaseSlot?.();
   };
   try {
+    releaseSlot = await shopeeHttpGate.acquire(controller.signal);
+    assertSyncActive();
     const fetchInit = {
       ...init,
       signal: controller.signal
@@ -78077,6 +78178,7 @@ async function fetchWithTimeout(url2, init = {}, timeoutMs = SHOPEE_HTTP_TIMEOUT
         } catch {
         }
         reject(Object.assign(new Error(`Shopee API timeout sau ${timeoutMs / 1e3}s`), { code: "shopee_http_timeout" }));
+        cleanup();
       }, timeoutMs + 1e3);
     });
     const response = await Promise.race([fetchPromise, hardTimeoutPromise]);
@@ -79800,79 +79902,19 @@ var import_crypto6 = __toESM(require("crypto"), 1);
 var import_dotenv2 = __toESM(require_main(), 1);
 var import_pdf_lib = __toESM(require_cjs(), 1);
 
-// modules/shopee-sync/schedulers/orders.js
-var import_node_cron = __toESM(require("node-cron"), 1);
-
-// models/WebhookJob.js
-var import_mongoose3 = __toESM(require("mongoose"), 1);
-var WebhookJobSchema = new import_mongoose3.default.Schema(
-  {
-    jobId: {
-      type: String,
-      required: true,
-      trim: true
-    },
-    payload: {
-      type: import_mongoose3.default.Schema.Types.Mixed,
-      required: true
-    },
-    // Đồng bộ thủ công và cron dùng chung hàng đợi bền với webhook.
-    kind: { type: String, enum: ["webhook", "sync"], default: "webhook" },
-    priority: { type: Number, default: 0 },
-    orderKey: { type: String, default: "" },
-    // Shop và mốc thời gian riêng để đọc chỉ số không phải bóc payload.
-    shopId: { type: String },
-    received_at: { type: Date },
-    started_at: { type: Date },
-    worker_revision: { type: Number },
-    processing_stage: { type: String },
-    stage_started_at: { type: Date },
-    order_persisted_at: { type: Date },
-    finished_at: { type: Date },
-    retry_attempts: { type: Number, default: 0, min: 0 },
-    claim_token: { type: String, default: "" },
-    // Chỉ một job cron cùng loại đang chờ/chạy/retry; không tạo backlog trùng.
-    active_key: { type: String },
-    state: {
-      type: String,
-      enum: ["pending", "running", "succeeded", "failed", "dead-letter"],
-      default: "pending",
-      required: true
-    },
-    retry_count: {
-      type: Number,
-      default: 0,
-      min: 0
-    },
-    error_log: {
-      type: String,
-      default: ""
-    },
-    next_run_at: {
-      type: Date,
-      default: Date.now,
-      required: true
-    }
-  },
-  {
-    collection: "webhook_jobs",
-    versionKey: false,
-    timestamps: true
-    // Chỉ tự đảm bảo hai unique index đơn cần thiết cho chống trùng job.
-    // Compound và index đo lường không tự tạo khi boot.
-  }
-);
-WebhookJobSchema.index({ jobId: 1 }, { unique: true, name: "webhook_jobs_jobId_unique" });
-WebhookJobSchema.index({ active_key: 1 }, { unique: true, sparse: true, name: "webhook_jobs_active_key_unique" });
-var WebhookJob = import_mongoose3.default.models.WebhookJob || import_mongoose3.default.model("WebhookJob", WebhookJobSchema);
-var WebhookJob_default = WebhookJob;
-
-// modules/jobs/webhookJobQueue.js
+// services/logisticsJobQueue.js
 var import_node_crypto3 = __toESM(require("node:crypto"), 1);
+var import_node_os4 = __toESM(require("node:os"), 1);
+var import_mongoose5 = __toESM(require("mongoose"), 1);
+
+// modules/shopee-sync/syncOrchestrator.js
+var import_crypto2 = __toESM(require("crypto"), 1);
+var import_mongoose4 = __toESM(require("mongoose"), 1);
+var import_node_os3 = __toESM(require("node:os"), 1);
 
 // modules/operations/stallDiagnostics.js
 var import_node_os2 = __toESM(require("node:os"), 1);
-var import_mongoose4 = __toESM(require("mongoose"), 1);
+var import_mongoose3 = __toESM(require("mongoose"), 1);
 
 // scripts/worker-process-probe.mjs
 var import_node_os = __toESM(require("node:os"), 1);
@@ -79996,7 +80038,7 @@ function sanitizeLockForDiag(lock, nowMs = Date.now()) {
 }
 async function recordStallDiagnostic(event, details = {}, options = {}) {
   try {
-    const db = options.db || (import_mongoose4.default.connection.readyState === 1 ? import_mongoose4.default.connection.db : null);
+    const db = options.db || (import_mongoose3.default.connection.readyState === 1 ? import_mongoose3.default.connection.db : null);
     if (!db) return false;
     const now = options.now instanceof Date ? options.now : /* @__PURE__ */ new Date();
     const nowMs = now.getTime();
@@ -80064,9 +80106,6 @@ async function recordStallDiagnostic(event, details = {}, options = {}) {
 }
 
 // modules/shopee-sync/syncOrchestrator.js
-var import_crypto2 = __toESM(require("crypto"), 1);
-var import_mongoose5 = __toESM(require("mongoose"), 1);
-var import_node_os3 = __toESM(require("node:os"), 1);
 function isOwnerProcessDead(lock) {
   if (lock?.hostname !== import_node_os3.default.hostname() || !Number.isInteger(lock?.pid) || lock.pid <= 0) return false;
   try {
@@ -80105,8 +80144,8 @@ function overlapSec() {
   );
 }
 function database() {
-  if (import_mongoose5.default.connection.readyState !== 1 || !import_mongoose5.default.connection.db) return null;
-  return import_mongoose5.default.connection.db;
+  if (import_mongoose4.default.connection.readyState !== 1 || !import_mongoose4.default.connection.db) return null;
+  return import_mongoose4.default.connection.db;
 }
 async function ensureIndexes() {
   const db = database();
@@ -80251,6 +80290,314 @@ async function markSuccessfulShopWatermarks(perShop) {
   if (ops.length) await db.collection(WATERMARK_COLLECTION).bulkWrite(ops, { ordered: false });
 }
 
+// services/logisticsJobQueue.js
+var DB_OPTIONS2 = { maxTimeMS: 5e3 };
+var FINISHED_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
+var PENDING_TIMEOUT_MS = 40 * 60 * 1e3;
+var WAIT_WARNING_MS = 2 * 60 * 1e3;
+var HEARTBEAT_WARNING_MS = 90 * 1e3;
+var HEARTBEAT_INTERVAL_MS = 30 * 1e3;
+function createLogisticsJobQueue(getDb, ownerIsDead = isOwnerProcessDead) {
+  const handlers = /* @__PURE__ */ new Map();
+  const busy = /* @__PURE__ */ new Set();
+  const completedOwners2 = /* @__PURE__ */ new Map();
+  let timer2;
+  let indexedDb;
+  const collections = async () => {
+    const db = getDb();
+    if (!db) throw new Error("mongodb_not_ready");
+    const jobs = db.collection("logistics_jobs");
+    const locks = db.collection("logistics_worker_locks");
+    if (indexedDb !== db) {
+      await jobs.createIndex({ lane: 1, state: 1, createdAt: 1 });
+      await jobs.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+      indexedDb = db;
+    }
+    return { jobs, locks };
+  };
+  const publicData = (doc, lock) => {
+    if (!doc) return null;
+    const { confirmedPatches, ...data } = doc.data;
+    if (!["pending", "running"].includes(doc.state)) return { ...data, id: doc._id };
+    const now = Date.now();
+    const waitMs = Math.max(0, now - (doc.createdAt || now));
+    const heartbeatAt = lock?.heartbeatAt || lock?.acquiredAt;
+    const staleHeartbeat = Boolean(lock?.owner && (!heartbeatAt || now - new Date(heartbeatAt).getTime() > HEARTBEAT_WARNING_MS));
+    const prolonged = doc.state === "pending" && waitMs >= WAIT_WARNING_MS;
+    const stalled = Boolean(lock?.owner && staleHeartbeat);
+    const queueHealth = {
+      state: stalled ? "stalled" : prolonged && lock?.owner ? "blocked" : doc.state === "pending" ? "waiting" : "running",
+      waitMs,
+      staleHeartbeat,
+      acquiredAt: lock?.acquiredAt || null,
+      heartbeatAt: lock?.heartbeatAt || null
+    };
+    let message = data.message;
+    if (prolonged) {
+      message = lock?.owner ? "T\xE1c v\u1EE5 v\u1EABn \u0111ang ch\u1EDD worker c\u1EE7a l\xF4 tr\u01B0\u1EDBc nh\u1EA3 kh\xF3a; ch\u01B0a b\u1EAFt \u0111\u1EA7u l\u01B0\u1EE3t x\u1EED l\xFD ti\u1EBFp theo. Kh\xF4ng t\u1EF1 thu h\u1ED3i kh\xF3a khi process c\xF2n s\u1ED1ng." : "T\xE1c v\u1EE5 v\u1EABn \u0111ang ch\u1EDD worker ti\u1EBFp nh\u1EADn; ch\u01B0a b\u1EAFt \u0111\u1EA7u l\u01B0\u1EE3t x\u1EED l\xFD ti\u1EBFp theo.";
+      if (stalled) message += " Heartbeat c\u1EE7a worker ch\u01B0a \u0111\u01B0\u1EE3c c\u1EADp nh\u1EADt; c\u1EA7n ki\u1EC3m tra worker.";
+    }
+    return { ...data, ...prolonged ? { message } : {}, id: doc._id, queueHealth };
+  };
+  const expirePending = (jobs, scope2) => {
+    const now = Date.now();
+    return jobs.findOneAndUpdate({
+      ...scope2,
+      state: "pending",
+      attempts: 0,
+      startedAt: { $exists: false },
+      createdAt: { $lt: now - PENDING_TIMEOUT_MS },
+      "data.startedAt": { $exists: false },
+      "data.persistencePending": { $ne: true },
+      "data.phase": { $nin: ["persisting"] }
+    }, { $set: {
+      state: "finished",
+      updatedAt: now,
+      expiresAt: new Date(now + FINISHED_TTL_MS),
+      "data.status": "failed",
+      "data.phase": "expired",
+      "data.updatedAt": now,
+      "data.error": "queue_wait_expired",
+      "data.message": "T\xE1c v\u1EE5 ch\u01B0a b\u1EAFt \u0111\u1EA7u v\xE0 \u0111\xE3 ch\u1EDD qu\xE1 40 ph\xFAt n\xEAn \u0111\xE3 h\u1EBFt h\u1EA1n. Ch\u01B0a x\u1EED l\xFD \u0111\u01A1n n\xE0o; vui l\xF2ng g\u1EEDi l\u1EA1i t\xE1c v\u1EE5 n\u1EBFu v\u1EABn c\u1EA7n."
+    } }, { ...DB_OPTIONS2, sort: { createdAt: 1 }, returnDocument: "after" });
+  };
+  const tick = async (lane) => {
+    if (busy.has(lane)) return;
+    busy.add(lane);
+    let owner;
+    let locks;
+    let heartbeat;
+    let heartbeatWrite;
+    try {
+      const cols = await collections();
+      const jobs = cols.jobs;
+      locks = cols.locks;
+      for (let i2 = 0; i2 < 10; i2++) {
+        if (!await expirePending(jobs, { lane })) break;
+        if (i2 === 9) return;
+      }
+      if (completedOwners2.has(lane)) {
+        await locks.deleteOne({ _id: lane, owner: completedOwners2.get(lane) }, DB_OPTIONS2);
+        completedOwners2.delete(lane);
+      }
+      const previous = await locks.findOne({ _id: lane }, DB_OPTIONS2);
+      if (previous?.owner) {
+        if (!ownerIsDead(previous)) return;
+        await locks.deleteOne({ _id: lane, owner: previous.owner }, DB_OPTIONS2);
+      }
+      owner = import_node_crypto3.default.randomUUID();
+      try {
+        const now2 = /* @__PURE__ */ new Date();
+        await locks.insertOne({ _id: lane, owner, pid: process.pid, hostname: import_node_os4.default.hostname(), acquiredAt: now2, heartbeatAt: now2 }, DB_OPTIONS2);
+      } catch (error) {
+        if (error?.code === 11e3) {
+          owner = null;
+          return;
+        }
+        throw error;
+      }
+      heartbeat = setInterval(() => {
+        if (heartbeatWrite) return;
+        heartbeatWrite = locks.updateOne({ _id: lane, owner }, { $set: { heartbeatAt: /* @__PURE__ */ new Date() } }, DB_OPTIONS2).catch(() => console.warn("[Logistics jobs] heartbeat_failed")).finally(() => {
+          heartbeatWrite = null;
+        });
+      }, HEARTBEAT_INTERVAL_MS);
+      heartbeat.unref?.();
+      const now = Date.now();
+      const doc = await jobs.findOneAndUpdate(
+        { lane, state: { $in: ["pending", "running"] }, nextAttemptAt: { $lte: now } },
+        { $set: { state: "running", updatedAt: now, startedAt: now }, $inc: { attempts: 1 } },
+        { sort: { createdAt: 1 }, returnDocument: "after", ...DB_OPTIONS2 }
+      );
+      if (!doc) return;
+      let latest = doc.data;
+      let writes = Promise.resolve();
+      const checkpoint = async (data) => {
+        latest = structuredClone(data);
+        const snapshot = latest;
+        writes = writes.then(() => jobs.updateOne(
+          { _id: doc._id },
+          { $set: { data: snapshot, updatedAt: Date.now() } },
+          DB_OPTIONS2
+        ));
+        await writes;
+      };
+      try {
+        const data = await handlers.get(lane)(doc.input, { ...doc.data, id: doc._id, recovering: doc.attempts > 1 }, checkpoint);
+        await writes;
+        await jobs.updateOne({ _id: doc._id }, { $set: {
+          data,
+          state: "finished",
+          updatedAt: Date.now(),
+          expiresAt: new Date(Date.now() + FINISHED_TTL_MS)
+        } }, DB_OPTIONS2);
+      } catch (error) {
+        const retry2 = doc.attempts < 5;
+        const data = {
+          ...latest,
+          status: retry2 ? "pending" : "failed",
+          phase: latest.phase === "persisting" ? "persisting" : "recovering",
+          persistencePending: latest.phase === "persisting",
+          message: retry2 ? "\u0110ang th\u1EED ti\u1EBFp t\u1EE5c t\xE1c v\u1EE5, gi\u1EEF nguy\xEAn c\xE1c \u0111\u01A1n \u0111\xE3 x\xE1c nh\u1EADn." : "T\xE1c v\u1EE5 b\u1ECB gi\xE1n \u0111o\u1EA1n. C\xE1c \u0111\u01A1n \u0111\xE3 x\xE1c nh\u1EADn \u0111\u01B0\u1EE3c gi\u1EEF l\u1EA1i; vui l\xF2ng t\u1EA3i l\u1EA1i danh s\xE1ch \u0111\u1EC3 \u0111\u1ED1i so\xE1t.",
+          error: String(error?.message || error),
+          updatedAt: Date.now()
+        };
+        await jobs.updateOne({ _id: doc._id }, { $set: {
+          data,
+          state: retry2 ? "pending" : "finished",
+          nextAttemptAt: Date.now() + 5e3,
+          updatedAt: Date.now(),
+          ...!retry2 ? { expiresAt: new Date(Date.now() + FINISHED_TTL_MS) } : {}
+        } }, DB_OPTIONS2);
+      }
+    } catch (error) {
+      if (getDb()) console.warn("[Logistics jobs]", error?.message || error);
+    } finally {
+      clearInterval(heartbeat);
+      if (heartbeatWrite) await heartbeatWrite;
+      if (owner && locks) {
+        try {
+          await locks.deleteOne({ _id: lane, owner }, DB_OPTIONS2);
+        } catch {
+          completedOwners2.set(lane, owner);
+          console.warn("[Logistics jobs] release_failed");
+        }
+      }
+      busy.delete(lane);
+    }
+  };
+  return {
+    register(lane, handler) {
+      handlers.set(lane, handler);
+    },
+    async submit(lane, input, data, requestId) {
+      const { jobs } = await collections();
+      const key = requestId ? String(requestId).slice(0, 150) : import_node_crypto3.default.randomUUID();
+      const id = `${lane}-${import_node_crypto3.default.createHash("sha256").update(key).digest("hex").slice(0, 32)}`;
+      const fingerprint = import_node_crypto3.default.createHash("sha256").update(JSON.stringify(input)).digest("hex");
+      const existing = await jobs.findOne({ _id: id }, DB_OPTIONS2);
+      if (existing) {
+        if (existing.fingerprint !== fingerprint) throw new Error("request_id_conflict");
+        return publicData(existing);
+      }
+      if (await jobs.countDocuments({ lane, state: { $in: ["pending", "running"] } }, { limit: 10, ...DB_OPTIONS2 }) >= 10) {
+        throw Object.assign(new Error("H\xE0ng \u0111\u1EE3i \u0111ang \u0111\u1EA7y. Vui l\xF2ng ch\u1EDD l\xF4 tr\u01B0\u1EDBc ho\xE0n t\u1EA5t."), { code: "work_queue_full" });
+      }
+      await jobs.updateOne({ _id: id }, { $setOnInsert: {
+        lane,
+        input,
+        fingerprint,
+        data: { ...data, id },
+        state: "pending",
+        attempts: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        nextAttemptAt: 0
+      } }, { upsert: true, ...DB_OPTIONS2 }).catch((error) => {
+        if (error?.code !== 11e3) throw error;
+      });
+      const accepted = await jobs.findOne({ _id: id }, DB_OPTIONS2);
+      if (!accepted || accepted.fingerprint !== fingerprint) throw new Error("request_id_conflict");
+      void tick(lane);
+      return publicData(accepted);
+    },
+    async get(id) {
+      const { jobs, locks } = await collections();
+      let doc = await jobs.findOne({ _id: String(id) }, DB_OPTIONS2);
+      if (doc?.state === "pending" && doc.attempts === 0 && doc.createdAt < Date.now() - PENDING_TIMEOUT_MS) {
+        await expirePending(jobs, { _id: doc._id });
+        doc = await jobs.findOne({ _id: doc._id }, DB_OPTIONS2);
+      }
+      const lock = doc && ["pending", "running"].includes(doc.state) ? await locks.findOne({ _id: doc.lane }, DB_OPTIONS2) : null;
+      return publicData(doc, lock);
+    },
+    start() {
+      if (timer2) return;
+      timer2 = setInterval(() => {
+        for (const lane of handlers.keys()) void tick(lane);
+      }, 2e3);
+      timer2.unref?.();
+      for (const lane of handlers.keys()) void tick(lane);
+    },
+    stop() {
+      clearInterval(timer2);
+      timer2 = null;
+    },
+    tick
+  };
+}
+var logisticsJobQueue = createLogisticsJobQueue(() => import_mongoose5.default.connection.readyState === 1 ? import_mongoose5.default.connection.db : null);
+
+// modules/shopee-sync/schedulers/orders.js
+var import_node_cron = __toESM(require("node-cron"), 1);
+
+// models/WebhookJob.js
+var import_mongoose6 = __toESM(require("mongoose"), 1);
+var WebhookJobSchema = new import_mongoose6.default.Schema(
+  {
+    jobId: {
+      type: String,
+      required: true,
+      trim: true
+    },
+    payload: {
+      type: import_mongoose6.default.Schema.Types.Mixed,
+      required: true
+    },
+    // Đồng bộ thủ công và cron dùng chung hàng đợi bền với webhook.
+    kind: { type: String, enum: ["webhook", "sync"], default: "webhook" },
+    priority: { type: Number, default: 0 },
+    orderKey: { type: String, default: "" },
+    // Shop và mốc thời gian riêng để đọc chỉ số không phải bóc payload.
+    shopId: { type: String },
+    received_at: { type: Date },
+    started_at: { type: Date },
+    worker_revision: { type: Number },
+    processing_stage: { type: String },
+    stage_started_at: { type: Date },
+    order_persisted_at: { type: Date },
+    finished_at: { type: Date },
+    retry_attempts: { type: Number, default: 0, min: 0 },
+    claim_token: { type: String, default: "" },
+    // Chỉ một job cron cùng loại đang chờ/chạy/retry; không tạo backlog trùng.
+    active_key: { type: String },
+    state: {
+      type: String,
+      enum: ["pending", "running", "succeeded", "failed", "dead-letter"],
+      default: "pending",
+      required: true
+    },
+    retry_count: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    error_log: {
+      type: String,
+      default: ""
+    },
+    next_run_at: {
+      type: Date,
+      default: Date.now,
+      required: true
+    }
+  },
+  {
+    collection: "webhook_jobs",
+    versionKey: false,
+    timestamps: true
+    // Chỉ tự đảm bảo hai unique index đơn cần thiết cho chống trùng job.
+    // Compound và index đo lường không tự tạo khi boot.
+  }
+);
+WebhookJobSchema.index({ jobId: 1 }, { unique: true, name: "webhook_jobs_jobId_unique" });
+WebhookJobSchema.index({ active_key: 1 }, { unique: true, sparse: true, name: "webhook_jobs_active_key_unique" });
+var WebhookJob = import_mongoose6.default.models.WebhookJob || import_mongoose6.default.model("WebhookJob", WebhookJobSchema);
+var WebhookJob_default = WebhookJob;
+
+// modules/jobs/webhookJobQueue.js
+var import_node_crypto4 = __toESM(require("node:crypto"), 1);
+
 // modules/jobs/webhookQueueConfig.js
 function webhookQueueConfig(env2 = process.env) {
   const bounded = (name, fallback, min, max) => {
@@ -80297,8 +80644,8 @@ async function enqueueOrderSyncJob(payload = {}, priority = 0) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload) || !Number.isFinite(priority) || priority < 0 || priority > 10 || payload.mode && !["quick", "full", "task"].includes(payload.mode) || payload.shopIds && (!Array.isArray(payload.shopIds) || payload.shopIds.some((id) => !/^\d+$/.test(String(id)))) || payload.lookbackSec != null && (!Number.isFinite(Number(payload.lookbackSec)) || Number(payload.lookbackSec) < 60)) {
     throw new Error("sync_job_invalid");
   }
-  const jobId = `sync:${import_node_crypto3.default.randomUUID()}`;
-  const activeKey = priority < 10 ? import_node_crypto3.default.createHash("sha256").update(JSON.stringify({
+  const jobId = `sync:${import_node_crypto4.default.randomUUID()}`;
+  const activeKey = priority < 10 ? import_node_crypto4.default.createHash("sha256").update(JSON.stringify({
     mode: payload.mode || "incremental",
     task: payload.task || "",
     shopIds: [...payload.shopIds || []].sort(),
@@ -80434,7 +80781,7 @@ async function claimNextJob() {
           worker_revision: 5,
           processing_stage: "starting",
           stage_started_at: now,
-          claim_token: import_node_crypto3.default.randomUUID(),
+          claim_token: import_node_crypto4.default.randomUUID(),
           next_run_at: leaseUntil
         }
       }
@@ -81884,7 +82231,7 @@ function readRawWebhookBody(req) {
 var import_express2 = __toESM(require_express2(), 1);
 
 // modules/webhooks/shopeeSignature.ts
-var import_node_crypto4 = __toESM(require("node:crypto"), 1);
+var import_node_crypto5 = __toESM(require("node:crypto"), 1);
 function normalizeSignature(value) {
   return value.trim().replace(/^(?:Bearer|HMAC)\s+/i, "").replace(/^sha256=/i, "").trim().toLowerCase();
 }
@@ -81892,7 +82239,7 @@ function timingSafeEqualHex(a, b) {
   try {
     const aBuf = Buffer.from(a, "hex");
     const bBuf = Buffer.from(b, "hex");
-    return aBuf.length === bBuf.length && import_node_crypto4.default.timingSafeEqual(aBuf, bBuf);
+    return aBuf.length === bBuf.length && import_node_crypto5.default.timingSafeEqual(aBuf, bBuf);
   } catch {
     return false;
   }
@@ -81946,7 +82293,7 @@ function verifyShopeeWebhookSignature(rawBody, authorization, requestUrls = []) 
   }
   for (const url2 of candidates) {
     const baseString = `${url2}|${bodyStr}`;
-    const expected = import_node_crypto4.default.createHmac("sha256", secret).update(baseString).digest("hex");
+    const expected = import_node_crypto5.default.createHmac("sha256", secret).update(baseString).digest("hex");
     if (timingSafeEqualHex(expected, supplied)) {
       console.log(`[Shopee Webhook] HMAC OK (url=${url2})`);
       return true;
@@ -81959,13 +82306,93 @@ function verifyShopeeWebhookSignature(rawBody, authorization, requestUrls = []) 
   return false;
 }
 
+// utils/chatContent.js
+function safeChatUrl(value) {
+  if (typeof value !== "string") return "";
+  try {
+    const url2 = new URL(value.trim());
+    return ["https:", "http:"].includes(url2.protocol) ? url2.href : "";
+  } catch {
+    return "";
+  }
+}
+function scalar(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return typeof value === "string" && value.trim() !== "[object Object]" ? value.trim() : "";
+}
+function parseChatContent(content, messageType = "") {
+  const nodes = [];
+  const seen = /* @__PURE__ */ new Set();
+  function visit(value, depth = 0) {
+    if (value == null || depth > 8 || nodes.length >= 250) return;
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (/^[{\[]/.test(trimmed) && trimmed.length <= 1e5) {
+        try {
+          visit(JSON.parse(trimmed), depth + 1);
+          return;
+        } catch {
+        }
+      }
+      nodes.push(value);
+    } else if (typeof value === "object" && !seen.has(value)) {
+      seen.add(value);
+      if (Array.isArray(value)) {
+        value.slice(0, 50).forEach((v) => visit(v, depth + 1));
+        return;
+      }
+      nodes.push(value);
+      for (const key of ["content", "text", "data", "order", "order_info", "order_card", "item", "item_info", "item_card", "product", "product_info", "product_card", "source_content", "message", "items", "item_list", "image", "images"]) {
+        if (value[key] != null) visit(value[key], depth + 1);
+      }
+    }
+  }
+  visit(content);
+  let orderSn = "", orderId = "", itemId = "", shopId = "", itemName = "", imageUrl = "", url2 = "", orderUrl = "", text = "";
+  const types3 = /* @__PURE__ */ new Set([String(messageType).toLowerCase()]);
+  for (const node of nodes) {
+    if (typeof node === "string") {
+      if (!text) text = scalar(node);
+      continue;
+    }
+    for (const hint of [node.message_type, node.type]) if (scalar(hint)) types3.add(scalar(hint).toLowerCase());
+    if (node.item_name || node.itemName || node.product_name || node.item_info || node.product_info || node.item_card || node.product_card) types3.add("product");
+    if (node.order_info || node.order_card) types3.add("order");
+    if (node.sticker || node.sticker_id || node.sticker_package_id) types3.add("sticker");
+    orderSn ||= scalar(node.order_sn) || scalar(node.ordersn) || scalar(node.orderSn);
+    orderId ||= scalar(node.order_id) || scalar(node.orderId);
+    itemId ||= scalar(node.item_id) || scalar(node.itemId) || scalar(node.product_id);
+    shopId ||= scalar(node.shop_id) || scalar(node.shopid) || scalar(node.shopId);
+    itemName ||= scalar(node.item_name) || scalar(node.itemName) || scalar(node.product_name) || scalar(node.name) || scalar(node.title);
+    imageUrl ||= safeChatUrl(node.image_url) || safeChatUrl(node.imageUrl) || safeChatUrl(node.thumb_url) || safeChatUrl(node.thumbnail_url) || safeChatUrl(node.image) || safeChatUrl(node.thumb);
+    url2 ||= safeChatUrl(node.item_url) || safeChatUrl(node.product_url) || safeChatUrl(node.order_url) || safeChatUrl(node.link) || safeChatUrl(node.url);
+    orderUrl ||= safeChatUrl(node.order_url);
+    if (node.order_sn || node.order_id || ["order", "order_card"].includes(scalar(node.message_type || node.type).toLowerCase())) {
+      orderUrl ||= safeChatUrl(node.url) || safeChatUrl(node.link);
+    }
+    text ||= scalar(node.text) || scalar(node.caption) || scalar(node.description);
+  }
+  const hasType = (...names) => names.some((name) => types3.has(name));
+  let kind = "empty";
+  if (orderSn || orderId || hasType("order", "order_card")) kind = "order";
+  else if (itemId || hasType("item", "product", "item_card", "product_card")) kind = "product";
+  else if (hasType("image") || imageUrl) kind = "image";
+  else if (text || url2) kind = "text";
+  else if (hasType("sticker")) kind = "sticker";
+  if (kind === "image" && !imageUrl) imageUrl = url2;
+  if (kind === "order") url2 = orderUrl;
+  if (kind === "product" && !url2 && /^\d+$/.test(itemId) && /^\d+$/.test(shopId)) url2 = `https://shopee.vn/product/${shopId}/${itemId}`;
+  const label = kind === "order" ? `[\u0110\u01A1n h\xE0ng] ${orderSn || orderId}`.trim() : kind === "product" ? `[S\u1EA3n ph\u1EA9m] ${itemName || itemId}`.trim() : kind === "image" ? "[H\xECnh \u1EA3nh]" : kind === "sticker" ? "[Sticker]" : text || url2;
+  return { kind, text: label, orderSn, orderId, itemId, itemName, imageUrl, url: url2 };
+}
+
 // models/Chat.js
-var import_mongoose6 = __toESM(require("mongoose"), 1);
-var ConversationSchema = new import_mongoose6.default.Schema(
+var import_mongoose7 = __toESM(require("mongoose"), 1);
+var ConversationSchema = new import_mongoose7.default.Schema(
   {
     shop_id: { type: Number, required: true, index: true },
     conversation_id: { type: String, required: true, trim: true },
-    customer_id: { type: import_mongoose6.default.Schema.Types.Mixed, required: true },
+    customer_id: { type: import_mongoose7.default.Schema.Types.Mixed, required: true },
     customer_name: { type: String, default: "", trim: true },
     customer_avatar: { type: String, default: "", trim: true },
     unread_count: { type: Number, default: 0, min: 0 },
@@ -81989,7 +82416,7 @@ ConversationSchema.index(
   { shop_id: 1, unread_count: 1, last_updated_at: -1 },
   { name: "chat_conv_shop_unread" }
 );
-var ChatMessageSchema = new import_mongoose6.default.Schema(
+var ChatMessageSchema = new import_mongoose7.default.Schema(
   {
     conversation_id: { type: String, required: true, trim: true, index: true },
     message_id: { type: String, required: true, trim: true },
@@ -81998,7 +82425,7 @@ var ChatMessageSchema = new import_mongoose6.default.Schema(
       required: true,
       enum: ["shop", "customer"]
     },
-    content: { type: import_mongoose6.default.Schema.Types.Mixed, default: () => ({}) },
+    content: { type: import_mongoose7.default.Schema.Types.Mixed, default: () => ({}) },
     created_at: { type: Date, default: Date.now }
   },
   {
@@ -82014,7 +82441,7 @@ ChatMessageSchema.index(
   { conversation_id: 1, created_at: 1 },
   { name: "chat_msg_conversation_created" }
 );
-var QuickReplySchema = new import_mongoose6.default.Schema(
+var QuickReplySchema = new import_mongoose7.default.Schema(
   {
     shortcut: { type: String, required: true, trim: true },
     content: { type: String, required: true, trim: true }
@@ -82025,9 +82452,9 @@ var QuickReplySchema = new import_mongoose6.default.Schema(
   }
 );
 QuickReplySchema.index({ shortcut: 1 }, { unique: true, name: "chat_quick_reply_shortcut" });
-var Conversation = import_mongoose6.default.models.Conversation || import_mongoose6.default.model("Conversation", ConversationSchema);
-var ChatMessage = import_mongoose6.default.models.ChatMessage || import_mongoose6.default.model("ChatMessage", ChatMessageSchema);
-var QuickReply = import_mongoose6.default.models.QuickReply || import_mongoose6.default.model("QuickReply", QuickReplySchema);
+var Conversation = import_mongoose7.default.models.Conversation || import_mongoose7.default.model("Conversation", ConversationSchema);
+var ChatMessage = import_mongoose7.default.models.ChatMessage || import_mongoose7.default.model("ChatMessage", ChatMessageSchema);
+var QuickReply = import_mongoose7.default.models.QuickReply || import_mongoose7.default.model("QuickReply", QuickReplySchema);
 
 // services/shopee/chat.js
 var SEND_MESSAGE_PATH = "/api/v2/sellerchat/send_message";
@@ -82065,71 +82492,8 @@ function plainText(value) {
   if (!trimmed || trimmed === "[object Object]") return "";
   return trimmed;
 }
-function collectContentNodes(raw, depth, out) {
-  if (raw == null || depth > 4) return out;
-  if (typeof raw === "string") {
-    const trimmed = raw.trim();
-    if ((trimmed.startsWith("{") || trimmed.startsWith("[")) && trimmed.length <= 8e3) {
-      try {
-        collectContentNodes(JSON.parse(trimmed), depth + 1, out);
-        return out;
-      } catch {
-      }
-    }
-    out.push(raw);
-    return out;
-  }
-  const record = asRecord(raw);
-  if (!record) return out;
-  out.push(record);
-  const nestedKeys = ["content", "text", "data", "order", "order_info", "source_content", "message"];
-  for (let i2 = 0; i2 < nestedKeys.length; i2 += 1) {
-    const nested = record[nestedKeys[i2]];
-    if (nested && typeof nested === "object") collectContentNodes(nested, depth + 1, out);
-  }
-  return out;
-}
 function snippetFromContent(content, messageType) {
-  try {
-    const nodes = collectContentNodes(content, 0, []);
-    const typeHint = String(messageType || "").trim().toLowerCase();
-    let orderSn = "";
-    let hasItem = false;
-    let hasImage = false;
-    let hasSticker = false;
-    let text = "";
-    let type = typeHint;
-    for (let i2 = 0; i2 < nodes.length; i2 += 1) {
-      const node = nodes[i2];
-      if (typeof node === "string") {
-        if (!text) text = plainText(node);
-        continue;
-      }
-      const nodeType = String(node.message_type || node.type || "").trim().toLowerCase();
-      if (nodeType) type = type || nodeType;
-      const sn = plainText(node.order_sn) || plainText(node.ordersn) || plainText(node.orderSn);
-      if (sn && !orderSn) orderSn = sn;
-      if (node.item_id || node.itemId || plainText(node.item_name) || plainText(node.itemName)) {
-        hasItem = true;
-      }
-      if (nodeType === "image" || node.image_url || node.imageUrl || node.thumb_url || node.image) {
-        hasImage = true;
-      }
-      if (node.sticker_id || node.sticker || node.sticker_package_id) hasSticker = true;
-      const nodeText = plainText(node.text) || plainText(node.caption);
-      if (nodeText && !text) text = nodeText;
-    }
-    if (orderSn) return `\u{1F4E6} [\u0110\u01A1n h\xE0ng] ${orderSn}`.slice(0, 300);
-    if (type === "order" || type === "order_card") return "\u{1F4E6} [\u0110\u01A1n h\xE0ng]";
-    if (hasItem || type === "item" || type === "product") return "\u{1F6CD}\uFE0F [S\u1EA3n ph\u1EA9m]";
-    if (hasImage || type === "image") return "\u{1F5BC}\uFE0F [H\xECnh \u1EA3nh]";
-    if (text) return text.slice(0, 300);
-    if (hasSticker || type === "sticker") return "[Sticker]";
-    return "";
-  } catch (error) {
-    logChatError("[Shopee Chat] snippetFromContent", error);
-    return "";
-  }
+  return parseChatContent(content, messageType).text.slice(0, 300);
 }
 function forceSnippet(value, content, messageType) {
   try {
@@ -82148,7 +82512,14 @@ function normalizeStoredContent(raw, messageType) {
     return messageType ? { ...raw, message_type: raw.message_type || messageType } : raw;
   }
   if (typeof raw === "string" && raw.trim()) {
-    return { type: "text", text: raw.trim(), message_type: messageType || "text" };
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        return { content: parsed, message_type: messageType || "unknown" };
+      }
+    } catch {
+    }
+    return { type: messageType || "text", text: raw.trim(), message_type: messageType || "text" };
   }
   return { type: messageType || "unknown", message_type: messageType || "unknown" };
 }
@@ -83547,7 +83918,7 @@ init_DonHoanHuy();
 
 // config/db.js
 var import_dotenv = __toESM(require_main(), 1);
-var import_mongoose8 = __toESM(require("mongoose"), 1);
+var import_mongoose9 = __toESM(require("mongoose"), 1);
 try {
   import_dotenv.default.config();
 } catch {
@@ -83578,20 +83949,20 @@ async function connectDB() {
   if (!uri) {
     throw new Error("Thi\u1EBFu MONGODB_URI / MONGO_URL trong bi\u1EBFn m\xF4i tr\u01B0\u1EDDng.");
   }
-  if (import_mongoose8.default.connection.readyState === 1) {
-    return import_mongoose8.default.connection;
+  if (import_mongoose9.default.connection.readyState === 1) {
+    return import_mongoose9.default.connection;
   }
   if (connectPromise) {
     return connectPromise;
   }
-  import_mongoose8.default.set("strictQuery", true);
+  import_mongoose9.default.set("strictQuery", true);
   connectPromise = (async () => {
     try {
-      if (import_mongoose8.default.connection.readyState !== 1) {
-        await import_mongoose8.default.connect(uri, MONGO_CONNECT_OPTIONS);
+      if (import_mongoose9.default.connection.readyState !== 1) {
+        await import_mongoose9.default.connect(uri, MONGO_CONNECT_OPTIONS);
       }
       console.log("[DB] MongoDB Connected Successfully");
-      return import_mongoose8.default.connection;
+      return import_mongoose9.default.connection;
     } catch (err) {
       connectPromise = null;
       const msg = err?.message || String(err);
@@ -83607,8 +83978,8 @@ async function connectDB() {
 async function reconnectDB() {
   connectPromise = null;
   try {
-    if (import_mongoose8.default.connection.readyState !== 0) {
-      await import_mongoose8.default.connection.close().catch(() => {
+    if (import_mongoose9.default.connection.readyState !== 0) {
+      await import_mongoose9.default.connection.close().catch(() => {
       });
     }
   } catch {
@@ -83616,7 +83987,7 @@ async function reconnectDB() {
   return connectDB();
 }
 function isDBReady() {
-  return import_mongoose8.default.connection.readyState === 1;
+  return import_mongoose9.default.connection.readyState === 1;
 }
 function isMongoTimeoutOrNetworkError(err) {
   const msg = String(err?.message || err || "");
@@ -83729,7 +84100,7 @@ async function resolveShopeeOrderIdentities(orders, db, OrderModel2) {
 }
 
 // src/db/mongoStore.ts
-var import_mongoose9 = __toESM(require("mongoose"), 1);
+var import_mongoose10 = __toESM(require("mongoose"), 1);
 
 // modules/orders/serialWriteQueue.js
 var import_node_async_hooks3 = require("node:async_hooks");
@@ -84385,7 +84756,7 @@ function calculateProfitWithSystemFees(sellPrice, importPrice, systemFees) {
 // src/db/mongoStore.ts
 var ORDER_EVENT_TTL_SECONDS = retentionSeconds("ORDER_EVENT_TTL_SECONDS");
 var SYNC_JOB_TTL_SECONDS = retentionSeconds("SYNC_JOB_TTL_SECONDS");
-var ProductSchema = new import_mongoose9.Schema(
+var ProductSchema = new import_mongoose10.Schema(
   {
     _id: { type: String, required: true },
     sku: { type: String, default: null, index: true },
@@ -84393,7 +84764,7 @@ var ProductSchema = new import_mongoose9.Schema(
     medicine_id: { type: String, default: null, index: true },
     // data.* giữ Mixed nhưng Shopee uint64 IDs (shopeeItemId/shopeeModelId/item_id/model_id/promotion_id/activity_id)
     // BẮT BUỘC là String — sanitize bằng stringifyShopeeIdsDeep trước khi ghi.
-    data: { type: import_mongoose9.Schema.Types.Mixed, required: true }
+    data: { type: import_mongoose10.Schema.Types.Mixed, required: true }
   },
   { collection: "products", versionKey: false }
 );
@@ -84426,7 +84797,7 @@ ProductSchema.index(
   }
 );
 ProductSchema.index({ "data.stock": 1 });
-var ChannelListingSchema = new import_mongoose9.Schema(
+var ChannelListingSchema = new import_mongoose10.Schema(
   {
     _id: { type: String, required: true },
     channelId: { type: String, default: null, index: true },
@@ -84434,20 +84805,20 @@ var ChannelListingSchema = new import_mongoose9.Schema(
     sku: { type: String, default: null, index: true },
     status: { type: String, default: null, index: true },
     linkedProductId: { type: String, default: null, index: true },
-    data: { type: import_mongoose9.Schema.Types.Mixed, required: true }
+    data: { type: import_mongoose10.Schema.Types.Mixed, required: true }
   },
   // Không tạo index trên luồng khởi động/upsert liên tục.
   { collection: "channel_listings", versionKey: false, autoIndex: false }
 );
 for (const [key, options] of LISTING_OPERATIONAL_INDEXES) ChannelListingSchema.index(key, options);
-var MetaSchema = new import_mongoose9.Schema(
+var MetaSchema = new import_mongoose10.Schema(
   {
     _id: { type: String, required: true },
     value: { type: String, required: true }
   },
   { collection: "meta", versionKey: false }
 );
-var OrderSchema = new import_mongoose9.Schema(
+var OrderSchema = new import_mongoose10.Schema(
   {
     _id: { type: String, required: true },
     // Unique index khai báo riêng bên dưới (orderSn_unique) — KHÔNG dùng index: true để tránh trùng orderSn_1.
@@ -84506,10 +84877,10 @@ var OrderSchema = new import_mongoose9.Schema(
     customerPhone: { type: String, default: null },
     customerEmail: { type: String, default: null },
     customerAddress: { type: String, default: null },
-    billing: { type: import_mongoose9.Schema.Types.Mixed, default: null },
-    shipping: { type: import_mongoose9.Schema.Types.Mixed, default: null },
+    billing: { type: import_mongoose10.Schema.Types.Mixed, default: null },
+    shipping: { type: import_mongoose10.Schema.Types.Mixed, default: null },
     // data.items[].productId / modelId / item_id… = String (Shopee uint64)
-    data: { type: import_mongoose9.Schema.Types.Mixed, required: true }
+    data: { type: import_mongoose10.Schema.Types.Mixed, required: true }
   },
   { collection: "orders", versionKey: false, autoIndex: false }
 );
@@ -84569,7 +84940,7 @@ OrderSchema.index(
     partialFilterExpression: { is_rts: true }
   }
 );
-var OrderEventSchema = new import_mongoose9.Schema(
+var OrderEventSchema = new import_mongoose10.Schema(
   {
     _id: { type: String, required: true },
     orderSn: { type: String, required: true, index: true },
@@ -84581,7 +84952,7 @@ var OrderEventSchema = new import_mongoose9.Schema(
     next_shopee_status: { type: String, default: null },
     logistics_status: { type: String, default: null },
     occurred_at: { type: Date, required: true, index: true },
-    payload: { type: import_mongoose9.Schema.Types.Mixed, default: null }
+    payload: { type: import_mongoose10.Schema.Types.Mixed, default: null }
   },
   { collection: "order_events", versionKey: false }
 );
@@ -84590,14 +84961,14 @@ OrderEventSchema.index(
   { occurred_at: 1 },
   { expireAfterSeconds: ORDER_EVENT_TTL_SECONDS, name: "order_events_ttl" }
 );
-var SyncJobSchema = new import_mongoose9.Schema(
+var SyncJobSchema = new import_mongoose10.Schema(
   {
     _id: { type: String, required: true },
     type: { type: String, required: true, index: true },
     state: { type: String, required: true, index: true },
     started_at: { type: Date, default: null },
     finished_at: { type: Date, default: null },
-    metrics: { type: import_mongoose9.Schema.Types.Mixed, default: {} },
+    metrics: { type: import_mongoose10.Schema.Types.Mixed, default: {} },
     error: { type: String, default: null },
     requested_by: { type: String, default: null }
   },
@@ -84619,13 +84990,13 @@ var mongoReady = false;
 var appRootResolved3 = "";
 var serialWrites = createSerialWriteQueue();
 function ensureModels() {
-  ProductModel = import_mongoose9.default.models.Product || import_mongoose9.default.model("Product", ProductSchema);
-  ChannelListingModel = import_mongoose9.default.models.ChannelListing || import_mongoose9.default.model("ChannelListing", ChannelListingSchema);
-  MetaModel = import_mongoose9.default.models.AppMeta || import_mongoose9.default.model("AppMeta", MetaSchema);
-  OrderModel = import_mongoose9.default.models.Order || import_mongoose9.default.model("Order", OrderSchema);
-  OrderEventModel = import_mongoose9.default.models.OrderEvent || import_mongoose9.default.model("OrderEvent", OrderEventSchema);
-  SyncJobModel = import_mongoose9.default.models.SyncJob || import_mongoose9.default.model("SyncJob", SyncJobSchema);
-  DonHoanHuyModel = import_mongoose9.default.models.DonHoanHuy || DonHoanHuy_default;
+  ProductModel = import_mongoose10.default.models.Product || import_mongoose10.default.model("Product", ProductSchema);
+  ChannelListingModel = import_mongoose10.default.models.ChannelListing || import_mongoose10.default.model("ChannelListing", ChannelListingSchema);
+  MetaModel = import_mongoose10.default.models.AppMeta || import_mongoose10.default.model("AppMeta", MetaSchema);
+  OrderModel = import_mongoose10.default.models.Order || import_mongoose10.default.model("Order", OrderSchema);
+  OrderEventModel = import_mongoose10.default.models.OrderEvent || import_mongoose10.default.model("OrderEvent", OrderEventSchema);
+  SyncJobModel = import_mongoose10.default.models.SyncJob || import_mongoose10.default.model("SyncJob", SyncJobSchema);
+  DonHoanHuyModel = import_mongoose10.default.models.DonHoanHuy || DonHoanHuy_default;
 }
 function requireMongo() {
   if (!isMongoReady()) {
@@ -84741,14 +85112,14 @@ async function withPosDbRetry(label, run) {
   }
 }
 function isMongoReady() {
-  return mongoReady && import_mongoose9.default.connection.readyState === 1;
+  return mongoReady && import_mongoose10.default.connection.readyState === 1;
 }
 async function recoverMongoConnection(reason = "timeout") {
   console.warn(`[MongoDB] recoverMongoConnection (${reason}) \u2014 reconnecting...`);
   mongoReady = false;
   try {
     await reconnectDB();
-    mongoReady = import_mongoose9.default.connection.readyState === 1;
+    mongoReady = import_mongoose10.default.connection.readyState === 1;
     if (mongoReady) {
       console.log("[MongoDB] recoverMongoConnection OK");
       return true;
@@ -84798,11 +85169,11 @@ async function initMongo(appRoot) {
       );
     } catch {
     }
-    mongoReady = import_mongoose9.default.connection.readyState === 1;
+    mongoReady = import_mongoose10.default.connection.readyState === 1;
     if (!mongoReady) {
       console.error(
         "L\u1ED6I MONGODB STARTUP:",
-        `mongoose readyState=${import_mongoose9.default.connection.readyState} (expect 1)`
+        `mongoose readyState=${import_mongoose10.default.connection.readyState} (expect 1)`
       );
       return isProductsDiskMode();
     }
@@ -85667,7 +86038,7 @@ async function applyImportStockAndPriceToMainWarehouse(productId, quantityDelta,
     };
   };
   try {
-    const session = await import_mongoose9.default.startSession();
+    const session = await import_mongoose10.default.startSession();
     try {
       let out;
       await session.withTransaction(async () => {
@@ -85855,7 +86226,7 @@ async function loadLogisticsSettingsFromStore() {
   }
   if (raw == null || raw === "") {
     try {
-      const native = await import_mongoose9.default.connection.db?.collection("meta").findOne({ _id: LOGISTICS_CONFIG_META_KEY });
+      const native = await import_mongoose10.default.connection.db?.collection("meta").findOne({ _id: LOGISTICS_CONFIG_META_KEY });
       if (native && typeof native === "object") {
         raw = native.value ?? native;
       }
@@ -86656,7 +87027,7 @@ async function bulkUpsertOrdersToStore(orders) {
   const list = Array.isArray(orders) ? orders.filter((o) => o != null && typeof o === "object") : [];
   if (list.length === 0) return 0;
   const dbOptions = hasShortOrderDeadline() ? { timeoutMS: 12e3 } : {};
-  const identityIds = await resolveShopeeOrderIdentities(list, import_mongoose9.default.connection.db, OrderModel);
+  const identityIds = await resolveShopeeOrderIdentities(list, import_mongoose10.default.connection.db, OrderModel);
   const pendingWrites = [];
   for (const order of list) {
     const id = String(order.id || "").trim();
@@ -87527,8 +87898,11 @@ async function bulkUpsertOrdersToStore(orders) {
   }
   return pendingWrites.length;
 }
-async function bulkUpdateShippedOrdersBySn(patches) {
-  if (!isMongoReady()) return 0;
+async function bulkUpdateShippedOrdersBySn(patches, options) {
+  if (!isMongoReady()) {
+    if (options?.requireAllMatched) throw new Error("mongodb_not_ready");
+    return 0;
+  }
   requireMongo();
   const list = Array.isArray(patches) ? patches.filter((p) => p && String(p.orderSn || "").trim()) : [];
   if (list.length === 0) return 0;
@@ -87624,6 +87998,9 @@ async function bulkUpdateShippedOrdersBySn(patches) {
         ordered: false,
         maxTimeMS: 8e3
       });
+      if (options?.requireAllMatched && result.matchedCount < ops.length) {
+        throw new Error(`confirm_persist_incomplete:${result.matchedCount}/${ops.length}`);
+      }
       console.log(
         `[Ship Persist] bulkWrite ONE shot \u2014 ops=${ops.length} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0}`
       );
@@ -87859,71 +88236,6 @@ async function markOrdersPrintedInStore(orderSns, isPrinted, meta) {
     });
   }
   return matched;
-}
-async function markOrdersHasPdfInStore(orderSns, meta) {
-  if (!isMongoReady()) return 0;
-  requireMongo();
-  const sns = [
-    ...new Set(
-      (Array.isArray(orderSns) ? orderSns : []).map((s2) => String(s2 || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
-    )
-  ];
-  if (sns.length === 0) return 0;
-  const shopIdStr = meta?.shopId != null ? String(meta.shopId).trim() : "";
-  const labelUrl = String(
-    meta?.labelUrl || meta?.pdfUrl || meta?.waybill_url || ""
-  ).trim();
-  const pdfFilename = String(meta?.pdfFilename || "").trim();
-  const ops = sns.map((sn) => {
-    const _id = `shopee-${sn}`;
-    const $set = {
-      hasPdf: true,
-      "data.hasPdf": true,
-      "data.readyToPrint": true
-    };
-    if (labelUrl) {
-      $set.waybill_url = labelUrl;
-      $set["data.waybill_url"] = labelUrl;
-      $set["data.labelUrl"] = labelUrl;
-      $set["data.pdfUrl"] = labelUrl;
-    }
-    if (pdfFilename) $set["data.pdfFilename"] = pdfFilename;
-    if (shopIdStr) {
-      $set.shopId = shopIdStr;
-      $set["data.shopId"] = shopIdStr;
-    }
-    return {
-      updateOne: {
-        filter: buildOrderCompoundFilter(sn, _id, shopIdStr || null),
-        update: {
-          $set,
-          $setOnInsert: {
-            _id,
-            orderSn: sn,
-            isPrinted: false,
-            "data.isPrinted": false,
-            "data.id": _id,
-            "data.orderSn": sn,
-            "data.channel": "shopee"
-          }
-        },
-        upsert: true
-      }
-    };
-  });
-  await withWriteTimeout(
-    enqueueWrite(async () => {
-      const result = await OrderModel.bulkWrite(ops, {
-        ordered: false,
-        maxTimeMS: 8e3
-      });
-      console.log(
-        `[MongoDB] markOrdersHasPdfInStore sns=${sns.length} modified=${result.modifiedCount || 0} upserted=${result.upsertedCount || 0}`
-      );
-    }),
-    "mark_has_pdf"
-  );
-  return sns.length;
 }
 async function markOrderLocalStatusInStore(orderSn, localStatus, meta) {
   if (!isMongoReady()) return false;
@@ -92014,7 +92326,7 @@ async function aggregateFulfillmentProductsFromStore(opts) {
 async function createSyncJob(type, requestedBy) {
   requireMongo();
   const id = `sync-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  await import_mongoose9.default.connection.db.collection("sync_jobs").insertOne({
+  await import_mongoose10.default.connection.db.collection("sync_jobs").insertOne({
     _id: id,
     type,
     state: "running",
@@ -93098,7 +93410,7 @@ async function ensureRetentionTtlIndexes() {
   requireMongo();
   const recreated = [];
   const ensureTtl = async (model, indexName, key, expireAfterSeconds) => {
-    await ensureMongoIndex(import_mongoose9.default.connection.db, model.collection.collectionName, key, {
+    await ensureMongoIndex(import_mongoose10.default.connection.db, model.collection.collectionName, key, {
       name: indexName,
       expireAfterSeconds
     });
@@ -94566,11 +94878,11 @@ var import_express9 = __toESM(require_express2(), 1);
 // controllers/financeController.js
 var import_fs11 = __toESM(require("fs"), 1);
 var import_path11 = __toESM(require("path"), 1);
-var import_mongoose11 = __toESM(require("mongoose"), 1);
+var import_mongoose12 = __toESM(require("mongoose"), 1);
 
 // models/Escrow.js
-var import_mongoose10 = __toESM(require("mongoose"), 1);
-var EscrowSchema = new import_mongoose10.default.Schema(
+var import_mongoose11 = __toESM(require("mongoose"), 1);
+var EscrowSchema = new import_mongoose11.default.Schema(
   {
     ordersn: { type: String, required: true, trim: true },
     shop_id: { type: String, required: true, trim: true },
@@ -94607,7 +94919,7 @@ EscrowSchema.index({ shop_id: 1, order_date: -1 }, { name: "escrow_shop_date" })
 EscrowSchema.index({ is_disputed: 1, order_date: -1 }, { name: "escrow_disputed_date" });
 EscrowSchema.index({ status: 1, order_date: -1 }, { name: "escrow_status_date" });
 EscrowSchema.index({ order_date: -1 }, { name: "escrow_order_date" });
-var Escrow = import_mongoose10.default.models.Escrow || import_mongoose10.default.model("Escrow", EscrowSchema);
+var Escrow = import_mongoose11.default.models.Escrow || import_mongoose11.default.model("Escrow", EscrowSchema);
 var Escrow_default = Escrow;
 
 // controllers/financeController.js
@@ -94631,7 +94943,7 @@ function posVnd(raw) {
   return Math.max(0, roundVnd(raw));
 }
 function mongoReady2() {
-  return import_mongoose11.default.connection.readyState === 1 && Boolean(import_mongoose11.default.connection.db);
+  return import_mongoose12.default.connection.readyState === 1 && Boolean(import_mongoose12.default.connection.db);
 }
 function parseVnDayStart(ymd) {
   const s2 = String(ymd || "").trim();
@@ -94970,7 +95282,7 @@ async function syncEscrow(req, res) {
       }
       and.push({ $or: [{ create_time: dateRange }, { "data.date": strRange }] });
     }
-    const ordersCol = import_mongoose11.default.connection.db.collection("orders");
+    const ordersCol = import_mongoose12.default.connection.db.collection("orders");
     const candidates = await ordersCol.find({ $and: and }).project({
       orderSn: 1,
       shopId: 1,
@@ -95152,12 +95464,12 @@ var import_express10 = __toESM(require_express2(), 1);
 // services/addressBook.js
 var import_fs12 = __toESM(require("fs"), 1);
 var import_path12 = __toESM(require("path"), 1);
-var import_mongoose13 = __toESM(require("mongoose"), 1);
+var import_mongoose14 = __toESM(require("mongoose"), 1);
 init_appPaths();
 
 // models/AddressBook.js
-var import_mongoose12 = __toESM(require("mongoose"), 1);
-var AddressBookSchema = new import_mongoose12.default.Schema(
+var import_mongoose13 = __toESM(require("mongoose"), 1);
+var AddressBookSchema = new import_mongoose13.default.Schema(
   {
     id: { type: String, trim: true, index: true },
     name: { type: String, default: "", trim: true },
@@ -95203,7 +95515,7 @@ AddressBookSchema.index({ phone: 1, street: 1, wardCode: 1 }, { name: "address_b
 AddressBookSchema.index({ savedAt: -1 }, { name: "address_book_savedAt" });
 AddressBookSchema.index({ total_spent: -1 }, { name: "address_book_total_spent" });
 AddressBookSchema.index({ last_purchase_date: -1 }, { name: "address_book_last_purchase" });
-var AddressBook = import_mongoose12.default.models.AddressBook || import_mongoose12.default.model("AddressBook", AddressBookSchema);
+var AddressBook = import_mongoose13.default.models.AddressBook || import_mongoose13.default.model("AddressBook", AddressBookSchema);
 var AddressBook_default = AddressBook;
 
 // utils/posSellingPrice.js
@@ -95308,7 +95620,7 @@ function writeBook(list) {
   import_fs12.default.writeFileSync(FILE_PATH, JSON.stringify(list, null, 2), "utf-8");
 }
 function mongoReady3() {
-  return import_mongoose13.default.connection?.readyState === 1;
+  return import_mongoose14.default.connection?.readyState === 1;
 }
 function normalizePhone(value) {
   return String(value || "").replace(/\D/g, "");
@@ -95497,8 +95809,8 @@ async function updateCustomerAddressByKey({
   let updated = null;
   if (cleanId) {
     const idOr = [{ id: cleanId }];
-    if (import_mongoose13.default.isValidObjectId(cleanId)) {
-      idOr.push({ _id: new import_mongoose13.default.Types.ObjectId(cleanId) });
+    if (import_mongoose14.default.isValidObjectId(cleanId)) {
+      idOr.push({ _id: new import_mongoose14.default.Types.ObjectId(cleanId) });
     }
     updated = await AddressBook_default.findOneAndUpdate(
       { $or: idOr },
@@ -95517,8 +95829,8 @@ async function updateCustomerAddressByKey({
     const custOr = [];
     if (cleanId) {
       custOr.push({ id: cleanId });
-      if (import_mongoose13.default.isValidObjectId(cleanId)) {
-        custOr.push({ _id: new import_mongoose13.default.Types.ObjectId(cleanId) });
+      if (import_mongoose14.default.isValidObjectId(cleanId)) {
+        custOr.push({ _id: new import_mongoose14.default.Types.ObjectId(cleanId) });
       }
     }
     if (cleanPhone) {
@@ -95526,7 +95838,7 @@ async function updateCustomerAddressByKey({
       custOr.push({ phone_number: cleanPhone });
     }
     if (custOr.length) {
-      await import_mongoose13.default.connection.collection("customers").updateMany(
+      await import_mongoose14.default.connection.collection("customers").updateMany(
         { $or: custOr },
         { $set: { ...patch, updatedAt: /* @__PURE__ */ new Date() } }
       );
@@ -95561,8 +95873,8 @@ async function deleteCustomerByKey({ id = "", phone = "" } = {}) {
   let deleted = 0;
   if (cleanId) {
     const idOr = [{ id: cleanId }];
-    if (import_mongoose13.default.isValidObjectId(cleanId)) {
-      idOr.push({ _id: new import_mongoose13.default.Types.ObjectId(cleanId) });
+    if (import_mongoose14.default.isValidObjectId(cleanId)) {
+      idOr.push({ _id: new import_mongoose14.default.Types.ObjectId(cleanId) });
     }
     const byId = await AddressBook_default.deleteOne({ $or: idOr });
     deleted += Number(byId?.deletedCount) || 0;
@@ -95575,8 +95887,8 @@ async function deleteCustomerByKey({ id = "", phone = "" } = {}) {
     const custOr = [];
     if (cleanId) {
       custOr.push({ id: cleanId });
-      if (import_mongoose13.default.isValidObjectId(cleanId)) {
-        custOr.push({ _id: new import_mongoose13.default.Types.ObjectId(cleanId) });
+      if (import_mongoose14.default.isValidObjectId(cleanId)) {
+        custOr.push({ _id: new import_mongoose14.default.Types.ObjectId(cleanId) });
       }
     }
     if (cleanPhone) {
@@ -95584,7 +95896,7 @@ async function deleteCustomerByKey({ id = "", phone = "" } = {}) {
       custOr.push({ phone_number: cleanPhone });
     }
     if (custOr.length) {
-      const cust = await import_mongoose13.default.connection.collection("customers").deleteMany({ $or: custOr });
+      const cust = await import_mongoose14.default.connection.collection("customers").deleteMany({ $or: custOr });
       deleted += Number(cust?.deletedCount) || 0;
     }
   } catch (err) {
@@ -95925,7 +96237,7 @@ var addressBookRoutes_default = router8;
 var import_express11 = __toESM(require_express2(), 1);
 
 // controllers/customerController.js
-var import_mongoose14 = __toESM(require("mongoose"), 1);
+var import_mongoose15 = __toESM(require("mongoose"), 1);
 var ORDER_LIMIT = 50;
 var PHONE_FIELDS = [
   "customerPhone",
@@ -96018,7 +96330,7 @@ async function updateCustomerAddress(req, res) {
 }
 async function getCustomerOrderHistory(req, res) {
   try {
-    if (import_mongoose14.default.connection?.readyState !== 1) {
+    if (import_mongoose15.default.connection?.readyState !== 1) {
       return res.status(503).json({
         success: false,
         error: "C\u01A1 s\u1EDF d\u1EEF li\u1EC7u ch\u01B0a s\u1EB5n s\xE0ng",
@@ -96041,7 +96353,7 @@ async function getCustomerOrderHistory(req, res) {
       or.push({ [field]: { $in: match2.exact } });
       or.push({ [field]: suffix });
     }
-    const rows = await import_mongoose14.default.connection.collection("orders").find(
+    const rows = await import_mongoose15.default.connection.collection("orders").find(
       { $or: or },
       {
         projection: {
@@ -125683,7 +125995,7 @@ var import_ip_address = __toESM(require_ip_address(), 1);
 var import_node_net3 = require("node:net");
 var import_debug = __toESM(require_src5(), 1);
 var import_node_buffer3 = require("node:buffer");
-var import_node_crypto5 = require("node:crypto");
+var import_node_crypto6 = require("node:crypto");
 var import_node_net4 = require("node:net");
 var ipv4CompatibleSubnet = new import_ip_address.Address6("::/96");
 function ipKeyGenerator(ip, ipv6Subnet = 56) {
@@ -125865,7 +126177,7 @@ var getResetSeconds = (windowMs, resetTime) => {
   return resetSeconds;
 };
 var getPartitionKey = (key) => {
-  const hash = (0, import_node_crypto5.createHash)("sha256");
+  const hash = (0, import_node_crypto6.createHash)("sha256");
   hash.update(key);
   const partitionKey = hash.digest("hex").slice(0, 12);
   return import_node_buffer3.Buffer.from(partitionKey).toString("base64");
@@ -126762,8 +127074,8 @@ var webhookLimiter = rate_limit_default({
 });
 
 // models/User.js
-var import_mongoose15 = __toESM(require("mongoose"), 1);
-var userSchema = new import_mongoose15.default.Schema({
+var import_mongoose16 = __toESM(require("mongoose"), 1);
+var userSchema = new import_mongoose16.default.Schema({
   username: {
     type: String,
     required: true,
@@ -126889,7 +127201,7 @@ userSchema.methods.hasAnyPermission = function(permissions) {
   if (!Array.isArray(permissions)) return false;
   return permissions.some((p) => this.hasPermission(p));
 };
-var User = import_mongoose15.default.model("User", userSchema);
+var User = import_mongoose16.default.model("User", userSchema);
 var User_default = User;
 
 // middlewares/rbac.js
@@ -126946,18 +127258,18 @@ function corsMiddleware(req, res, next) {
 var cors_default = corsMiddleware;
 
 // middlewares/dbReady.js
-var import_mongoose16 = __toESM(require("mongoose"), 1);
+var import_mongoose17 = __toESM(require("mongoose"), 1);
 function dbReadyMiddleware(req, res, next) {
   const pathName = String(req.path || req.originalUrl || "").split("?")[0];
   if (!pathName.startsWith("/api/")) return next();
   const allowWithoutDb = pathName === "/api/login" || pathName.startsWith("/api/health") || pathName.startsWith("/api/auth/") || pathName === "/api/shopee/callback" || pathName === "/api/shopee/oauth/complete" || pathName === "/api/shopee/webhook" || pathName === "/api/tiktok/callback" || pathName.startsWith("/api/public/") || pathName.startsWith("/api/shopee/ship-order") || pathName === "/api/shopee/print-document";
   if (allowWithoutDb) return next();
-  if (import_mongoose16.default.connection.readyState !== 1) {
+  if (import_mongoose17.default.connection.readyState !== 1) {
     return res.status(503).json({
       success: false,
       message: "Database \u0111ang k\u1EBFt n\u1ED1i, vui l\xF2ng th\u1EED l\u1EA1i sau",
       error: "database_connecting",
-      readyState: import_mongoose16.default.connection.readyState
+      readyState: import_mongoose17.default.connection.readyState
     });
   }
   return next();
@@ -131604,7 +131916,7 @@ var import_express22 = __toESM(require_express2(), 1);
 // controllers/ordersController.js
 var import_fs23 = __toESM(require("fs"), 1);
 var import_path23 = __toESM(require("path"), 1);
-var import_mongoose17 = __toESM(require("mongoose"), 1);
+var import_mongoose18 = __toESM(require("mongoose"), 1);
 init_appPaths();
 
 // utils/orderPdfAvailability.js
@@ -133878,7 +134190,7 @@ function docHasValidTracking(doc) {
 var GHOST_ORDER_SNS = ["261001FRS927QE", "261001F7MD71RC", "261001F4MQ09N9"];
 async function deleteGhostOrders(_req, res) {
   try {
-    const Order2 = import_mongoose17.default.models.Order;
+    const Order2 = import_mongoose18.default.models.Order;
     if (!isMongoReady() || !Order2) {
       return res.status(503).json({
         success: false,
@@ -133916,14 +134228,14 @@ async function migrateTrackingFlag(_req, res) {
     batches: 0
   };
   try {
-    if (!isMongoReady() || import_mongoose17.default.connection.readyState !== 1 || !import_mongoose17.default.connection.db) {
+    if (!isMongoReady() || import_mongoose18.default.connection.readyState !== 1 || !import_mongoose18.default.connection.db) {
       return res.status(503).json({
         success: false,
         error: "mongodb_not_ready",
         message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng."
       });
     }
-    const col = import_mongoose17.default.connection.db.collection("orders");
+    const col = import_mongoose18.default.connection.db.collection("orders");
     while (stats.batches < MIGRATE_TRACKING_MAX_BATCHES) {
       const docs = await col.find({ has_tracking: { $exists: false } }).project({
         _id: 1,
@@ -133997,14 +134309,14 @@ function nestedStubIsUnpaid(nested) {
 async function healCorruptedFlags(_req, res) {
   let healedCount = 0;
   try {
-    if (!isMongoReady() || import_mongoose17.default.connection.readyState !== 1 || !import_mongoose17.default.connection.db) {
+    if (!isMongoReady() || import_mongoose18.default.connection.readyState !== 1 || !import_mongoose18.default.connection.db) {
       return res.status(503).json({
         success: false,
         error: "mongodb_not_ready",
         healedCount: 0
       });
     }
-    const col = import_mongoose17.default.connection.db.collection("orders");
+    const col = import_mongoose18.default.connection.db.collection("orders");
     let batches = 0;
     while (batches < HEAL_CORRUPT_MAX_BATCHES) {
       const docs = await col.find(HEAL_CORRUPT_FILTER).project({
@@ -136645,7 +136957,8 @@ var deps17 = {
   shipOrderJobs: /* @__PURE__ */ new Map(),
   createShipOrderJobId: () => `ship-${Date.now()}`,
   pruneOldShipOrderJobs: () => {
-  }
+  },
+  getDurableShipJob: async () => null
 };
 function initShopeeShipController(partial) {
   deps17 = { ...deps17, ...partial };
@@ -136802,7 +137115,13 @@ function shipOrderBulkAsync(req, res) {
 }
 async function getShipOrderJob(req, res) {
   deps17.pruneOldShipOrderJobs();
-  const job = deps17.shipOrderJobs.get(String(req.params.jobId || ""));
+  let job;
+  try {
+    job = await deps17.getDurableShipJob(String(req.params.jobId || ""));
+  } catch {
+    return res.status(503).json({ error: "job_store_unavailable", message: "T\u1EA1m th\u1EDDi ch\u01B0a \u0111\u1ECDc \u0111\u01B0\u1EE3c ti\u1EBFn \u0111\u1ED9. Vui l\xF2ng ch\u1EDD k\u1EBFt n\u1ED1i l\u1EA1i." });
+  }
+  job ||= deps17.shipOrderJobs.get(String(req.params.jobId || ""));
   if (!job) {
     return res.status(404).json({
       error: "job_not_found",
@@ -140126,19 +140445,19 @@ async function updateWooCommerceOrderStatus(req, res) {
 init_wooCommerce();
 
 // modules/orders/orderWorkLock.js
-var import_node_crypto6 = __toESM(require("node:crypto"), 1);
-var import_mongoose18 = __toESM(require("mongoose"), 1);
-var import_node_os4 = __toESM(require("node:os"), 1);
+var import_node_crypto7 = __toESM(require("node:crypto"), 1);
+var import_mongoose19 = __toESM(require("mongoose"), 1);
+var import_node_os5 = __toESM(require("node:os"), 1);
 var completedOwners = /* @__PURE__ */ new Map();
 async function withOrderWorkLock(shopId, orderSn, work) {
   if (!/^\d+$/.test(String(shopId)) || !/^[a-zA-Z0-9-]+$/.test(String(orderSn))) {
     throw new Error("webhook_order_key_invalid");
   }
-  const db = import_mongoose18.default.connection.db;
-  if (import_mongoose18.default.connection.readyState !== 1 || !db) throw new Error("mongodb_not_ready");
+  const db = import_mongoose19.default.connection.db;
+  if (import_mongoose19.default.connection.readyState !== 1 || !db) throw new Error("mongodb_not_ready");
   const locks = db.collection("shopee_order_work_locks");
   const key = `${shopId}:${orderSn}`;
-  const owner = import_node_crypto6.default.randomUUID();
+  const owner = import_node_crypto7.default.randomUUID();
   if (completedOwners.has(key)) {
     await locks.deleteOne({ _id: key, owner: completedOwners.get(key) });
     completedOwners.delete(key);
@@ -140148,7 +140467,7 @@ async function withOrderWorkLock(shopId, orderSn, work) {
     await locks.deleteOne({ _id: key, owner: previous.owner });
   }
   try {
-    await locks.insertOne({ _id: key, owner, pid: process.pid, hostname: import_node_os4.default.hostname(), acquiredAt: /* @__PURE__ */ new Date(), heartbeatAt: /* @__PURE__ */ new Date() });
+    await locks.insertOne({ _id: key, owner, pid: process.pid, hostname: import_node_os5.default.hostname(), acquiredAt: /* @__PURE__ */ new Date(), heartbeatAt: /* @__PURE__ */ new Date() });
   } catch (error) {
     if (error?.code === 11e3) throw new Error("order_work_locked");
     throw error;
@@ -140919,7 +141238,7 @@ async function processShopeeWebhookPayload(body) {
 init_appPaths();
 
 // services/orderChangeStream.js
-var import_mongoose19 = __toESM(require("mongoose"), 1);
+var import_mongoose20 = __toESM(require("mongoose"), 1);
 var NEW_ORDER_FLUSH_MS = 300;
 var UPDATED_FLUSH_MS = 3e3;
 var STATUS_FLUSH_MS = 300;
@@ -141141,8 +141460,8 @@ function closeCurrentStream() {
 }
 function openStream() {
   if (stopped || unsupported) return;
-  const db = import_mongoose19.default.connection?.db;
-  if (import_mongoose19.default.connection?.readyState !== 1 || !db) {
+  const db = import_mongoose20.default.connection?.db;
+  if (import_mongoose20.default.connection?.readyState !== 1 || !db) {
     scheduleReconnect("mongo ch\u01B0a s\u1EB5n s\xE0ng");
     return;
   }
@@ -144793,8 +145112,8 @@ async function debugForceSyncHandedOverOrders(opts) {
     }));
     if (candidates.length === 0) {
       try {
-        const { default: mongoose20 } = await import("mongoose");
-        const col = mongoose20.connection?.db?.collection("orders");
+        const { default: mongoose21 } = await import("mongoose");
+        const col = mongoose21.connection?.db?.collection("orders");
         if (col) {
           const rawHanded = await col.countDocuments({
             $or: [
@@ -149851,7 +150170,7 @@ function arrangeShipmentLocal(order, method) {
 }
 async function arrangeShipment(order, method, signal, opts) {
   if (order.channel === "shopee") {
-    return shipShopeeOrderReal(order, method, signal, opts);
+    return confirmOrderGate.run(() => shipShopeeOrderReal(order, method, signal, opts), signal);
   }
   return arrangeShipmentLocal(order, method);
 }
@@ -150209,7 +150528,7 @@ async function readCachedOrderWaybillPdf(orderSn) {
 }
 var PRINT_WAYBILL_BATCH_POLL_INTERVAL_MS = 2500;
 var PRINT_WAYBILL_BATCH_POLL_MAX_ATTEMPTS = 40;
-var PRINT_WAYBILL_DOWNLOAD_CONCURRENCY = 3;
+var PRINT_WAYBILL_DOWNLOAD_CONCURRENCY = 1;
 var PRINT_WAYBILL_DOWNLOAD_PAUSE_MS = 200;
 var SHOPEE_SHIPPING_DOC_BULK_MAX = 50;
 function toShippingDocApiItems(rows) {
@@ -150239,8 +150558,6 @@ async function cacheOrderWaybillPdf(orderSn, buffer) {
   }
   putLabelMem(filename, buffer, "application/pdf");
 }
-var LABEL_PKG_RETRY_MAX = 6;
-var LABEL_PKG_RETRY_MS = 500;
 function isOrderLabelFileReady(orderSn) {
   const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
   if (!sn) return false;
@@ -150287,35 +150604,10 @@ async function markHasPdfIfLabelFileReady(orderSns, shopId) {
     console.warn(`[hasPdf] persist rows=${rows.length}:`, err?.message || err);
   }
 }
-async function retryFillPackageNumberForPrint(shopId, accessToken, order) {
-  if (buildShopeeShippingDocOrderRows(order).length > 0) return true;
-  const sn = String(order?.orderSn || "").replace(/^shopee-/i, "").trim();
-  if (!sn) return false;
-  for (let attempt = 1; attempt <= LABEL_PKG_RETRY_MAX; attempt++) {
-    try {
-      const tnRes = await shopeeGetTrackingNumber(
-        shopId,
-        accessToken,
-        sn,
-        String(order.packageNumber || order.package_number || "").trim() || void 0
-      );
-      applyShopeeGetTrackingResponse(order, tnRes);
-    } catch (err) {
-      console.warn(
-        `[Label Prepare] get_tracking retry ${attempt}/${LABEL_PKG_RETRY_MAX} ${sn}:`,
-        err?.message || err
-      );
-    }
-    if (buildShopeeShippingDocOrderRows(order).length > 0) {
-      await persistOrderTrackingToDb(order).catch(() => {
-      });
-      return true;
-    }
-    if (attempt < LABEL_PKG_RETRY_MAX) await sleepMs2(LABEL_PKG_RETRY_MS);
-  }
-  return false;
-}
 async function splitMergedWaybillPdfToOrders(mergedBuffer, orderSns) {
+  return pdfMergeGate.run(() => splitMergedWaybillPdfToOrdersUnqueued(mergedBuffer, orderSns));
+}
+async function splitMergedWaybillPdfToOrdersUnqueued(mergedBuffer, orderSns) {
   const result = /* @__PURE__ */ new Map();
   const sns = uniquePreserveOrder(
     orderSns.map((sn) => String(sn || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
@@ -150338,6 +150630,7 @@ async function splitMergedWaybillPdfToOrders(mergedBuffer, orderSns) {
       const [page] = await out.copyPages(src, [i2]);
       out.addPage(page);
       result.set(sns[i2], Buffer.from(await out.save()));
+      if ((i2 + 1) % 4 === 0) await yieldEventLoop();
     }
   } catch (err) {
     console.warn("[Shopee Print] split merged PDF failed:", err?.message || err);
@@ -150543,6 +150836,8 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
               else stillPending.push(row);
             }
             pollRows = stillPending;
+            const hasCompleteOrder = [...pendingByOrder.values()].some((rows) => rows.length > 0 && rows.every((row) => readyRowKeys.has(shippingDocRowKey(row))));
+            if (hasCompleteOrder && pollRows.length > 0) break;
             if (pollRows.length === 0) {
               console.log(`[Shopee Batch Waybill] BULK POLL READY l\u1EA7n ${attempt}`);
               break;
@@ -150592,9 +150887,10 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
           };
           pendingByOrder.delete(sn);
         };
-        const readyRows = readySns.flatMap((sn) => pendingByOrder.get(sn) || []);
-        const downloadFilename = readySns.length === 1 ? `order_${readySns[0]}.pdf` : buildCachedLabelFilename(readySns);
-        if (readySns.length > 0 && readyRows.length > 0) {
+        const bulkSns = readySns.filter((sn) => (pendingByOrder.get(sn)?.length || 0) === 1);
+        const readyRows = bulkSns.flatMap((sn) => pendingByOrder.get(sn) || []);
+        const downloadFilename = bulkSns.length === 1 ? `order_${bulkSns[0]}.pdf` : buildCachedLabelFilename(bulkSns);
+        if (bulkSns.length > 0 && readyRows.length > 0) {
           try {
             const downloadResult = await shopeeDownloadShippingDocument(
               shopId,
@@ -150608,9 +150904,9 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
               const mergedBuf = await import_fs25.default.promises.readFile(downloadResult.filePath);
               if (mergedBuf.length && isPdfBuffer(mergedBuf)) {
                 putLabelMem(downloadResult.filename, mergedBuf, "application/pdf");
-                const splitMap = await splitMergedWaybillPdfToOrders(mergedBuf, readySns);
-                if (splitMap.size === readySns.length) {
-                  for (const sn of readySns) {
+                const splitMap = await splitMergedWaybillPdfToOrders(mergedBuf, bulkSns);
+                if (splitMap.size === bulkSns.length) {
+                  for (const sn of bulkSns) {
                     const buf = splitMap.get(sn);
                     if (!buf) continue;
                     try {
@@ -150625,8 +150921,8 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
                       size: buf.length
                     });
                   }
-                } else if (readySns.length === 1) {
-                  const sn = readySns[0];
+                } else if (bulkSns.length === 1) {
+                  const sn = bulkSns[0];
                   try {
                     await cacheOrderWaybillPdf(sn, mergedBuf);
                     commitReady(sn, {
@@ -152553,7 +152849,8 @@ function buildShopeeShippingDocOrderRows(order) {
     ...tn ? { tracking_number: tn } : {}
   }));
 }
-async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, orders) {
+async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, orders, options) {
+  const enrichBudgetExpired = () => options?.signal?.aborted === true || options?.deadlineAt !== void 0 && Date.now() >= options.deadlineAt;
   if (!orders.length) return;
   const needDetail = orders;
   if (needDetail.length > 0) {
@@ -152561,6 +152858,7 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
       ...new Set(needDetail.map((o) => String(o.orderSn || "").trim()).filter(Boolean))
     ];
     for (let i2 = 0; i2 < sns.length; i2 += SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS) {
+      if (enrichBudgetExpired()) return;
       const chunk = sns.slice(i2, i2 + SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS);
       try {
         const detailResult = await shopeeGetOrderDetail(shopId, accessToken, chunk);
@@ -152620,6 +152918,7 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
   let nextOrderIndex = 0;
   const enrichWorker = async () => {
     while (nextOrderIndex < orders.length) {
+      if (enrichBudgetExpired()) return;
       const i2 = nextOrderIndex++;
       const order = orders[i2];
       const sn = String(order?.orderSn || "").trim();
@@ -152628,7 +152927,8 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
       const needPkg = !String(order.packageNumber || order.package_number || "").trim();
       const needTn = !trackingForShopeeShippingDoc(order);
       if (!needPkg && !needTn) {
-        await persistOrderTrackingToDb(order).catch(() => {
+        await persistOrderTrackingToDb(order).catch((err) => {
+          console.warn("[Shopee Print Enrich] persist tracking failed:", err instanceof Error ? err.message : String(err));
         });
         continue;
       }
@@ -152647,6 +152947,7 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
       } catch (err) {
         console.warn(`[Shopee Print Enrich] get_tracking_number ${sn}:`, err?.message || err);
       }
+      if (enrichBudgetExpired()) return;
       if (!String(order.packageNumber || order.package_number || "").trim()) {
         try {
           const docInfo = await shopeeGetShippingDocumentDataInfo(
@@ -152679,6 +152980,7 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
           );
         }
       }
+      if (enrichBudgetExpired()) return;
       if (!String(order.packageNumber || order.package_number || "").trim()) {
         try {
           const detailResult = await shopeeGetOrderDetail(shopId, accessToken, [sn]);
@@ -152711,7 +153013,7 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
     }
   };
   await Promise.all(
-    Array.from({ length: Math.min(3, orders.length) }, () => enrichWorker())
+    Array.from({ length: Math.min(1, orders.length) }, () => enrichWorker())
   );
 }
 function applyShopeePackageListTracking(order, shopeeOrder) {
@@ -154972,17 +155274,22 @@ function buildConfirmedShipMongoPatches(orders, shipMethod) {
     };
   }).filter((p) => p.orderSn);
 }
-async function persistConfirmedShipOrdersToMongo(orders, shipMethod) {
+async function persistConfirmedShipOrdersToMongo(orders, shipMethod, options) {
   const patches = buildConfirmedShipMongoPatches(orders, shipMethod);
   if (!patches.length) return 0;
   try {
-    const n = await bulkUpdateShippedOrdersBySn(patches);
+    if (options?.strict && !isMongoReady()) throw new Error("mongodb_not_ready");
+    const n = await bulkUpdateShippedOrdersBySn(patches, { requireAllMatched: options?.strict });
+    if (options?.strict && n < patches.length) {
+      throw new Error(`confirm_persist_incomplete:${n}/${patches.length}`);
+    }
     console.log(
       `[Confirm Persist] bulkUpdateShippedOrdersBySn n=${n} sns=${patches.map((p) => p.orderSn).join(",")}`
     );
     return n;
   } catch (err) {
     console.warn("[Confirm Persist] bulkUpdateShippedOrdersBySn:", err?.message || err);
+    if (options?.strict) throw err;
     return 0;
   }
 }
@@ -156839,7 +157146,6 @@ var SHIP_JOB_TTL_MS = 30 * 60 * 1e3;
 var CONFIRM_ASYNC_BATCH_SIZE = 20;
 var CONFIRM_ASYNC_BATCH_PAUSE_MS = 300;
 var CONFIRM_ASYNC_DB_TIMEOUT_MS = 15e3;
-var confirmOnlyAsyncJobChain = Promise.resolve();
 function createShipOrderJobId() {
   return `ship-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -158043,55 +158349,14 @@ async function startServer() {
           `\u0110\u01A1n ${orderSn} thi\u1EBFu shopId/accountId n\xEAn kh\xF4ng th\u1EC3 ch\u1ECDn \u0111\xFAng Token Shop.`
         );
       }
-      const auth = await getShopeeAccessTokenForApi(storedShopId);
-      const accessToken = String(auth?.token || "").trim();
-      const shopId = String(auth?.apiShopId || "").trim();
-      if (!accessToken || !shopId) {
-        return failDownload(
-          new Error(`no_valid_access_token shop=${storedShopId} order_sn=${orderSn}`),
-          `Kh\xF4ng c\xF3 Token Shop h\u1EE3p l\u1EC7 cho shop ${storedShopId}.`
-        );
-      }
-      console.log(
-        `[Delegated PDF] order_sn=${orderSn} DB shop=${storedShopId} API shop=${shopId}`
+      const result = await fetchBatchPdfDocumentsByShop(
+        rows,
+        [orderSn],
+        Date.now() + 9e4,
+        "Delegated PDF"
       );
       if (streamDelegatedPdf(res, expectedPath, expectedFilename)) return;
-      try {
-        await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, [order]);
-      } catch (err) {
-        console.warn(`[Delegated PDF] enrich ${orderSn}:`, err?.message || err);
-      }
-      const shippingRows = buildShopeeShippingDocOrderRows(order);
-      if (shippingRows.length === 0) {
-        return failDownload(
-          new Error(`missing_package_number order_sn=${orderSn} shop=${shopId}`),
-          `\u0110\u01A1n ${orderSn} thi\u1EBFu package_number; \u0111\xE3 ch\u1EB7n Create/Poll/Download.`
-        );
-      }
-      const batch = await batchDownloadShopeeWaybillPdf(shopId, shippingRows, {
-        deadlineAt: Date.now() + 9e4
-      });
-      if (!batch.success || !batch.filename || !batch.filePath) {
-        return failDownload(
-          { error: batch.error, message: batch.message },
-          batch.message || "Shopee ch\u01B0a s\u1EB5n s\xE0ng ho\u1EB7c sai Token Shop."
-        );
-      }
-      if (streamDelegatedPdf(res, batch.filePath, batch.filename)) {
-        void markOrdersHasPdfInStore([orderSn], {
-          shopId,
-          labelUrl: `/api/public/labels/${batch.filename}`,
-          waybill_url: `/api/public/labels/${batch.filename}`,
-          pdfFilename: batch.filename
-        }).catch(
-          (err) => console.warn(`[Delegated PDF] persist ${orderSn}:`, err?.message || err)
-        );
-        return;
-      }
-      return failDownload(
-        { error: batch.error, message: batch.message },
-        "Shopee ch\u01B0a s\u1EB5n s\xE0ng ho\u1EB7c sai Token Shop."
-      );
+      return failDownload(result.failedOrders[0], "Shopee chua tao xong PDF.");
     } catch (err) {
       return failDownload(
         err,
@@ -158213,7 +158478,7 @@ async function startServer() {
         toShip,
         ({ order }) => resolveOrderShopId(order) || order?.shopId,
         confirmOneOrder,
-        { perShopChunk: 4, pauseMs: 250, maxParallelShops: 6 }
+        { perShopChunk: 2, pauseMs: 250, maxParallelShops: 1 }
       );
       console.log(`[Confirm Only] DONE ${successSns.length}/${toShip.length} success (${Date.now() - t0}ms)`);
       const successOrders = results.filter((result) => result?.success).map((result) => ({
@@ -158264,7 +158529,7 @@ async function startServer() {
       endLogisticsWork();
     }
   };
-  const executeConfirmOnlyBackgroundJob = async (jobId, shipMethod, idList, snList) => {
+  const executeConfirmOnlyBackgroundJob = async (jobId, shipMethod, idList, snList, checkpoint) => {
     const job = shipOrderJobs.get(jobId);
     if (!job) return;
     const t0 = Date.now();
@@ -158275,6 +158540,7 @@ async function startServer() {
       job.message = "\u0110ang t\u1EA3i \u0111\u01A1n h\xE0ng...";
       job.updatedAt = Date.now();
       let orders = [];
+      let loadFailure = null;
       try {
         orders = await withOperationTimeout(
           () => loadOrdersForShipScoped(idList, snList),
@@ -158282,6 +158548,7 @@ async function startServer() {
           "Load orders for confirm async"
         );
       } catch (loadErr) {
+        loadFailure = loadErr;
         console.warn("[Confirm Async] loadOrdersForShipScoped:", loadErr?.message || loadErr);
       }
       if (!orders.length) {
@@ -158296,10 +158563,12 @@ async function startServer() {
             "Fallback load orders for confirm async"
           );
         } catch (fallbackErr) {
+          loadFailure = fallbackErr;
           console.warn("[Confirm Async] loadOrdersFromStore:", fallbackErr?.message || fallbackErr);
           orders = [];
         }
       }
+      if (!orders.length && loadFailure && checkpoint) throw loadFailure;
       const toShip = resolveOrdersFromRequest(orders, idList, snList);
       job.total = toShip.length;
       if (toShip.length === 0) {
@@ -158314,10 +158583,16 @@ async function startServer() {
       job.message = `\u0110ang x\xE1c nh\u1EADn 0/${toShip.length} \u0111\u01A1n l\xEAn s\xE0n...`;
       job.updatedAt = Date.now();
       console.log(`[Confirm Async ${jobId}] X\xE1c nh\u1EADn ${toShip.length} \u0111\u01A1n method=${shipMethod}`);
-      const results = [];
-      const successSns = [];
-      let completedCount = 0;
-      const bumpProgress = () => {
+      const results = Array.isArray(job.results) ? [...job.results] : [];
+      const successSns = results.filter((r2) => r2.success).map((r2) => r2.orderSn);
+      const recoveredPatches = new Map((job.confirmedPatches || []).map((patch) => [patch.orderSn, patch]));
+      for (const { index, order } of toShip) {
+        const saved = recoveredPatches.get(String(order.orderSn || ""));
+        if (saved) orders[index] = { ...order, ...saved, trackingNumber: saved.tracking_no || order.trackingNumber };
+      }
+      let completedCount = results.length;
+      let checkpointFailure = null;
+      const bumpProgress = async () => {
         completedCount += 1;
         job.completed = completedCount;
         job.total = toShip.length;
@@ -158325,10 +158600,24 @@ async function startServer() {
         job.successCount = successSns.length;
         job.message = `\u0110ang x\xE1c nh\u1EADn ${completedCount}/${toShip.length} \u0111\u01A1n l\xEAn s\xE0n...`;
         job.updatedAt = Date.now();
+        job.confirmedPatches = buildConfirmedShipMongoPatches(
+          toShip.map(({ index }) => orders[index]).filter((o) => successSns.includes(o.orderSn)),
+          shipMethod
+        );
+        if (checkpoint) {
+          try {
+            await checkpoint(job);
+          } catch (error) {
+            checkpointFailure = error;
+            throw error;
+          }
+        }
       };
       const confirmOneOrder = async ({ index, order }) => {
         const orderSn = String(order.orderSn || "");
         const orderId = String(order.id || "");
+        if (checkpointFailure) throw checkpointFailure;
+        if (results.some((r2) => r2.orderSn === orderSn)) return;
         try {
           const resolvedShopId = resolveOrderShopId(order);
           if (resolvedShopId && !order.shopId) {
@@ -158337,8 +158626,24 @@ async function startServer() {
           }
           console.log(`[Confirm Async ${jobId}] X\xE1c nh\u1EADn \u0111\u01A1n ${orderSn}...`);
           let shipResult;
+          if (job.recovering) {
+            try {
+              const auth = await getShopeeAccessTokenForApi(resolvedShopId);
+              const detail = await shopeeGetOrderDetail(auth.apiShopId, auth.token, [orderSn]);
+              const remote = (detail?.response?.order_list || detail?.order_list || []).find((row) => String(row.order_sn) === orderSn);
+              if (detail?.error || !remote) throw new Error("confirm_recovery_status_unavailable");
+              const raw = String(remote.order_status || "").toUpperCase();
+              if (raw === "PROCESSED") shipResult = { success: true, alreadyShipped: true, shopId: resolvedShopId };
+              else if (!["READY_TO_SHIP", "RETRY_SHIP"].includes(raw)) {
+                shipResult = { success: false, error: "order_state_changed", message: `Tr\u1EA1ng th\xE1i Shopee: ${raw}. Vui l\xF2ng \u0111\u1ED1i so\xE1t \u0111\u01A1n.` };
+              }
+            } catch (error) {
+              checkpointFailure = error;
+              throw error;
+            }
+          }
           try {
-            shipResult = await withOperationTimeout(
+            shipResult ||= await withOperationTimeout(
               (signal) => arrangeShipment(order, shipMethod, signal, { skipRecover: true }),
               BATCH_CONFIRM_OPERATION_TIMEOUT_MS,
               `Ship order ${orderSn}`
@@ -158378,6 +158683,7 @@ async function startServer() {
           results.push({ orderId, orderSn, success: true, ...shipResult });
           successSns.push(orderSn);
         } catch (orderErr) {
+          if (checkpointFailure) throw orderErr;
           console.error(`[Confirm Async ${jobId}] L\u1ED7i \u0111\u01A1n ${orderSn}:`, orderErr?.stack || orderErr);
           results.push({
             orderId,
@@ -158387,7 +158693,7 @@ async function startServer() {
             message: String(orderErr?.message || orderErr)
           });
         } finally {
-          bumpProgress();
+          await bumpProgress();
         }
       };
       for (let offset = 0; offset < toShip.length; offset += CONFIRM_ASYNC_BATCH_SIZE) {
@@ -158397,7 +158703,7 @@ async function startServer() {
             batch,
             ({ order }) => resolveOrderShopId(order) || order?.shopId,
             confirmOneOrder,
-            { perShopChunk: 5, pauseMs: 150, maxParallelShops: 3 }
+            { perShopChunk: 2, pauseMs: 200, maxParallelShops: 1 }
           );
         } catch (batchErr) {
           console.error(
@@ -158410,6 +158716,7 @@ async function startServer() {
             }
           }
         }
+        if (checkpointFailure) throw checkpointFailure;
         if (offset + CONFIRM_ASYNC_BATCH_SIZE < toShip.length) {
           await sleep(CONFIRM_ASYNC_BATCH_PAUSE_MS);
         }
@@ -158420,7 +158727,7 @@ async function startServer() {
         error: String(result.error || "confirm_failed"),
         message: String(result.message || result.error || "X\xE1c nh\u1EADn th\u1EA5t b\u1EA1i")
       }));
-      const confirmedRows = toShip.map(({ index }) => orders[index]).filter((o) => o && o.isPrepared === true);
+      const confirmedRows = toShip.map(({ index }) => orders[index]).filter((o) => o && o.isPrepared === true && successSns.includes(String(o.orderSn)));
       const summary = buildShipConfirmSummaryPayload(toShip.length, {
         successCount: successSns.length,
         failedCount: failedOrders.length,
@@ -158430,9 +158737,10 @@ async function startServer() {
       job.phase = "persisting";
       job.message = `\u0110ang l\u01B0u tr\u1EA1ng th\xE1i ${confirmedRows.length} \u0111\u01A1n \u0111\xE3 x\xE1c nh\u1EADn...`;
       job.updatedAt = Date.now();
+      if (checkpoint) await checkpoint(job);
       try {
         await withOperationTimeout(
-          () => persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod),
+          () => persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod, { strict: true }),
           CONFIRM_ASYNC_DB_TIMEOUT_MS,
           "Persist confirmed async orders"
         );
@@ -158441,7 +158749,11 @@ async function startServer() {
           "[Confirm Async] persistConfirmedShipOrdersToMongo:",
           persistErr?.stack || persistErr
         );
+        job.persistencePending = true;
+        if (checkpoint) await checkpoint(job);
+        throw persistErr;
       }
+      job.persistencePending = false;
       job.results = results;
       job.successCount = summary.successCount;
       job.failedCount = summary.failCount;
@@ -158461,9 +158773,6 @@ async function startServer() {
       );
       setImmediate(() => {
         void (async () => {
-          void prefetchTrackingAndLabelsAfterConfirm(confirmedRows).catch((primeErr) => {
-            console.error("[Confirm Async] BG tracking+PDF prefetch:", primeErr?.stack || primeErr);
-          });
           await sleep(200);
           try {
             await withOperationTimeout(
@@ -158485,6 +158794,7 @@ async function startServer() {
         });
       });
     } catch (err) {
+      if (checkpoint) throw err;
       job.status = "failed";
       job.phase = "failed";
       job.error = err?.message || String(err);
@@ -158495,62 +158805,42 @@ async function startServer() {
       endLogisticsWork(`confirm-async:${jobId}`);
     }
   };
+  logisticsJobQueue.register("confirm", async (input, job, checkpoint) => {
+    shipOrderJobs.set(job.id, job);
+    try {
+      await executeConfirmOnlyBackgroundJob(job.id, input.method, input.orderIds, input.orderSns, checkpoint);
+      return job;
+    } finally {
+      shipOrderJobs.delete(job.id);
+    }
+  });
   const confirmOnlyAsyncRoute = async (req, res) => {
     try {
-      pruneOldShipOrderJobs();
-      const { orderIds, orderSns, order_ids, order_sns, method } = req.body || {};
-      const shipMethod = method === "dropoff" ? "dropoff" : "pickup";
-      const idList = [
-        ...Array.isArray(orderIds) ? orderIds : [],
-        ...Array.isArray(order_ids) ? order_ids : []
-      ].map(String);
-      const snList = [
-        ...Array.isArray(orderSns) ? orderSns : [],
-        ...Array.isArray(order_sns) ? order_sns : []
-      ].map(String);
-      if (idList.length === 0 && snList.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: "Thi\u1EBFu danh s\xE1ch orderIds ho\u1EB7c orderSns."
-        });
-      }
-      const estimatedTotal = Math.max(
-        new Set(
-          [...idList, ...snList].map((s2) => String(s2 || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
-        ).size,
-        idList.length || snList.length
-      );
-      const jobId = createShipOrderJobId();
-      shipOrderJobs.set(jobId, {
-        id: jobId,
+      const { orderIds, orderSns, method, requestId } = req.body || {};
+      const clean = (values) => uniquePreserveOrder((Array.isArray(values) ? values : []).map((value) => String(value || "").trim()).filter(Boolean));
+      const ids = clean(orderIds || req.body?.order_ids);
+      const sns = clean(orderSns || req.body?.order_sns);
+      if (!ids.length && !sns.length) return res.status(400).json({ message: "Thi\u1EBFu danh s\xE1ch \u0111\u01A1n." });
+      if (Math.max(ids.length, sns.length) > 500) return res.status(400).json({ message: "M\u1ED7i l\xF4 t\u1ED1i \u0111a 500 \u0111\u01A1n." });
+      const input = { method: method === "dropoff" ? "dropoff" : "pickup", orderIds: ids, orderSns: sns };
+      const total = Math.max(ids.length, sns.length);
+      const job = await logisticsJobQueue.submit("confirm", input, {
         status: "pending",
         phase: "pending",
-        message: "\u0110\xE3 ti\u1EBFp nh\u1EADn \u2014 \u0111ang x\u1EBFp h\xE0ng x\u1EED l\xFD...",
-        total: estimatedTotal,
+        total,
         completed: 0,
         successCount: 0,
         results: [],
         printDocument: null,
         orders: null,
+        message: "\u0110\xE3 ti\u1EBFp nh\u1EADn \u2014 \u0111ang x\u1EBFp h\xE0ng x\u1EED l\xFD...",
         createdAt: Date.now(),
         updatedAt: Date.now()
-      });
-      res.once("finish", () => {
-        setImmediate(() => {
-          confirmOnlyAsyncJobChain = confirmOnlyAsyncJobChain.catch((chainErr) => {
-            console.error("[Confirm Async] previous queue job failed:", chainErr?.stack || chainErr);
-          }).then(() => executeConfirmOnlyBackgroundJob(jobId, shipMethod, idList, snList));
-        });
-      });
-      return res.status(202).json({ accepted: true, jobId, total: estimatedTotal });
+      }, requestId);
+      return res.status(202).json({ accepted: true, jobId: job.id, total });
     } catch (error) {
-      console.error("[Confirm Async] L\u1ED7i:", error?.stack || error);
-      if (!res.headersSent) {
-        return res.status(500).json({
-          success: false,
-          message: "L\u1ED7i server: " + error.message
-        });
-      }
+      if (error?.code === "work_queue_full") res.setHeader("Retry-After", "5");
+      return res.status(error?.code === "work_queue_full" ? 429 : 503).json({ success: false, error: error.code || "job_submit_failed", message: error.message });
     }
   };
   const getPdfRoute = async (req, res) => {
@@ -158582,129 +158872,27 @@ async function startServer() {
           message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n n\xE0o trong database."
         });
       }
-      const pdfResults = [];
-      const groups = /* @__PURE__ */ new Map();
-      for (const orderSn of cleanSns) {
-        const order = rows.find(
-          (item) => String(item?.orderSn || item?.order_sn || "").replace(/^shopee-/i, "").trim() === orderSn
-        );
-        if (!order || String(order.channel || "").toLowerCase() !== "shopee") {
-          pdfResults.push({
-            orderSn,
-            success: false,
-            error: "order_not_found",
-            message: `Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n ${orderSn} trong database.`
-          });
-          continue;
-        }
-        const storedShopId = String(
-          order.shopId || order.shop_id || order.accountId || order.account_id || ""
-        ).trim();
-        if (!storedShopId) {
-          pdfResults.push({
-            orderSn,
-            success: false,
-            error: "missing_shop_id",
-            message: `\u0110\u01A1n ${orderSn} thi\u1EBFu shopId.`
-          });
-          continue;
-        }
-        const list = groups.get(storedShopId) || [];
-        list.push(order);
-        groups.set(storedShopId, list);
-      }
-      await Promise.all(
-        [...groups.entries()].map(async ([storedShopId, shopOrders]) => {
-          try {
-            const auth = await getShopeeAccessTokenForApi(storedShopId);
-            const accessToken = String(auth?.token || "").trim();
-            const shopId = String(auth?.apiShopId || "").trim();
-            if (!accessToken || !shopId) {
-              for (const order of shopOrders) {
-                const orderSn = String(order.orderSn || "").replace(/^shopee-/i, "").trim();
-                pdfResults.push({
-                  orderSn,
-                  success: false,
-                  error: "no_valid_token",
-                  message: `Kh\xF4ng c\xF3 token h\u1EE3p l\u1EC7 cho shop ${storedShopId}.`
-                });
-              }
-              return;
-            }
-            try {
-              await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, shopOrders);
-            } catch (err) {
-              console.warn(`[Get PDF] enrich shop=${shopId}:`, err?.message || err);
-            }
-            const shippingRows = [];
-            for (const order of shopOrders) {
-              const orderSn = String(order.orderSn || "").replace(/^shopee-/i, "").trim();
-              if (order.__shopeeOrderNotFound) {
-                pdfResults.push({
-                  orderSn,
-                  success: false,
-                  error: "order_not_found",
-                  message: `\u0110\u01A1n ${orderSn} kh\xF4ng t\u1ED3n t\u1EA1i tr\xEAn Shopee (not found).`
-                });
-                continue;
-              }
-              const orderRows = buildShopeeShippingDocOrderRows(order);
-              if (orderRows.length === 0) {
-                pdfResults.push({
-                  orderSn,
-                  success: false,
-                  error: "missing_package_number",
-                  message: `\u0110\u01A1n ${orderSn} thi\u1EBFu package_number; \u0111\xE3 ch\u1EB7n Create/Poll/Download.`
-                });
-                continue;
-              }
-              shippingRows.push(...orderRows);
-            }
-            if (shippingRows.length === 0) return;
-            console.log(`[Get PDF] BULK shop=${shopId} n=${shopOrders.length} \u2014 kh\xF4ng sleep 3s/\u0111\u01A1n`);
-            const batch = await batchDownloadShopeeWaybillPdf(shopId, shippingRows, {
-              deadlineAt: Date.now() + WAYBILL_BATCH_DEADLINE_MS
-            });
-            const readySet = new Set(batch.readyOrderSns || []);
-            for (const order of shopOrders) {
-              const orderSn = String(order.orderSn || "").replace(/^shopee-/i, "").trim();
-              if (pdfResults.some((r2) => r2.orderSn === orderSn)) continue;
-              if (!readySet.has(orderSn)) {
-                const skip = (batch.skippedOrders || []).find((s2) => s2.orderSn === orderSn);
-                pdfResults.push({
-                  orderSn,
-                  success: false,
-                  error: skip?.error || "document_not_ready",
-                  message: skip?.message || "Shopee ch\u01B0a xu\u1EA5t PDF."
-                });
-                continue;
-              }
-              const filename = `order_${orderSn}.pdf`;
-              const url2 = absoluteLabelUrl(`/api/public/labels/${filename}`);
-              pdfResults.push({
-                orderSn,
-                success: Boolean(url2),
-                url: url2 || void 0,
-                filename,
-                message: url2 ? "PDF \u0111\xE3 s\u1EB5n s\xE0ng." : "\u0110\xE3 t\u1EA3i PDF nh\u01B0ng kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c URL."
-              });
-              console.log(`[Get PDF] OK ${orderSn} -> ${url2}`);
-            }
-          } catch (err) {
-            console.error(`[Get PDF] L\u1ED7i shop=${storedShopId}:`, err?.stack || err);
-            for (const order of shopOrders) {
-              const orderSn = String(order.orderSn || "").replace(/^shopee-/i, "").trim();
-              if (pdfResults.some((r2) => r2.orderSn === orderSn)) continue;
-              pdfResults.push({
-                orderSn,
-                success: false,
-                error: "processing_error",
-                message: err?.message || String(err)
-              });
-            }
-          }
-        })
+      const batch = await fetchBatchPdfDocumentsByShop(
+        rows,
+        cleanSns,
+        Date.now() + WAYBILL_BATCH_DEADLINE_MS,
+        "Get PDF"
       );
+      const ready = new Set(batch.documents.flatMap((document2) => document2.orderSns));
+      const pdfResults = cleanSns.map((orderSn) => {
+        if (ready.has(orderSn)) {
+          const filename = buildCachedLabelFilename([orderSn]);
+          const url2 = absoluteLabelUrl(`/api/public/labels/${filename}`);
+          return { orderSn, success: Boolean(url2), url: url2 || void 0, filename };
+        }
+        const failure = batch.failedOrders.find((item) => item.orderSn === orderSn);
+        return {
+          orderSn,
+          success: false,
+          error: failure?.error || "document_not_ready",
+          message: failure?.message || "Shopee chua tao xong PDF."
+        };
+      });
       const successCount = pdfResults.filter((r2) => r2.success).length;
       return res.json({
         success: successCount > 0,
@@ -158895,6 +159083,15 @@ async function startServer() {
     );
   }
   async function mergeBatchPdfBuffers(pdfBuffers, logPrefix, onInvalid) {
+    if (pdfBuffers.reduce((bytes, item) => bytes + item.buffer.length, 0) > 64 * 1024 * 1024) {
+      throw new Error("File in qua lon. Vui long chia thanh cac lo nho hon.");
+    }
+    return pdfMergeGate.run(async () => {
+      const pdf = await mergeBatchPdfBuffersUnqueued(pdfBuffers, logPrefix, onInvalid);
+      return { pdf, bytes: await pdf.save() };
+    });
+  }
+  async function mergeBatchPdfBuffersUnqueued(pdfBuffers, logPrefix, onInvalid) {
     const startedAt = Date.now();
     const mergedPdf = await import_pdf_lib.PDFDocument.create();
     for (let index = 0; index < pdfBuffers.length; index++) {
@@ -158914,7 +159111,64 @@ async function startServer() {
     );
     return mergedPdf;
   }
+  const sharedLabelWork = createKeyedBatchWork(labelBatchGate);
   async function fetchBatchPdfDocumentsByShop(orders, orderSns, deadlineAt, logPrefix, options) {
+    const sns = uniquePreserveOrder(orderSns);
+    if (sns.length > 500) throw new Error("Moi lo in toi da 500 don. Vui long chia nho danh sach.");
+    const documents = [];
+    const pending = [];
+    let cachedBytes = 0;
+    for (const sn of sns) {
+      options?.signal?.throwIfAborted();
+      const buffer = await readCachedOrderWaybillPdf(sn);
+      if (buffer) {
+        cachedBytes += buffer.length;
+        if (cachedBytes > 64 * 1024 * 1024) throw new Error("File in qua lon. Vui long chia nho danh sach.");
+        documents.push({ orderSns: [sn], buffer });
+      } else pending.push(sn);
+    }
+    if (!pending.length) return sortBatchPdfResultByRequestedOrder(sns, documents, []);
+    const waitSignal = AbortSignal.any([
+      AbortSignal.timeout(Math.max(1, deadlineAt - Date.now())),
+      ...options?.signal ? [options.signal] : []
+    ]);
+    const values = await sharedLabelWork(pending, async (owned) => {
+      const generationDeadline = Date.now() + WAYBILL_BATCH_DEADLINE_MS;
+      const result = await fetchBatchPdfDocumentsByShopUnshared(orders, owned, generationDeadline, logPrefix);
+      return new Map(owned.map((sn) => {
+        const document2 = result.documents.find((doc) => doc.orderSns.includes(sn));
+        const failure = result.failedOrders.find((item) => item.orderSn === sn);
+        return [sn, { document: document2, failure: document2 ? void 0 : failure || {
+          orderSn: sn,
+          error: "document_not_ready",
+          message: "Shopee chua tao xong PDF."
+        } }];
+      }));
+    }, waitSignal).catch(async (error) => {
+      options?.signal?.throwIfAborted();
+      const recovered = [];
+      for (const sn of pending) {
+        const buffer = await readCachedOrderWaybillPdf(sn);
+        recovered.push(buffer ? { document: { orderSns: [sn], buffer } } : { failure: {
+          orderSn: sn,
+          error: "document_not_ready",
+          message: String(error?.message || "Shopee ch\u01B0a t\u1EA1o xong PDF.")
+        } });
+      }
+      return recovered;
+    });
+    const failedOrders = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const value of values) {
+      if (value.document && !seen.has(value.document)) {
+        seen.add(value.document);
+        documents.push(value.document);
+      }
+      if (value.failure) failedOrders.push(value.failure);
+    }
+    return sortBatchPdfResultByRequestedOrder(sns, documents, failedOrders);
+  }
+  async function fetchBatchPdfDocumentsByShopUnshared(orders, orderSns, deadlineAt, logPrefix, options) {
     const startedAt = Date.now();
     const failedBySn = /* @__PURE__ */ new Map();
     const documents = [];
@@ -158968,8 +159222,21 @@ async function startServer() {
       group.orders.push(order);
       groups.set(storedShopId, group);
     }
-    await Promise.all(
-      [...groups.entries()].map(async ([storedShopId, group]) => {
+    const readyGroups = [];
+    const incompleteGroups = [];
+    for (const [shop, group] of groups) {
+      for (const [target, complete] of [[readyGroups, true], [incompleteGroups, false]]) {
+        const selected = group.orders.filter((order) => buildShopeeShippingDocOrderRows(order).length > 0 === complete);
+        if (selected.length) target.push([shop, {
+          sns: selected.map((order) => String(order.orderSn || order.order_sn || "").replace(/^shopee-/i, "").trim()),
+          orders: selected
+        }]);
+      }
+    }
+    await mapWithConcurrency(
+      [...readyGroups, ...incompleteGroups],
+      1,
+      async ([storedShopId, group]) => {
         const deadlineController = new AbortController();
         const deadlineTimer = setTimeout(
           () => deadlineController.abort(new Error("batch_deadline:shopee_pdf")),
@@ -158993,7 +159260,10 @@ async function startServer() {
           await runBeforeBatchDeadline(
             deadlineAt,
             `enrich_shop:${storedShopId}`,
-            () => enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, group.orders)
+            () => enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, group.orders, {
+              deadlineAt,
+              signal: operationSignal
+            })
           );
           const allRows = [];
           for (const order of group.orders) {
@@ -159093,7 +159363,7 @@ async function startServer() {
         } finally {
           clearTimeout(deadlineTimer);
         }
-      })
+      }
     );
     console.log(
       `[${logPrefix}] timing total=${Date.now() - startedAt}ms ok=${documents.length} failed=${failedBySn.size}`
@@ -159282,7 +159552,7 @@ async function startServer() {
         });
       }
       console.log(`[Batch Confirm Print] G\u1ED9p ${pdfBuffers.length} PDF...`);
-      const mergedPdf = await mergeBatchPdfBuffers(
+      const { pdf: mergedPdf, bytes: mergedBytes } = await mergeBatchPdfBuffers(
         pdfBuffers,
         "Batch Confirm Print",
         (orderSn) => {
@@ -159303,7 +159573,6 @@ async function startServer() {
           failedOrders: [...failedResults, ...pdfFailures.values()]
         });
       }
-      const mergedBytes = await mergedPdf.save();
       const batchFilename = `batch-${Date.now()}.pdf`;
       putLabelMem(batchFilename, Buffer.from(mergedBytes), "application/pdf");
       const batchUrl = absoluteLabelUrl(`/api/public/labels/${batchFilename}`);
@@ -159345,6 +159614,7 @@ async function startServer() {
     try {
       const wantBinary = isBatchPrintBinaryRoute(req);
       const cleanSns = parseBatchPrintOrderSns(req.body);
+      if (cleanSns.length > 500) return res.status(400).json({ message: "M\u1ED7i l\xF4 t\u1ED1i \u0111a 500 \u0111\u01A1n." });
       if (cleanSns.length === 0) {
         return res.status(400).json({
           success: false,
@@ -159380,6 +159650,7 @@ async function startServer() {
       const pdfFailures = /* @__PURE__ */ new Map();
       const pendingSns = new Set(mergeSns);
       const printedFromBatch = [];
+      if (req.onProgress) await req.onProgress("waiting_pdf", "\u0110ang ch\u1EDD Shopee t\u1EA1o file v\u1EADn \u0111\u01A1n...");
       const batchPdfResult = await fetchBatchPdfDocumentsByShop(
         orders,
         mergeSns,
@@ -159413,7 +159684,8 @@ async function startServer() {
         });
       }
       console.log(`[Batch Print Only] G\u1ED9p ${pdfBuffers.length} PDF...`);
-      const mergedPdf = await mergeBatchPdfBuffers(
+      if (req.onProgress) await req.onProgress("merging", `\u0110ang g\u1ED9p ${pdfBuffers.length}/${cleanSns.length} PDF \u0111\xE3 s\u1EB5n s\xE0ng...`);
+      const { pdf: mergedPdf, bytes: mergedBytes } = await mergeBatchPdfBuffers(
         pdfBuffers,
         "Batch Print Only",
         (orderSn) => {
@@ -159433,7 +159705,6 @@ async function startServer() {
           failedOrders: [...pdfFailures.values()]
         });
       }
-      const mergedBytes = await mergedPdf.save();
       const batchFilename = `reprint-${Date.now()}.pdf`;
       putLabelMem(batchFilename, Buffer.from(mergedBytes), "application/pdf");
       const batchUrl = absoluteLabelUrl(`/api/public/labels/${batchFilename}`);
@@ -159471,6 +159742,86 @@ async function startServer() {
     } finally {
       req.off("aborted", abortOnClientDisconnect);
       endLogisticsWork();
+    }
+  };
+  logisticsJobQueue.register("print", async (input, job, checkpoint) => {
+    job.status = "running";
+    await checkpoint(job);
+    let capturedStatus = 200;
+    let result;
+    const fakeReq = {
+      body: { orderSns: input.orderSns },
+      path: "/api/orders/batch-print-only",
+      once() {
+      },
+      off() {
+      },
+      onProgress: async (phase, message) => {
+        job.phase = phase;
+        job.message = message;
+        job.updatedAt = Date.now();
+        await checkpoint(job);
+      }
+    };
+    const fakeRes = {
+      status(code) {
+        capturedStatus = code;
+        return this;
+      },
+      json(body) {
+        result = body;
+        return this;
+      }
+    };
+    await batchPrintOnlyRoute(fakeReq, fakeRes);
+    if (capturedStatus >= 500) throw new Error(result?.message || "print_job_failed");
+    return {
+      ...job,
+      status: capturedStatus === 200 && result?.success ? "done" : "failed",
+      phase: "done",
+      result,
+      message: result?.message || "Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c file in.",
+      updatedAt: Date.now()
+    };
+  });
+  const batchPrintAsyncRoute = async (req, res) => {
+    try {
+      const orderSns = parseBatchPrintOrderSns(req.body);
+      if (!orderSns.length || orderSns.length > 500) return res.status(400).json({ message: "M\u1ED7i l\xF4 c\u1EA7n t\u1EEB 1 \u0111\u1EBFn 500 \u0111\u01A1n." });
+      const job = await logisticsJobQueue.submit("print", { orderSns }, {
+        status: "pending",
+        phase: "pending",
+        total: orderSns.length,
+        message: "\u0110ang x\u1EBFp h\xE0ng chu\u1EA9n b\u1ECB file in...",
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      }, req.body?.requestId);
+      return res.status(202).json({ accepted: true, jobId: job.id });
+    } catch (error) {
+      return res.status(error?.code === "work_queue_full" ? 429 : 503).json({ message: error.message });
+    }
+  };
+  const batchPrintJobRoute = async (req, res) => {
+    try {
+      const job = await logisticsJobQueue.get(req.params.jobId);
+      if (!job || !String(job.id).startsWith("print-")) return res.status(404).json({ message: "Kh\xF4ng t\xECm th\u1EA5y t\xE1c v\u1EE5 in." });
+      return res.json(job);
+    } catch {
+      return res.status(503).json({ message: "T\u1EA1m th\u1EDDi ch\u01B0a \u0111\u1ECDc \u0111\u01B0\u1EE3c ti\u1EBFn \u0111\u1ED9 in." });
+    }
+  };
+  const batchPrintJobFileRoute = async (req, res) => {
+    try {
+      const job = await logisticsJobQueue.get(req.params.jobId);
+      if (!job || !String(job.id).startsWith("print-") || job.status !== "done") {
+        return res.status(409).json({ message: "File in ch\u01B0a s\u1EB5n s\xE0ng." });
+      }
+      const file = getValidLabelDiskFile(String(job.result?.filename || ""));
+      if (!file) return res.status(410).json({ message: "File \u0111\xE3 h\u1EBFt h\u1EA1n. Vui l\xF2ng t\u1EA1o l\u1EA1i file in." });
+      res.setHeader("Cache-Control", "no-store");
+      return res.sendFile(file.filePath);
+    } catch {
+      return res.status(503).json({ message: "Ch\u01B0a t\u1EA3i \u0111\u01B0\u1EE3c file in. Vui l\xF2ng th\u1EED l\u1EA1i." });
     }
   };
   const SILENT_PREFETCH_DEADLINE_MS = 45e3;
@@ -159651,6 +160002,9 @@ async function startServer() {
   app.post("/api/orders/batch-confirm-async", authMiddleware, confirmOnlyAsyncRoute);
   app.post("/api/orders/get-pdf", authMiddleware, getPdfRoute);
   app.post("/api/orders/batch-confirm-print", authMiddleware, batchConfirmPrintRoute);
+  app.post("/api/orders/batch-print/async", authMiddleware, batchPrintAsyncRoute);
+  app.get("/api/orders/batch-print/job/:jobId", authMiddleware, batchPrintJobRoute);
+  app.get("/api/orders/batch-print/file/:jobId", authMiddleware, batchPrintJobFileRoute);
   app.post("/api/orders/batch-print", authMiddleware, batchPrintOnlyRoute);
   app.post("/api/orders/batch-print-only", authMiddleware, batchPrintOnlyRoute);
   app.post("/api/orders/silent-prefetch-pdfs", authMiddleware, silentPrefetchPdfsRoute);
@@ -160498,6 +160852,12 @@ async function startServer() {
     return buildCachedLabelFilename(orderSns);
   }
   async function mergePdfLabelBuffers(buffers) {
+    if (buffers.reduce((bytes, buffer) => bytes + (buffer?.length || 0), 0) > 64 * 1024 * 1024) {
+      throw new Error("File in qua lon. Vui long chia thanh cac lo nho hon.");
+    }
+    return pdfMergeGate.run(() => mergePdfLabelBuffersUnqueued(buffers));
+  }
+  async function mergePdfLabelBuffersUnqueued(buffers) {
     const valid = buffers.filter((b) => b && Buffer.isBuffer(b) && b.length > 0 && isPdfBuffer(b));
     if (valid.length === 0) {
       throw new Error("Kh\xF4ng c\xF3 buffer PDF h\u1EE3p l\u1EC7 \u0111\u1EC3 gh\xE9p.");
@@ -161082,71 +161442,22 @@ async function startServer() {
         }
         if (queue.length === 0) return;
         console.log(`[Label Prepare BG] START n=${queue.length}`);
-        await mapBatchConcurrently(queue, 5, async (order) => {
-          const sn = String(order.orderSn || "").trim();
-          try {
-            const shopId = String(order.shopId || resolveOrderShopId(order) || "").trim();
-            if (!shopId) {
-              console.warn(`[Label Prepare BG] skip ${sn}: missing shopId`);
-              return;
-            }
-            let accessToken = "";
-            try {
-              accessToken = await getValidShopeeAccessToken(shopId) || "";
-            } catch {
-            }
-            if (!accessToken) {
-              console.warn(`[Label Prepare BG] skip ${sn}: no token shop=${shopId}`);
-              return;
-            }
-            try {
-              await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, [order]);
-            } catch (enrErr) {
-              console.warn(`[Label Prepare BG] enrich ${sn}:`, enrErr?.message || enrErr);
-            }
-            if (order.__shopeeOrderNotFound) {
-              console.warn(`[Label Prepare BG] FAILED ${sn}: order_not_found \u2014 skip create`);
-              return;
-            }
-            let shippingRows = buildShopeeShippingDocOrderRows(order);
-            if (shippingRows.length === 0) {
-              const filled = await retryFillPackageNumberForPrint(shopId, accessToken, order);
-              shippingRows = buildShopeeShippingDocOrderRows(order);
-              if (!filled || shippingRows.length === 0) {
-                console.warn(
-                  `[Label Prepare BG] FAILED ${sn}: missing_package_number after ${LABEL_PKG_RETRY_MAX} retries`
-                );
-                return;
-              }
-            }
-            const gen = await generateShopeeShippingDocument(shopId, shippingRows);
-            const pdfFilename = String(gen?.filename || "").trim();
-            if (!gen?.success || !gen.url || !pdfFilename) {
-              console.warn(
-                `[Label Prepare BG] fail ${sn}:`,
-                gen?.message || gen?.error || "no_url"
-              );
-              return;
-            }
-            await markOrdersHasPdfInStore([sn], {
-              shopId,
-              labelUrl: String(gen.url),
-              waybill_url: String(gen.url),
-              pdfFilename
-            });
-            order.labelUrl = gen.url;
-            order.pdfUrl = gen.url;
-            order.waybill_url = gen.url;
-            order.pdfFilename = pdfFilename;
-            order.hasPdf = true;
-            order.readyToPrint = true;
-            console.log(`[Label Prepare BG] OK ${sn} file=${pdfFilename} hasPdf=true waybill_url=set isPrinted=unchanged`);
-          } catch (err) {
-            console.warn(`[Label Prepare BG] ${sn}:`, err?.message || err);
-          } finally {
-            labelPrepareInFlight.delete(sn);
+        try {
+          const sns = queue.map((order) => String(order.orderSn));
+          const result = await fetchBatchPdfDocumentsByShop(
+            queue,
+            sns,
+            Date.now() + WAYBILL_BATCH_DEADLINE_MS,
+            "Label Prepare BG"
+          );
+          for (const failure of result.failedOrders) {
+            console.warn("[Label Prepare BG] failed", failure.orderSn, failure.error);
           }
-        });
+        } catch (error) {
+          console.warn("[Label Prepare BG] batch failed:", error?.message || error);
+        } finally {
+          for (const order of queue) labelPrepareInFlight.delete(String(order.orderSn));
+        }
         console.log("[Label Prepare BG] DONE");
       })();
     });
@@ -161350,7 +161661,8 @@ async function startServer() {
     executeShipOrderBackgroundJob,
     shipOrderJobs,
     createShipOrderJobId,
-    pruneOldShipOrderJobs
+    pruneOldShipOrderJobs,
+    getDurableShipJob: (id) => logisticsJobQueue.get(id)
   });
   boundFastProcessHandler = handleFastProcess;
   app.use("/api/shopee", authMiddleware, shopeeShipRoutes);
@@ -162369,6 +162681,7 @@ async function startServer() {
     try {
       const ok = await initMongo(APP_ROOT14);
       if (ok && isMongoReady()) {
+        logisticsJobQueue.start();
         await hydrateChannelListingsOnBoot();
         void clearHandedOverFlagsForShippedOrders().then((r2) => {
           if (r2.modified > 0) {

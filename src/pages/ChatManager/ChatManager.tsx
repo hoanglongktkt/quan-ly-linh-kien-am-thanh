@@ -3,6 +3,7 @@ import { ArrowLeft, CheckCheck, Loader2, MessageSquare, Plus, Send, X, Zap } fro
 import { apiFetch, parseJsonResponse } from '../../utils/apiClient';
 import { useChatUnread } from '../../context/ChatUnreadContext';
 import { useChatSse } from '../../hooks/useChatSse';
+import { parseChatContent as parseMessageContent, safeChatUrl } from '../../../utils/chatContent.js';
 
 type ChatFilter = 'all' | 'unread';
 
@@ -109,105 +110,6 @@ function customerNameOf(row?: { customer_name?: unknown; customerName?: unknown 
   return 'Khách hàng';
 }
 
-type ParsedChat = {
-  kind: 'text' | 'order' | 'product' | 'image' | 'sticker' | 'empty';
-  text: string;
-  orderSn?: string;
-  itemName?: string;
-  imageUrl?: string;
-};
-
-function safeHttpUrl(value: unknown): string {
-  const text = readableString(value);
-  if (!text) return '';
-  try {
-    const url = new URL(text);
-    if (url.protocol === 'https:' || url.protocol === 'http:') return url.toString();
-  } catch {
-    return '';
-  }
-  return '';
-}
-
-function collectNodes(raw: unknown, depth: number, out: unknown[]): void {
-  if (raw == null || depth > 4) return;
-  if (typeof raw === 'string') {
-    const trimmed = raw.trim();
-    if ((trimmed.startsWith('{') || trimmed.startsWith('[')) && trimmed.length <= 8000) {
-      try {
-        collectNodes(JSON.parse(trimmed) as unknown, depth + 1, out);
-        return;
-      } catch {
-        /* chuỗi thường */
-      }
-    }
-    out.push(raw);
-    return;
-  }
-  if (typeof raw !== 'object') return;
-  out.push(raw);
-  const record = raw as Record<string, unknown>;
-  const keys = ['content', 'text', 'data', 'order', 'order_info', 'source_content', 'message'] as const;
-  for (let i = 0; i < keys.length; i += 1) {
-    const nested = record[keys[i]];
-    if (nested && typeof nested === 'object') collectNodes(nested, depth + 1, out);
-  }
-}
-
-function parseMessageContent(content: unknown): ParsedChat {
-  try {
-    const nodes: unknown[] = [];
-    collectNodes(content, 0, nodes);
-    let orderSn = '';
-    let itemName = '';
-    let hasItem = false;
-    let imageUrl = '';
-    let hasImage = false;
-    let hasSticker = false;
-    let text = '';
-    let type = '';
-    for (let i = 0; i < nodes.length; i += 1) {
-      const node = nodes[i];
-      if (typeof node === 'string') {
-        const plain = readableString(node);
-        if (plain && !text) text = plain;
-        continue;
-      }
-      if (!node || typeof node !== 'object') continue;
-      const row = node as Record<string, unknown>;
-      const nodeType = readableString(row.message_type || row.type).toLowerCase();
-      if (nodeType && !type) type = nodeType;
-      const sn = readableString(row.order_sn) || readableString(row.ordersn) || readableString(row.orderSn);
-      if (sn && !orderSn) orderSn = sn;
-      const name = readableString(row.item_name) || readableString(row.itemName);
-      if (name && !itemName) itemName = name;
-      if (row.item_id || row.itemId || name) hasItem = true;
-      const picture =
-        safeHttpUrl(row.image_url) ||
-        safeHttpUrl(row.imageUrl) ||
-        safeHttpUrl(row.thumb_url) ||
-        (nodeType === 'image' ? safeHttpUrl(row.url) : '') ||
-        safeHttpUrl(row.image);
-      if (picture && !imageUrl) imageUrl = picture;
-      if (nodeType === 'image' || row.image_url || row.imageUrl || row.thumb_url || row.image) hasImage = true;
-      if (row.sticker || row.sticker_id || row.sticker_package_id) hasSticker = true;
-      const nodeText = readableString(row.text) || readableString(row.caption);
-      if (nodeText && !text) text = nodeText;
-    }
-    if (orderSn) return { kind: 'order', text: `📦 [Đơn hàng] ${orderSn}`, orderSn };
-    if (type === 'order' || type === 'order_card') return { kind: 'order', text: '📦 [Đơn hàng]' };
-    if (hasItem || type === 'item' || type === 'product') {
-      return { kind: 'product', text: '🛍️ [Sản phẩm]', itemName };
-    }
-    if (hasImage || type === 'image') return { kind: 'image', text: '🖼️ [Hình ảnh]', imageUrl };
-    if (text) return { kind: 'text', text };
-    if (hasSticker || type === 'sticker') return { kind: 'sticker', text: '[Sticker]' };
-    return { kind: 'empty', text: '' };
-  } catch {
-    return { kind: 'empty', text: '' };
-  }
-}
-
 function previewSnippet(value: unknown): string {
   try {
     if (value && typeof value === 'object') {
@@ -221,6 +123,13 @@ function previewSnippet(value: unknown): string {
   } catch {
     return '';
   }
+}
+
+function renderChatText(text: string) {
+  return text.split(/(https?:\/\/[^\s<>]+)/g).map((part, index) => {
+    const url = /^https?:\/\//i.test(part) ? safeChatUrl(part) : '';
+    return url ? <a key={index} href={url} target="_blank" rel="noopener noreferrer" className="underline break-all">{part}</a> : part;
+  });
 }
 
 function ChatBubble({
@@ -243,12 +152,17 @@ function ChatBubble({
       {parsed.kind === 'order' ? (
         <div className={`rounded-xl px-2.5 py-2 ${mine ? 'bg-white/15' : 'bg-orange-50'}`}>
           <p className={`text-[11px] font-extrabold ${mine ? 'text-white' : 'text-orange-700'}`}>📦 Đơn hàng</p>
-          <p className="mt-1 break-all font-mono text-[13px] font-bold">{parsed.orderSn || 'Không có mã đơn'}</p>
+          <p className="mt-1 break-all font-mono text-[13px] font-bold">{parsed.orderSn || parsed.orderId || 'Khách gửi đơn hàng'}</p>
         </div>
       ) : parsed.kind === 'product' ? (
         <div>
           <p className="text-[11px] font-extrabold">🛍️ Sản phẩm</p>
-          {parsed.itemName ? <p className="mt-1 whitespace-pre-wrap">{parsed.itemName}</p> : null}
+          {parsed.imageUrl ? (
+            <button type="button" onClick={() => onOpenImage(parsed.imageUrl)} className="mt-2 block cursor-zoom-in" aria-label="Phóng to ảnh sản phẩm">
+              <img src={parsed.imageUrl} alt="Sản phẩm khách gửi" className="max-h-40 rounded-lg object-contain" />
+            </button>
+          ) : null}
+          {parsed.itemName ? <p className="mt-1 whitespace-pre-wrap">{parsed.itemName}</p> : <p className="mt-1">{parsed.itemId ? `Mã sản phẩm: ${parsed.itemId}` : 'Khách gửi sản phẩm'}</p>}
         </div>
       ) : parsed.kind === 'image' && parsed.imageUrl ? (
         <button
@@ -264,8 +178,11 @@ function ChatBubble({
           />
         </button>
       ) : (
-        <p className="whitespace-pre-wrap">{parsed.text || '…'}</p>
+        <p className="whitespace-pre-wrap break-words">{renderChatText(parsed.text || 'Tin nhắn chưa hỗ trợ hiển thị')}</p>
       )}
+      {(parsed.kind === 'order' || parsed.kind === 'product') && parsed.url ? (
+        <a href={parsed.url} target="_blank" rel="noopener noreferrer" className="mt-2 block break-all font-semibold underline">{parsed.kind === 'order' ? 'Mở đơn hàng' : 'Mở sản phẩm'}</a>
+      ) : null}
       <p className={`mt-1 text-[10px] font-semibold ${mine ? 'text-blue-100' : 'text-slate-400'}`}>
         {formatTime(createdAt)}
       </p>

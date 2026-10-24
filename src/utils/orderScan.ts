@@ -1,8 +1,61 @@
 import type { Order } from '../types';
 import { isShopeeInternalTrackingCode } from './orderTracking';
 import { isReturnScanLocked } from './orderLocalStatus';
+import { decodeJwtPayload } from './jwtClient';
 
 export type ScannerMode = 'handover' | 'return';
+
+export const SCANNED_ORDER_MESSAGE = 'ĐƠN ĐÃ QUÉT';
+
+function scanReceiptKey(): string | null {
+  try {
+    const username = decodeJwtPayload(localStorage.getItem('admin_token') || '')?.username;
+    return username ? `scanner_committed_v1:${username}` : null;
+  } catch { return null; }
+}
+
+function readScanReceipts(): Record<string, number> {
+  try {
+    const key = scanReceiptKey();
+    const saved = key ? JSON.parse(localStorage.getItem(key) || '{}') : {};
+    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return {};
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const receipts: Record<string, number> = {};
+    for (const [code, at] of Object.entries(saved)) {
+      if (typeof at === 'number' && at > cutoff && at <= Date.now()) receipts[code] = at;
+    }
+    return receipts;
+  } catch { return {}; }
+}
+
+/** Remember only rows explicitly confirmed by a successful database response. */
+export function rememberCommittedScans(results: unknown): void {
+  if (!Array.isArray(results)) return;
+  try {
+    const key = scanReceiptKey();
+    if (!key) return;
+    const saved = readScanReceipts();
+    for (const row of results) {
+      if (!row || !['handed_over', 'return_received', 'cancelled', 'duplicate'].includes(row.action)) continue;
+      for (const value of [row.code, row.orderSn]) {
+        const code = normalizeOrderScanKey(String(value || ''));
+        if (code) saved[code] = Date.now();
+      }
+    }
+    localStorage.setItem(key, JSON.stringify(Object.fromEntries(
+      Object.entries(saved).sort((a, b) => b[1] - a[1]).slice(0, 5000))));
+  } catch { /* Receipt storage must not interrupt the scan workflow. */ }
+}
+
+export function missingScannerOrderMessage(raw: string, pool?: Map<string, ScannerSyncEntry>): string {
+  const receipts = readScanReceipts();
+  const known = pool ? lookupScannerSyncMap(pool, raw) : null;
+  return known?.isReturnReceived === true ||
+    known?.status === 'handed_over' || known?.status === 'return_received' ||
+    buildScanLookupKeys(raw).some((key) => Boolean(receipts[key]))
+    ? SCANNED_ORDER_MESSAGE
+    : 'Không tìm thấy đơn trong hệ thống';
+}
 
 /** Normalize for comparison: uppercase, strip common separators. */
 export function normalizeOrderScanKey(raw: string): string {
@@ -302,7 +355,16 @@ export async function lookupOrderByScanCode(
   }
 }
 
-/** Ghi đơn vừa lookup vào HashMap súng — lần quét sau O(1), không gọi lại HTTP. */
+/**
+ * Read current DB state. Existing cPanel versions validate lean responses using
+ * omitted channel/items fields and incorrectly return 404 for valid new orders.
+ * Use their supported full lookup until the backend projection is upgraded.
+ */
+export function lookupCurrentScannerOrder(raw: string, token?: string | null): Promise<Order | null> {
+  return lookupOrderByScanCode(raw, [], token, undefined, { lean: false });
+}
+
+/** Update the display map only; scan acceptance still requires a current DB lookup. */
 export function putOrderIntoScannerSyncMap(
   map: Map<string, ScannerSyncEntry>,
   order: Order,
@@ -578,6 +640,71 @@ export type ScannerPoolCache = {
   return: ScannerPoolCacheEntry | null;
 };
 
+// Persist only lean scan rows, scoped to the signed-in account. Never store tokens.
+const SCANNER_DISPLAY_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+function scannerStorageKey(mode: ScannerMode): string | null {
+  try {
+    const username = decodeJwtPayload(localStorage.getItem('admin_token') || '')?.username;
+    return username ? `scanner_pool_v1:${username}:${mode}` : null;
+  } catch { return null; }
+}
+
+export function isScannerPoolUsable(entry: ScannerPoolCacheEntry | null | undefined): boolean {
+  return isScannerPoolFresh(entry, Date.now(), SCANNER_DISPLAY_MAX_AGE_MS);
+}
+
+export function loadScannerPoolCache(): ScannerPoolCache {
+  const load = (mode: ScannerMode): ScannerPoolCacheEntry | null => {
+    try {
+      const key = scannerStorageKey(mode);
+      if (!key) return null;
+      const saved = JSON.parse(localStorage.getItem(key) || 'null');
+      if (!saved || !Array.isArray(saved.rows) || !Number.isFinite(saved.fetchedAt) || saved.fetchedAt > Date.now()) return null;
+      const entry = { ...saved, map: buildScannerSyncMap(saved.rows) };
+      return isScannerPoolUsable(entry) ? entry : null;
+    } catch { return null; }
+  };
+  return { handover: load('handover'), return: load('return') };
+}
+
+export function clearScannerPoolCache(mode: ScannerMode): void {
+  try {
+    const key = scannerStorageKey(mode);
+    if (key) localStorage.removeItem(key);
+  } catch { /* Storage may be unavailable. */ }
+}
+
+type ScannerFetchOptions = {
+  lookbackDays?: number;
+  token?: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  fresh?: boolean;
+};
+const scannerPoolRequests = new Map<string, Promise<ScannerPoolCacheEntry>>();
+
+/** Each caller can leave without cancelling another caller's shared request. */
+export async function fetchScannerSyncPool(mode: ScannerMode, opts?: ScannerFetchOptions): Promise<ScannerPoolCacheEntry> {
+  if (opts?.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  const token = opts?.token ?? (typeof localStorage !== 'undefined' ? localStorage.getItem('admin_token') || '' : '');
+  const key = JSON.stringify([token, mode, opts?.lookbackDays ?? 30]);
+  let request = scannerPoolRequests.get(key);
+  if (!request) {
+    request = requestScannerSyncPool(mode, { ...opts, token, signal: undefined });
+    scannerPoolRequests.set(key, request);
+    void request.finally(() => {
+      if (scannerPoolRequests.get(key) === request) scannerPoolRequests.delete(key);
+    }).catch(() => undefined);
+  }
+  if (!opts?.signal) return request;
+  const signal = opts.signal;
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(new DOMException('Aborted', 'AbortError'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    request!.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
+}
+
 export function isScannerPoolFresh(
   entry: ScannerPoolCacheEntry | null | undefined,
   now = Date.now(),
@@ -609,7 +736,7 @@ export function countScannerSyncCodes(rows: ScannerSyncRow[]): number {
  * Fetch lean pool cho 1 mode scanner-sync.
  * Timeout 12s + optional AbortSignal; cache: no-store.
  */
-export async function fetchScannerSyncPool(
+async function requestScannerSyncPool(
   mode: ScannerMode,
   opts?: {
     lookbackDays?: number;
@@ -623,6 +750,7 @@ export async function fetchScannerSyncPool(
   const token =
     opts?.token ??
     (typeof localStorage !== 'undefined' ? localStorage.getItem('admin_token') || '' : '');
+  const storageKey = scannerStorageKey(mode);
   const params = new URLSearchParams();
   params.set('mode', mode);
   if (mode === 'return') {
@@ -652,12 +780,19 @@ export async function fetchScannerSyncPool(
       code_count?: number;
       success?: boolean;
     };
-    const rows = Array.isArray(data.orders) ? data.orders : [];
+    if (data.success === false || !Array.isArray(data.orders)) throw new Error('Invalid scanner response');
+    const rows = data.orders;
     const map = buildScannerSyncMap(rows);
     const codeCount = Number.isFinite(Number(data.code_count))
       ? Number(data.code_count)
       : countScannerSyncCodes(rows);
-    return { map, rows, codeCount, fetchedAt: Date.now() };
+    const entry = { map, rows, codeCount, fetchedAt: Date.now() };
+    try {
+      if (storageKey && storageKey === scannerStorageKey(mode) && (mode !== 'return' || !opts?.lookbackDays || opts.lookbackDays === 30)) {
+        localStorage.setItem(storageKey, JSON.stringify({ rows, codeCount, fetchedAt: entry.fetchedAt }));
+      }
+    } catch { /* Cache failure must not prevent scanning. */ }
+    return entry;
   } finally {
     clearTimeout(timer);
     if (opts?.signal) opts.signal.removeEventListener('abort', onAbort);

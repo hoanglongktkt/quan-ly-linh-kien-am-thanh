@@ -1,3 +1,4 @@
+import { parseChatContent } from "../../utils/chatContent.js";
 import { Conversation, ChatMessage } from "../../models/Chat.js";
 import {
   SHOPEE_HOST,
@@ -53,80 +54,8 @@ function plainText(value) {
   return trimmed;
 }
 
-function collectContentNodes(raw, depth, out) {
-  if (raw == null || depth > 4) return out;
-  if (typeof raw === "string") {
-    const trimmed = raw.trim();
-    if ((trimmed.startsWith("{") || trimmed.startsWith("[")) && trimmed.length <= 8000) {
-      try {
-        collectContentNodes(JSON.parse(trimmed), depth + 1, out);
-        return out;
-      } catch {
-        /* chuỗi thường */
-      }
-    }
-    out.push(raw);
-    return out;
-  }
-  const record = asRecord(raw);
-  if (!record) return out;
-  out.push(record);
-  const nestedKeys = ["content", "text", "data", "order", "order_info", "source_content", "message"];
-  for (let i = 0; i < nestedKeys.length; i += 1) {
-    const nested = record[nestedKeys[i]];
-    if (nested && typeof nested === "object") collectContentNodes(nested, depth + 1, out);
-  }
-  return out;
-}
-
-/** Luôn trả về chuỗi. Không bao giờ String(object) → "[object Object]". */
 export function snippetFromContent(content, messageType) {
-  try {
-    const nodes = collectContentNodes(content, 0, []);
-    const typeHint = String(messageType || "").trim().toLowerCase();
-    let orderSn = "";
-    let hasItem = false;
-    let hasImage = false;
-    let hasSticker = false;
-    let text = "";
-    let type = typeHint;
-    for (let i = 0; i < nodes.length; i += 1) {
-      const node = nodes[i];
-      if (typeof node === "string") {
-        if (!text) text = plainText(node);
-        continue;
-      }
-      const nodeType = String(node.message_type || node.type || "").trim().toLowerCase();
-      if (nodeType) type = type || nodeType;
-      const sn = plainText(node.order_sn) || plainText(node.ordersn) || plainText(node.orderSn);
-      if (sn && !orderSn) orderSn = sn;
-      if (node.item_id || node.itemId || plainText(node.item_name) || plainText(node.itemName)) {
-        hasItem = true;
-      }
-      if (
-        nodeType === "image" ||
-        node.image_url ||
-        node.imageUrl ||
-        node.thumb_url ||
-        node.image
-      ) {
-        hasImage = true;
-      }
-      if (node.sticker_id || node.sticker || node.sticker_package_id) hasSticker = true;
-      const nodeText = plainText(node.text) || plainText(node.caption);
-      if (nodeText && !text) text = nodeText;
-    }
-    if (orderSn) return `📦 [Đơn hàng] ${orderSn}`.slice(0, 300);
-    if (type === "order" || type === "order_card") return "📦 [Đơn hàng]";
-    if (hasItem || type === "item" || type === "product") return "🛍️ [Sản phẩm]";
-    if (hasImage || type === "image") return "🖼️ [Hình ảnh]";
-    if (text) return text.slice(0, 300);
-    if (hasSticker || type === "sticker") return "[Sticker]";
-    return "";
-  } catch (error) {
-    logChatError("[Shopee Chat] snippetFromContent", error);
-    return "";
-  }
+  return parseChatContent(content, messageType).text.slice(0, 300);
 }
 
 function forceSnippet(value, content, messageType) {
@@ -147,7 +76,13 @@ function normalizeStoredContent(raw, messageType) {
     return messageType ? { ...raw, message_type: raw.message_type || messageType } : raw;
   }
   if (typeof raw === "string" && raw.trim()) {
-    return { type: "text", text: raw.trim(), message_type: messageType || "text" };
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        return { content: parsed, message_type: messageType || "unknown" };
+      }
+    } catch { /* plain text */ }
+    return { type: messageType || "text", text: raw.trim(), message_type: messageType || "text" };
   }
   return { type: messageType || "unknown", message_type: messageType || "unknown" };
 }

@@ -81,6 +81,9 @@ const RETRYABLE_ERROR_CODES = new Set([
 
 export function resolveProxyTimeoutMs(pathPart) {
   const p = String(pathPart || '').replace(/^\/+/, '');
+  if (p === 'orders/batch-print/async' || p === 'orders/batch-confirm-async') return 10_000;
+  if (p.startsWith('orders/batch-print/job/') || p.startsWith('shopee/ship-order/job/')) return 8_000;
+  if (p.startsWith('orders/batch-print/file/')) return 60_000;
   if (p === 'orders/batch-print' || p === 'orders/batch-print-only') {
     return 230_000;
   }
@@ -89,9 +92,6 @@ export function resolveProxyTimeoutMs(pathPart) {
   }
   if (p === 'orders/batch-confirm') {
     return 90_000;
-  }
-  if (p === 'orders/batch-confirm-async') {
-    return 30_000;
   }
   if (LONG_RUNNING_PREFIXES.some((prefix) => p === prefix || p.startsWith(`${prefix}/`))) {
     return 240_000;
@@ -129,7 +129,9 @@ export async function proxyRequestToCpanel(req, res, pathPart, opts = {}) {
   const normalizedPath = String(pathPart || '').replace(/^\/+/, '');
   // Bulk async is an acknowledgement endpoint, never a long-running proxy call.
   // Fail fast rather than applying the general 240s Shopee retry policy.
-  const isBulkShipAsync = normalizedPath === 'shopee/ship-order/bulk-async';
+  const isBulkShipAsync = normalizedPath === 'shopee/ship-order/bulk-async' ||
+    normalizedPath === 'orders/batch-confirm-async' || normalizedPath === 'orders/batch-print/async' ||
+    normalizedPath.startsWith('orders/batch-print/job/') || normalizedPath.startsWith('shopee/ship-order/job/');
   const timeoutMs = opts.timeoutMs ?? (isBulkShipAsync ? 5_000 : resolveProxyTimeoutMs(pathPart));
 
   if (!backend.ok) {

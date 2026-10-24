@@ -10,6 +10,7 @@ import { sleep } from "../../utils/concurrency.js";
 import { recordShopeeApiError, observeWebhookStage, hasShortOrderDeadline } from "../operations/telemetry.js";
 import { safeError } from "../../utils/safeProductionLog.js";
 import { assertSyncActive } from "./syncYield.js";
+import { shopeeHttpGate } from "../../utils/workGate.js";
 import {
   normalizeShopeeProductIds,
   normalizeShopeeReturnDetail,
@@ -104,12 +105,16 @@ export async function fetchWithTimeout(url, init = {}, timeoutMs = SHOPEE_HTTP_T
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let hardTimer;
   let bodyOwnsDeadline = false;
+  let releaseSlot;
   const cleanup = () => {
     clearTimeout(timer);
     if (hardTimer) clearTimeout(hardTimer);
     externalSignal?.removeEventListener?.("abort", abortFromExternal);
+    releaseSlot?.();
   };
   try {
+    releaseSlot = await shopeeHttpGate.acquire(controller.signal);
+    assertSyncActive();
     const fetchInit = {
       ...init,
       signal: controller.signal,
@@ -126,6 +131,7 @@ export async function fetchWithTimeout(url, init = {}, timeoutMs = SHOPEE_HTTP_T
           /* ignore */
         }
         reject(Object.assign(new Error(`Shopee API timeout sau ${timeoutMs / 1000}s`), { code: "shopee_http_timeout" }));
+        cleanup();
       }, timeoutMs + 1000);
     });
     const response = await Promise.race([fetchPromise, hardTimeoutPromise]);
