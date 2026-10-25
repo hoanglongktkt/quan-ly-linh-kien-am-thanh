@@ -4244,8 +4244,12 @@ export async function bulkUpdateShippedOrdersBySn(
     labelUrl?: string;
     pdfFilename?: string;
   }>,
+  options?: { requireAllMatched?: boolean },
 ): Promise<number> {
-  if (!isMongoReady()) return 0;
+  if (!isMongoReady()) {
+    if (options?.requireAllMatched) throw new Error("mongodb_not_ready");
+    return 0;
+  }
   requireMongo();
   const list = Array.isArray(patches) ? patches.filter((p) => p && String(p.orderSn || "").trim()) : [];
   if (list.length === 0) return 0;
@@ -4359,6 +4363,9 @@ export async function bulkUpdateShippedOrdersBySn(
         ordered: false,
         maxTimeMS: 8_000,
       });
+      if (options?.requireAllMatched && result.matchedCount < ops.length) {
+        throw new Error(`confirm_persist_incomplete:${result.matchedCount}/${ops.length}`);
+      }
       console.log(
         `[Ship Persist] bulkWrite ONE shot — ops=${ops.length} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0}`,
       );

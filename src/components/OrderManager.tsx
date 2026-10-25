@@ -5731,8 +5731,8 @@ export default function OrderManager({
 
   const CONFIRM_AUTO_PRINT_WAIT_MESSAGE =
     'Đang đợi Shopee tạo mã và gộp file in (lô lớn có thể mất 1–2 phút)...';
-  /** 2 giây: không gọi API gộp ngay khi vừa RTS xong. */
-  const CONFIRM_AUTO_PRINT_BUFFER_MS = 2000;
+  /** Chờ 1,5 giây để Shopee xử lý RTS trước khi gọi API gộp. */
+  const CONFIRM_AUTO_PRINT_BUFFER_MS = 1500;
 
   /** Xác nhận xong 100% → nghỉ buffer rồi mới gộp PDF. Không dừng modal để user tự bấm in. */
   const beginConfirmAutoPrint = (orderSns: string[]) => {
@@ -6043,6 +6043,7 @@ export default function OrderManager({
         setProgressTotal(tot);
         setShipJobResults(Array.isArray(job.results) ? job.results : []);
         if (job.status === 'done' || job.status === 'failed') return job;
+        // Đủ kết quả Shopee chưa đồng nghĩa đã lưu DB; chỉ in sau status=done.
         setProgressMessage(
           job.message || `Đang xác nhận ${completed}/${tot} đơn...`,
         );
@@ -6233,17 +6234,14 @@ export default function OrderManager({
         return !(hit?.hasPdf || hit?.readyToPrint || hit?.labelUrl || hit?.pdfUrl || hit?.waybill_url);
       });
       if (remaining.length === 0) {
-        // Callback có thể là đồng bộ hoặc bất đồng bộ; luôn chuẩn hóa thành Promise.
-        void Promise.resolve(
-          fetchOrdersWithShop({
-            silent: true,
-            page: 1,
-            limit: ORDERS_PAGE_SIZE,
-            merge: true,
-            tab: 'processed',
-            force: true,
-          }),
-        ).catch((error: unknown) => {
+        void Promise.resolve(fetchOrdersWithShop({
+          silent: true,
+          page: 1,
+          limit: ORDERS_PAGE_SIZE,
+          merge: true,
+          tab: 'processed',
+          force: true,
+        })).catch((error: unknown) => {
           if (error instanceof Error && error.name === 'AbortError') return;
         });
         return;
@@ -6439,10 +6437,7 @@ export default function OrderManager({
       if (!finalJob || (finalJob.status !== 'done' && finalJob.status !== 'failed')) {
         throw new Error(finalJob?.message || 'Hết thời gian chờ xác nhận đơn.');
       }
-      if (
-        finalJob.status === 'failed' &&
-        !(Array.isArray(finalJob.results) && finalJob.results.length > 0)
-      ) {
+      if (finalJob.status === 'failed') {
         throw new Error(finalJob.message || finalJob.error || 'Xác nhận thất bại.');
       }
 
@@ -6876,16 +6871,17 @@ export default function OrderManager({
           signal: controller.signal,
         });
 
-        window.clearTimeout(timeoutId);
         const contentType = String(response.headers.get('content-type') || '').toLowerCase();
 
         if (!response.ok || !contentType.includes('application/pdf')) {
           let data: { message?: string } = {};
           try {
             data = JSON.parse(await response.text());
-          } catch {
+          } catch (error) {
+            if (controller.signal.aborted) throw error;
             /* ignore */
           }
+          controller.signal.throwIfAborted();
           const failMessage = data.message || 'In gộp thất bại. Vui lòng thử lại.';
           if (onConfirmModal) {
             showConfirmPrintError(`Gộp file thất bại: ${failMessage}`);
@@ -6904,6 +6900,7 @@ export default function OrderManager({
         }
 
         const pdfBuffer = await response.arrayBuffer();
+        controller.signal.throwIfAborted();
         const file = new Blob([pdfBuffer], { type: 'application/pdf' });
         if (batchPrintFileUrlRef.current) {
           try {
@@ -6985,8 +6982,7 @@ export default function OrderManager({
         });
         return true;
       } catch (fetchErr: any) {
-        window.clearTimeout(timeoutId);
-        const timeout = fetchErr?.name === 'AbortError';
+        const timeout = controller.signal.aborted || fetchErr?.name === 'AbortError' || fetchErr?.name === 'TimeoutError';
         const failMessage = timeout
           ? 'Shopee chưa tạo xong PDF sau thời gian chờ. Vui lòng thử lại sau ít phút.'
           : (fetchErr instanceof Error ? fetchErr.message : 'Không thể kết nối API in gộp. Vui lòng thử lại.');
@@ -7004,6 +7000,9 @@ export default function OrderManager({
         });
         clearShipProgressOverlay();
         return false;
+      } finally {
+        // Giữ timeout qua cả headers và phần thân PDF/thông báo lỗi.
+        window.clearTimeout(timeoutId);
       }
     } catch (err) {
       console.error('[BatchPrint] Error:', err);

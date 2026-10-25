@@ -283,7 +283,6 @@ import {
   withOperationTimeout,
 } from "./utils/concurrency.js";
 import { tryAcquireHeavyJob, releaseHeavyJob, resetHeavyJob } from "./utils/heavyJob.js";
-import { confirmOrderGate, labelBatchGate, pdfMergeGate, createKeyedBatchWork } from "./utils/workGate.js";
 import {
   initShopeeAuth,
   bootShopeeAuth,
@@ -11522,7 +11521,7 @@ async function arrangeShipment(
   skipped?: boolean;
 }> {
   if (order.channel === "shopee") {
-    return confirmOrderGate.run(() => shipShopeeOrderReal(order, method, signal, opts), signal);
+    return shipShopeeOrderReal(order, method, signal, opts);
   }
   return arrangeShipmentLocal(order, method);
 }
@@ -12003,7 +12002,7 @@ const PRINT_WAYBILL_POLL_MAX_ATTEMPTS = 15;
 /** Batch 15+ đơn: 40 vòng × 2,5s. Dừng sớm khi READY hoặc còn cửa sổ download. Ngân sách poll ~90–100s. */
 const PRINT_WAYBILL_BATCH_POLL_INTERVAL_MS = 2_500;
 const PRINT_WAYBILL_BATCH_POLL_MAX_ATTEMPTS = 40;
-const PRINT_WAYBILL_DOWNLOAD_CONCURRENCY = 1;
+const PRINT_WAYBILL_DOWNLOAD_CONCURRENCY = 3;
 const PRINT_WAYBILL_DOWNLOAD_PAUSE_MS = 200;
 /** Shopee create/download_shipping_document nhận tối đa 50 order_sn / request. */
 const SHOPEE_SHIPPING_DOC_BULK_MAX = 50;
@@ -15744,7 +15743,7 @@ async function enrichOrdersPackageAndTrackingForPrint(
     }
   };
   await Promise.all(
-    Array.from({ length: Math.min(1, orders.length) }, () => enrichWorker()),
+    Array.from({ length: Math.min(3, orders.length) }, () => enrichWorker()),
   );
 }
 
@@ -19070,11 +19069,12 @@ function buildConfirmedShipMongoPatches(orders: any[], shipMethod?: string) {
 async function persistConfirmedShipOrdersToMongo(
   orders: any[],
   shipMethod?: string,
+  options?: { strict?: boolean },
 ): Promise<number> {
   const patches = buildConfirmedShipMongoPatches(orders, shipMethod);
   if (!patches.length) return 0;
   try {
-    const n = await bulkUpdateShippedOrdersBySn(patches);
+    const n = await bulkUpdateShippedOrdersBySn(patches, { requireAllMatched: options?.strict });
     console.log(
       `[Confirm Persist] bulkUpdateShippedOrdersBySn n=${n} sns=${patches
         .map((p) => p.orderSn)
@@ -19083,6 +19083,7 @@ async function persistConfirmedShipOrdersToMongo(
     return n;
   } catch (err: any) {
     console.warn("[Confirm Persist] bulkUpdateShippedOrdersBySn:", err?.message || err);
+    if (options?.strict) throw err;
     return 0;
   }
 }
@@ -21874,7 +21875,6 @@ const CONFIRM_ASYNC_BATCH_SIZE = 20;
 const CONFIRM_ASYNC_BATCH_PAUSE_MS = 300;
 const CONFIRM_ASYNC_DB_TIMEOUT_MS = 15_000;
 let confirmOnlyAsyncJobChain: Promise<void> = Promise.resolve();
-let confirmOnlyAsyncPending = 0;
 
 function createShipOrderJobId(): string {
   return `ship-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -23453,11 +23453,58 @@ async function startServer() {
           `Đơn ${orderSn} thiếu shopId/accountId nên không thể chọn đúng Token Shop.`,
         );
       }
-      const result = await fetchBatchPdfDocumentsByShop(
-        rows, [orderSn], Date.now() + 90_000, "Delegated PDF",
+      const auth = await getShopeeAccessTokenForApi(storedShopId);
+      const accessToken = String(auth?.token || "").trim();
+      const shopId = String(auth?.apiShopId || "").trim();
+      if (!accessToken || !shopId) {
+        return failDownload(
+          new Error(`no_valid_access_token shop=${storedShopId} order_sn=${orderSn}`),
+          `Không có Token Shop hợp lệ cho shop ${storedShopId}.`,
+        );
+      }
+      console.log(
+        `[Delegated PDF] order_sn=${orderSn} DB shop=${storedShopId} API shop=${shopId}`,
       );
+
       if (streamDelegatedPdf(res, expectedPath, expectedFilename)) return;
-      return failDownload(result.failedOrders[0], "Shopee chua tao xong PDF.");
+
+      try {
+        await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, [order]);
+      } catch (err: any) {
+        console.warn(`[Delegated PDF] enrich ${orderSn}:`, err?.message || err);
+      }
+      const shippingRows = buildShopeeShippingDocOrderRows(order);
+      if (shippingRows.length === 0) {
+        return failDownload(
+          new Error(`missing_package_number order_sn=${orderSn} shop=${shopId}`),
+          `Đơn ${orderSn} thiếu package_number; đã chặn Create/Poll/Download.`,
+        );
+      }
+
+      const batch = await batchDownloadShopeeWaybillPdf(shopId, shippingRows, {
+        deadlineAt: Date.now() + 90_000,
+      });
+      if (!batch.success || !batch.filename || !batch.filePath) {
+        return failDownload(
+          { error: batch.error, message: batch.message },
+          batch.message || "Shopee chưa sẵn sàng hoặc sai Token Shop.",
+        );
+      }
+      if (streamDelegatedPdf(res, batch.filePath, batch.filename)) {
+        void markOrdersHasPdfInStore([orderSn], {
+          shopId,
+          labelUrl: `/api/public/labels/${batch.filename}`,
+          waybill_url: `/api/public/labels/${batch.filename}`,
+          pdfFilename: batch.filename,
+        }).catch((err: any) =>
+          console.warn(`[Delegated PDF] persist ${orderSn}:`, err?.message || err),
+        );
+        return;
+      }
+      return failDownload(
+        { error: batch.error, message: batch.message },
+        "Shopee chưa sẵn sàng hoặc sai Token Shop.",
+      );
     } catch (err: any) {
       return failDownload(
         err,
@@ -23600,7 +23647,7 @@ async function startServer() {
         toShip,
         ({ order }: { order: any }) => resolveOrderShopId(order) || order?.shopId,
         confirmOneOrder,
-        { perShopChunk: 2, pauseMs: 250, maxParallelShops: 1 },
+        { perShopChunk: 4, pauseMs: 250, maxParallelShops: 6 },
       );
 
       console.log(`[Confirm Only] DONE ${successSns.length}/${toShip.length} success (${Date.now() - t0}ms)`);
@@ -23824,7 +23871,7 @@ async function startServer() {
             batch,
             ({ order }: { order: any }) => resolveOrderShopId(order) || order?.shopId,
             confirmOneOrder,
-            { perShopChunk: 2, pauseMs: 200, maxParallelShops: 1 },
+            { perShopChunk: 5, pauseMs: 150, maxParallelShops: 3 },
           );
         } catch (batchErr: any) {
           console.error(
@@ -23868,7 +23915,7 @@ async function startServer() {
       job.updatedAt = Date.now();
       try {
         await withOperationTimeout(
-          () => persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod),
+          () => persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod, { strict: true }),
           CONFIRM_ASYNC_DB_TIMEOUT_MS,
           "Persist confirmed async orders",
         );
@@ -23877,6 +23924,7 @@ async function startServer() {
           "[Confirm Async] persistConfirmedShipOrdersToMongo:",
           persistErr?.stack || persistErr,
         );
+        throw new Error('Shopee đã trả kết quả xác nhận nhưng chưa lưu xong trạng thái đơn. Chưa chuyển sang in. Hãy tải lại danh sách để kiểm tra trước khi xác nhận lại.');
       }
 
       job.results = results;
@@ -23948,14 +23996,6 @@ async function startServer() {
         ...(Array.isArray(order_sns) ? order_sns : []),
       ].map(String);
 
-      if (Math.max(idList.length, snList.length) > 500) {
-        return res.status(400).json({ success: false, message: "Moi lo toi da 500 don. Vui long chia nho danh sach." });
-      }
-      if (confirmOnlyAsyncPending >= 10) {
-        res.setHeader("Retry-After", "5");
-        return res.status(429).json({ success: false, error: "work_queue_full", message: "Hang doi xac nhan dang day. Vui long cho cac lo truoc hoan tat." });
-      }
-
       if (idList.length === 0 && snList.length === 0) {
         return res.status(400).json({
           success: false,
@@ -23988,7 +24028,6 @@ async function startServer() {
         updatedAt: Date.now(),
       });
 
-      confirmOnlyAsyncPending += 1;
       res.once("finish", () => {
         setImmediate(() => {
           // Xếp tuần tự các job batch-confirm để nhiều thao tác người dùng không
@@ -23997,8 +24036,7 @@ async function startServer() {
             .catch((chainErr: any) => {
               console.error("[Confirm Async] previous queue job failed:", chainErr?.stack || chainErr);
             })
-            .then(() => executeConfirmOnlyBackgroundJob(jobId, shipMethod, idList, snList))
-            .finally(() => { confirmOnlyAsyncPending = Math.max(0, confirmOnlyAsyncPending - 1); });
+            .then(() => executeConfirmOnlyBackgroundJob(jobId, shipMethod, idList, snList));
         });
       });
       return res.status(202).json({ accepted: true, jobId, total: estimatedTotal });
@@ -24049,20 +24087,136 @@ async function startServer() {
         });
       }
 
-      const batch = await fetchBatchPdfDocumentsByShop(
-        rows, cleanSns, Date.now() + WAYBILL_BATCH_DEADLINE_MS, "Get PDF",
-      );
-      const ready = new Set(batch.documents.flatMap((document) => document.orderSns));
-      const pdfResults = cleanSns.map((orderSn: string) => {
-        if (ready.has(orderSn)) {
-          const filename = buildCachedLabelFilename([orderSn]);
-          const url = absoluteLabelUrl(`/api/public/labels/${filename}`);
-          return { orderSn, success: Boolean(url), url: url || undefined, filename };
+      const pdfResults: any[] = [];
+      const groups = new Map<string, any[]>();
+      for (const orderSn of cleanSns) {
+        const order = rows.find(
+          (item: any) =>
+            String(item?.orderSn || item?.order_sn || "")
+              .replace(/^shopee-/i, "")
+              .trim() === orderSn,
+        );
+        if (!order || String(order.channel || "").toLowerCase() !== "shopee") {
+          pdfResults.push({
+            orderSn,
+            success: false,
+            error: "order_not_found",
+            message: `Không tìm thấy đơn ${orderSn} trong database.`,
+          });
+          continue;
         }
-        const failure = batch.failedOrders.find((item) => item.orderSn === orderSn);
-        return { orderSn, success: false, error: failure?.error || "document_not_ready",
-          message: failure?.message || "Shopee chua tao xong PDF." };
-      });
+        const storedShopId = String(
+          order.shopId || order.shop_id || order.accountId || order.account_id || "",
+        ).trim();
+        if (!storedShopId) {
+          pdfResults.push({
+            orderSn,
+            success: false,
+            error: "missing_shop_id",
+            message: `Đơn ${orderSn} thiếu shopId.`,
+          });
+          continue;
+        }
+        const list = groups.get(storedShopId) || [];
+        list.push(order);
+        groups.set(storedShopId, list);
+      }
+
+      await Promise.all(
+        [...groups.entries()].map(async ([storedShopId, shopOrders]) => {
+          try {
+            const auth = await getShopeeAccessTokenForApi(storedShopId);
+            const accessToken = String(auth?.token || "").trim();
+            const shopId = String(auth?.apiShopId || "").trim();
+            if (!accessToken || !shopId) {
+              for (const order of shopOrders) {
+                const orderSn = String(order.orderSn || "").replace(/^shopee-/i, "").trim();
+                pdfResults.push({
+                  orderSn,
+                  success: false,
+                  error: "no_valid_token",
+                  message: `Không có token hợp lệ cho shop ${storedShopId}.`,
+                });
+              }
+              return;
+            }
+
+            try {
+              await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, shopOrders);
+            } catch (err: any) {
+              console.warn(`[Get PDF] enrich shop=${shopId}:`, err?.message || err);
+            }
+
+            const shippingRows: ShopeeWaybillOrderRow[] = [];
+            for (const order of shopOrders) {
+              const orderSn = String(order.orderSn || "").replace(/^shopee-/i, "").trim();
+              if ((order as any).__shopeeOrderNotFound) {
+                pdfResults.push({
+                  orderSn,
+                  success: false,
+                  error: "order_not_found",
+                  message: `Đơn ${orderSn} không tồn tại trên Shopee (not found).`,
+                });
+                continue;
+              }
+              const orderRows = buildShopeeShippingDocOrderRows(order);
+              if (orderRows.length === 0) {
+                pdfResults.push({
+                  orderSn,
+                  success: false,
+                  error: "missing_package_number",
+                  message: `Đơn ${orderSn} thiếu package_number; đã chặn Create/Poll/Download.`,
+                });
+                continue;
+              }
+              shippingRows.push(...orderRows);
+            }
+            if (shippingRows.length === 0) return;
+
+            console.log(`[Get PDF] BULK shop=${shopId} n=${shopOrders.length} — không sleep 3s/đơn`);
+            const batch = await batchDownloadShopeeWaybillPdf(shopId, shippingRows, {
+              deadlineAt: Date.now() + WAYBILL_BATCH_DEADLINE_MS,
+            });
+            const readySet = new Set(batch.readyOrderSns || []);
+            for (const order of shopOrders) {
+              const orderSn = String(order.orderSn || "").replace(/^shopee-/i, "").trim();
+              if (pdfResults.some((r) => r.orderSn === orderSn)) continue;
+              if (!readySet.has(orderSn)) {
+                const skip = (batch.skippedOrders || []).find((s) => s.orderSn === orderSn);
+                pdfResults.push({
+                  orderSn,
+                  success: false,
+                  error: skip?.error || "document_not_ready",
+                  message: skip?.message || "Shopee chưa xuất PDF.",
+                });
+                continue;
+              }
+              const filename = `order_${orderSn}.pdf`;
+              const url = absoluteLabelUrl(`/api/public/labels/${filename}`);
+              pdfResults.push({
+                orderSn,
+                success: Boolean(url),
+                url: url || undefined,
+                filename,
+                message: url ? "PDF đã sẵn sàng." : "Đã tải PDF nhưng không tạo được URL.",
+              });
+              console.log(`[Get PDF] OK ${orderSn} -> ${url}`);
+            }
+          } catch (err: any) {
+            console.error(`[Get PDF] Lỗi shop=${storedShopId}:`, err?.stack || err);
+            for (const order of shopOrders) {
+              const orderSn = String(order.orderSn || "").replace(/^shopee-/i, "").trim();
+              if (pdfResults.some((r) => r.orderSn === orderSn)) continue;
+              pdfResults.push({
+                orderSn,
+                success: false,
+                error: "processing_error",
+                message: err?.message || String(err),
+              });
+            }
+          }
+        }),
+      );
 
       const successCount = pdfResults.filter((r) => r.success).length;
       
@@ -24304,19 +24458,6 @@ async function startServer() {
   }
 
   async function mergeBatchPdfBuffers(
-    pdfBuffers: Array<{ orderSn: string; buffer: Buffer }>, logPrefix: string,
-    onInvalid: (orderSn: string) => void,
-  ): Promise<{ pdf: PDFDocument; bytes: Uint8Array }> {
-    if (pdfBuffers.reduce((bytes, item) => bytes + item.buffer.length, 0) > 64 * 1024 * 1024) {
-      throw new Error("File in qua lon. Vui long chia thanh cac lo nho hon.");
-    }
-    return pdfMergeGate.run(async () => {
-      const pdf = await mergeBatchPdfBuffersUnqueued(pdfBuffers, logPrefix, onInvalid);
-      return { pdf, bytes: await pdf.save() };
-    });
-  }
-
-  async function mergeBatchPdfBuffersUnqueued(
     pdfBuffers: Array<{ orderSn: string; buffer: Buffer }>,
     logPrefix: string,
     onInvalid: (orderSn: string) => void,
@@ -24342,56 +24483,7 @@ async function startServer() {
     return mergedPdf;
   }
 
-  const sharedLabelWork = createKeyedBatchWork(labelBatchGate);
   async function fetchBatchPdfDocumentsByShop(
-    orders: any[], orderSns: string[], deadlineAt: number, logPrefix: string,
-    options?: { signal?: AbortSignal },
-  ): Promise<{ documents: BatchPdfDocument[]; failedOrders: BatchPdfFailure[] }> {
-    const sns = uniquePreserveOrder(orderSns);
-    if (sns.length > 500) throw new Error("Moi lo in toi da 500 don. Vui long chia nho danh sach.");
-    const documents: BatchPdfDocument[] = [];
-    const pending: string[] = [];
-    let cachedBytes = 0;
-    // Ready labels must not queue behind a slow shipment waiting on Shopee.
-    for (const sn of sns) {
-      options?.signal?.throwIfAborted();
-      const buffer = await readCachedOrderWaybillPdf(sn);
-      if (buffer) {
-        cachedBytes += buffer.length;
-        if (cachedBytes > 64 * 1024 * 1024) throw new Error("File in qua lon. Vui long chia nho danh sach.");
-        documents.push({ orderSns: [sn], buffer });
-      } else pending.push(sn);
-    }
-    if (!pending.length) return sortBatchPdfResultByRequestedOrder(sns, documents, []);
-    const waitSignal = AbortSignal.any([
-      AbortSignal.timeout(Math.max(1, deadlineAt - Date.now())),
-      ...(options?.signal ? [options.signal] : []),
-    ]);
-    // A disconnected reader must not cancel a shared generation used by another reader.
-    const values = await sharedLabelWork(pending, async (owned: string[]) => {
-      if (Date.now() >= deadlineAt) throw new Error("batch_deadline:pdf_queue");
-      const result = await fetchBatchPdfDocumentsByShopUnshared(orders, owned, deadlineAt, logPrefix);
-      return new Map(owned.map((sn) => {
-        const document = result.documents.find((doc) => doc.orderSns.includes(sn));
-        const failure = result.failedOrders.find((item) => item.orderSn === sn);
-        return [sn, { document, failure: document ? undefined : failure || {
-          orderSn: sn, error: "document_not_ready", message: "Shopee chua tao xong PDF.",
-        } }];
-      }));
-    }, waitSignal);
-    const failedOrders: BatchPdfFailure[] = [];
-    const seen = new Set<BatchPdfDocument>();
-    for (const value of values) {
-      if (value.document && !seen.has(value.document)) {
-        seen.add(value.document);
-        documents.push(value.document);
-      }
-      if (value.failure) failedOrders.push(value.failure);
-    }
-    return sortBatchPdfResultByRequestedOrder(sns, documents, failedOrders);
-  }
-
-  async function fetchBatchPdfDocumentsByShopUnshared(
     orders: any[],
     orderSns: string[],
     deadlineAt: number,
@@ -24453,8 +24545,8 @@ async function startServer() {
       groups.set(storedShopId, group);
     }
 
-    await mapWithConcurrency(
-      [...groups.entries()], 1, async ([storedShopId, group]) => {
+    await Promise.all(
+      [...groups.entries()].map(async ([storedShopId, group]) => {
         const deadlineController = new AbortController();
         const deadlineTimer = setTimeout(
           () => deadlineController.abort(new Error("batch_deadline:shopee_pdf")),
@@ -24483,14 +24575,6 @@ async function startServer() {
             `enrich_shop:${storedShopId}`,
             () => enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, group.orders),
           );
-
-          // Fresh shipments may not expose package_number on the first detail read.
-          for (const order of group.orders) {
-            if (!order.__shopeeOrderNotFound && buildShopeeShippingDocOrderRows(order).length === 0) {
-              await runBeforeBatchDeadline(deadlineAt, "retry_package", () =>
-                retryFillPackageNumberForPrint(shopId, accessToken, order));
-            }
-          }
 
           const allRows: ShopeeWaybillOrderRow[] = [];
           for (const order of group.orders) {
@@ -24608,7 +24692,7 @@ async function startServer() {
         } finally {
           clearTimeout(deadlineTimer);
         }
-      },
+      }),
     );
 
     console.log(
@@ -24841,7 +24925,7 @@ async function startServer() {
 
       // Bước 4: Gộp tất cả PDF
       console.log(`[Batch Confirm Print] Gộp ${pdfBuffers.length} PDF...`);
-      const { pdf: mergedPdf, bytes: mergedBytes } = await mergeBatchPdfBuffers(
+      const mergedPdf = await mergeBatchPdfBuffers(
         pdfBuffers,
         "Batch Confirm Print",
         (orderSn) => {
@@ -24865,6 +24949,7 @@ async function startServer() {
       }
 
       // Bước 5: Lưu file gộp
+      const mergedBytes = await mergedPdf.save();
       const batchFilename = `batch-${Date.now()}.pdf`;
       putLabelMem(batchFilename, Buffer.from(mergedBytes), "application/pdf");
       const batchUrl = absoluteLabelUrl(`/api/public/labels/${batchFilename}`);
@@ -25000,7 +25085,7 @@ async function startServer() {
 
       // Gộp tất cả PDF
       console.log(`[Batch Print Only] Gộp ${pdfBuffers.length} PDF...`);
-      const { pdf: mergedPdf, bytes: mergedBytes } = await mergeBatchPdfBuffers(
+      const mergedPdf = await mergeBatchPdfBuffers(
         pdfBuffers,
         "Batch Print Only",
         (orderSn) => {
@@ -25023,6 +25108,7 @@ async function startServer() {
       }
 
       // Lưu file gộp
+      const mergedBytes = await mergedPdf.save();
       const batchFilename = `reprint-${Date.now()}.pdf`;
       putLabelMem(batchFilename, Buffer.from(mergedBytes), "application/pdf");
       const batchUrl = absoluteLabelUrl(`/api/public/labels/${batchFilename}`);
@@ -26295,12 +26381,6 @@ async function startServer() {
 
   /** Ghép nhiều PDF vận đơn thành 1 file — mỗi nguồn giữ nguyên trang A4. */
   async function mergePdfLabelBuffers(buffers: Buffer[]): Promise<Buffer> {
-    if (buffers.reduce((bytes, buffer) => bytes + (buffer?.length || 0), 0) > 64 * 1024 * 1024) {
-      throw new Error("File in qua lon. Vui long chia thanh cac lo nho hon.");
-    }
-    return pdfMergeGate.run(() => mergePdfLabelBuffersUnqueued(buffers));
-  }
-  async function mergePdfLabelBuffersUnqueued(buffers: Buffer[]): Promise<Buffer> {
     const valid = buffers.filter((b) => b && Buffer.isBuffer(b) && b.length > 0 && isPdfBuffer(b));
     if (valid.length === 0) {
       throw new Error("Không có buffer PDF hợp lệ để ghép.");
@@ -27034,19 +27114,78 @@ async function startServer() {
         if (queue.length === 0) return;
 
         console.log(`[Label Prepare BG] START n=${queue.length}`);
-        try {
-          const sns = queue.map((order) => String(order.orderSn));
-          const result = await fetchBatchPdfDocumentsByShop(
-            queue, sns, Date.now() + WAYBILL_BATCH_DEADLINE_MS, "Label Prepare BG",
-          );
-          for (const failure of result.failedOrders) {
-            console.warn("[Label Prepare BG] failed", failure.orderSn, failure.error);
+        await mapBatchConcurrently(queue, 5, async (order) => {
+          const sn = String(order.orderSn || "").trim();
+          try {
+            const shopId = String(order.shopId || resolveOrderShopId(order) || "").trim();
+            if (!shopId) {
+              console.warn(`[Label Prepare BG] skip ${sn}: missing shopId`);
+              return;
+            }
+            let accessToken = "";
+            try {
+              accessToken = (await getValidShopeeAccessToken(shopId)) || "";
+            } catch {
+              /* ignore */
+            }
+            if (!accessToken) {
+              console.warn(`[Label Prepare BG] skip ${sn}: no token shop=${shopId}`);
+              return;
+            }
+
+            try {
+              await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, [order]);
+            } catch (enrErr: any) {
+              console.warn(`[Label Prepare BG] enrich ${sn}:`, enrErr?.message || enrErr);
+            }
+
+            if (order.__shopeeOrderNotFound) {
+              console.warn(`[Label Prepare BG] FAILED ${sn}: order_not_found — skip create`);
+              return;
+            }
+
+            let shippingRows = buildShopeeShippingDocOrderRows(order);
+            if (shippingRows.length === 0) {
+              const filled = await retryFillPackageNumberForPrint(shopId, accessToken, order);
+              shippingRows = buildShopeeShippingDocOrderRows(order);
+              if (!filled || shippingRows.length === 0) {
+                console.warn(
+                  `[Label Prepare BG] FAILED ${sn}: missing_package_number after ${LABEL_PKG_RETRY_MAX} retries`,
+                );
+                return;
+              }
+            }
+
+            const gen = await generateShopeeShippingDocument(shopId, shippingRows);
+            const pdfFilename = String(gen?.filename || "").trim();
+            if (!gen?.success || !gen.url || !pdfFilename) {
+              console.warn(
+                `[Label Prepare BG] fail ${sn}:`,
+                gen?.message || gen?.error || "no_url",
+              );
+              return;
+            }
+
+            // Lưu meta PDF + hasPdf + waybill_url — tuyệt đối KHÔNG set isPrinted (user chưa bấm In).
+            await markOrdersHasPdfInStore([sn], {
+              shopId,
+              labelUrl: String(gen.url),
+              waybill_url: String(gen.url),
+              pdfFilename,
+            });
+            order.labelUrl = gen.url;
+            order.pdfUrl = gen.url;
+            order.waybill_url = gen.url;
+            order.pdfFilename = pdfFilename;
+            order.hasPdf = true;
+            order.readyToPrint = true;
+            console.log(`[Label Prepare BG] OK ${sn} file=${pdfFilename} hasPdf=true waybill_url=set isPrinted=unchanged`);
+          } catch (err: any) {
+            console.warn(`[Label Prepare BG] ${sn}:`, err?.message || err);
+          } finally {
+            labelPrepareInFlight.delete(sn);
           }
-        } catch (error: any) {
-          console.warn("[Label Prepare BG] batch failed:", error?.message || error);
-        } finally {
-          for (const order of queue) labelPrepareInFlight.delete(String(order.orderSn));
-        }
+        });
         console.log("[Label Prepare BG] DONE");
       })();
     });
@@ -27072,7 +27211,7 @@ async function startServer() {
     );
     if (list.length === 0) return;
 
-    await sleep(1_200);
+    await sleep(1_000);
     const started = Date.now();
     const deadlineMs = 20_000;
     const backoffMs = [1_000, 1_500, 2_000, 2_500, 3_000];
