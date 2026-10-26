@@ -2443,6 +2443,7 @@ export default function OrderManager({
     orderId?: string;
     orderSn?: string;
     trackingNumber?: string;
+    repeatWarning?: string;
     at: number;
   };
   type ScanStatModalKey = 'daXuatKho' | 'donHuy' | 'daNhanHoan';
@@ -3681,8 +3682,14 @@ export default function OrderManager({
         playScanSound('warning');
         vibrateScan('warning');
         flashViewfinder('error', 500);
-        setCameraScanResult(SCANNED_ORDER_MESSAGE);
-        showScanToast(SCANNED_ORDER_MESSAGE, 'warning');
+        // A cancelled parcel must remain identifiable on every scan. Reuse the
+        // session result without adding another row or hitting the server again.
+        const cancelled = [...donHuyListRef.current, ...daNhanHoanListRef.current]
+          .find((item) => item.repeatWarning && [item.code, item.orderSn, item.trackingNumber]
+            .some((value) => normalizeOrderScanKey(value || '') === key));
+        const message = cancelled?.repeatWarning || SCANNED_ORDER_MESSAGE;
+        setCameraScanResult(message);
+        showScanToast(message, cancelled ? 'error' : 'warning');
         return;
       }
 
@@ -3791,6 +3798,9 @@ export default function OrderManager({
           (matchedReturnWaybill && order.return_tracking_no) ||
           getOrderWaybillCode(order);
         const orderKey = normalizeOrderScanKey(order.orderSn || order.id);
+        const repeatCancelWarning = isCancelBucket
+          ? `⚠ ${cancelReturnKind === 'failed_delivery' ? 'GIAO THẤT BẠI' : 'ĐƠN HỦY'}${waybill ? ` · VĐ ${waybill}` : ''} · #${order.orderSn}`
+          : undefined;
         if (
           isCodeAlreadyVerified(orderKey) ||
           isCodeAlreadyVerified(normalizeOrderScanKey(waybill)) ||
@@ -3801,8 +3811,9 @@ export default function OrderManager({
           playScanSound('warning');
           vibrateScan('warning');
           flashViewfinder('error', 500);
-          setCameraScanResult(SCANNED_ORDER_MESSAGE);
-          showScanToast(SCANNED_ORDER_MESSAGE, 'warning');
+          const message = repeatCancelWarning || SCANNED_ORDER_MESSAGE;
+          setCameraScanResult(message);
+          showScanToast(message, repeatCancelWarning ? 'error' : 'warning');
           return;
         }
 
@@ -3812,6 +3823,7 @@ export default function OrderManager({
           orderId: order.id,
           orderSn: order.orderSn,
           trackingNumber: waybill || order.trackingNumber || order.tracking_no || order.internalTrackingCode,
+          repeatWarning: repeatCancelWarning,
           at: now,
         };
 
@@ -3819,8 +3831,9 @@ export default function OrderManager({
           playScanSound('error');
           vibrateScan('warning');
           flashViewfinder('error', 500);
-          setCameraScanResult(SCANNED_ORDER_MESSAGE);
-          showScanToast(SCANNED_ORDER_MESSAGE, 'error');
+          const message = repeatCancelWarning || SCANNED_ORDER_MESSAGE;
+          setCameraScanResult(message);
+          showScanToast(message, 'error');
           return;
         }
 
