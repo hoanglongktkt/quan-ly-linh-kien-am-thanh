@@ -388,6 +388,8 @@ import {
 } from "./controllers/shopeeOrdersController.js";
 import {
   initWooCommerceOrdersController,
+  startWooCommerceOrderSync,
+  stopWooCommerceOrderSync,
   syncWooCommerceOrders,
   testWooCommerceConnectionHandler,
   updateWooCommerceOrderStatus,
@@ -568,6 +570,8 @@ import {
   type LocalInventoryCache,
 } from "./src/db/mongoStore.ts";
 import { emitNewOrder, getOrderRealtimeStats } from "./services/orderRealtime.js";
+import { mountOrderPushRoutes, startOrderPushWorker } from "./services/orderPush.js";
+import mongoose from "mongoose";
 import {
   initOrderChangeStream,
   startOrderChangeStream,
@@ -17442,6 +17446,7 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
       shopee_order_status: rawStatus,
       status: mappedStatus,
       date: item?.create_time ? new Date(Number(item.create_time) * 1000).toISOString() : new Date().toISOString(),
+      _orderPushCreatedAt: item?.create_time,
       // Watermark của Shopee, KHÔNG phải giờ server nhận payload. Mongo dùng field
       // này để chặn webhook/pull đến trễ ghi đè snapshot mới hơn.
       last_shopee_update_at: item?.update_time
@@ -22051,6 +22056,9 @@ function normalizeShopeeOrder(payload: any): any | null {
     shopee_order_status: rawStatus,
     status: mappedStatus,
     date: data.create_time ? new Date(data.create_time * 1000).toISOString() : new Date().toISOString(),
+    _orderPushCreatedAt: data.create_time,
+    _orderPushAwaitCreation: !data.create_time &&
+      ["UNPAID", "PENDING", "READY_TO_SHIP", "RETRY_SHIP", "TO_SHIP"].includes(rawStatus),
     last_shopee_update_at: lastShopeeUpdateAt,
     packageNumber: data.package_number || undefined,
     isPrepared: mappedStatus === "processed" || mappedStatus === "shipping",
@@ -22870,6 +22878,18 @@ async function startServer() {
 
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
+  const orderPushOptions = {
+    getDb: () => isMongoReady() ? mongoose.connection.db : undefined,
+    subject: process.env.ORDER_PUSH_SUBJECT || APP_BASE_URL,
+  };
+  mountOrderPushRoutes(app, {
+    ...orderPushOptions,
+    auth: authMiddleware,
+    loadOrder: async (id: string) => {
+      const rows = await loadOrdersFromStore({ ids: [id], limit: 1 });
+      return rows.find((row: any) => row.id === id && ["shopee", "woocommerce"].includes(row.channel)) || null;
+    },
+  });
 
   // PDF vận đơn CHỈ phục vụ qua /api/public/labels (và alias) — không static /prints.
   try {
@@ -28591,7 +28611,7 @@ async function startServer() {
     const distPath = path.join(APP_ROOT, "dist");
     app.use(express.static(distPath, {
       setHeaders(res, filePath) {
-        if (filePath.endsWith("index.html")) {
+        if (/[/\\](?:index\.html|order-push-sw\.js|app\.webmanifest)$/.test(filePath)) {
           res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
           res.setHeader("Pragma", "no-cache");
           res.setHeader("Expires", "0");
@@ -28752,6 +28772,8 @@ async function startServer() {
       console.log(`[MongoDB] listen OK — connecting DB in background (ready=${isMongoReady()})`);
       // DB non-blocking: fire-and-forget sau khi port đã mở
       void connectDB();
+      startWooCommerceOrderSync();
+      const stopOrderPushWorker = startOrderPushWorker(orderPushOptions);
 
       // Sync đơn: webhook + nút Đồng bộ (ACK) + cron incremental 5 phút.
       console.log("[Boot] Order sync: webhook ON + manual trigger (BG) + cron incremental ON.");
@@ -28770,6 +28792,8 @@ async function startServer() {
       // Passenger recycle process liên tục — đóng change stream để không rò cursor trên Atlas.
       for (const sig of ["SIGTERM", "SIGINT"] as const) {
         process.once(sig, () => {
+          stopWooCommerceOrderSync();
+          stopOrderPushWorker();
           try {
             stopOrderChangeStream();
           } catch {

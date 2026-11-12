@@ -209,6 +209,17 @@ function handleChange(change) {
   lastEventAt = Date.now();
   if (change?._id) resumeToken = change._id;
 
+  if (change.operationType === "update") {
+    const update = change.updateDescription;
+    const fields = [
+      ...Object.keys(update?.updatedFields || {}),
+      ...(update?.removedFields || []),
+      ...(update?.truncatedArrays || []).map(({ field }) => field),
+    ];
+    if (fields.length && fields.every((field) =>
+      field === "orderPush" || field === "orderPushSourceCreatedAt" || field.startsWith("orderPush."))) return;
+  }
+
   const orderSn = orderSnFromDocumentKey(change?.documentKey);
   if (!orderSn) return;
 

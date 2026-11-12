@@ -9,6 +9,7 @@ export { normalizeScannedCode } from "../../modules/orders/scanCode.ts";
  * KHÔNG dùng mảng in-memory làm nguồn dữ liệu.
  */
 import { resolveShopeeOrderIdentities } from "../../services/orderSync/orderIdentity.js";
+import { orderPushWriteFields } from "../../services/orderPush.js";
 import mongoose, { Schema, type Model } from "mongoose";
 import { markWebhookOrderPersisted, observeWebhookStage, webhookObservation, hasShortOrderDeadline } from "../../modules/operations/telemetry.js";
 import { assertSyncActive } from "../../modules/shopee-sync/syncYield.js";
@@ -105,6 +106,8 @@ type MetaDoc = {
 type OrderDoc = {
   _id: string;
   orderSn?: string | null;
+  orderPush?: { dueAt: Date; queuedAt: Date };
+  orderPushSourceCreatedAt?: Date;
   /** Trạng thái UI local (processed/shipping/...) — KHÔNG thay thế shopee_order_status */
   status?: string | null;
   /** Raw Shopee order_status — SSOT (READY_TO_SHIP / SHIPPED / ...) */
@@ -267,6 +270,8 @@ const OrderSchema = new Schema<OrderDoc>(
     _id: { type: String, required: true },
     // Unique index khai báo riêng bên dưới (orderSn_unique) — KHÔNG dùng index: true để tránh trùng orderSn_1.
     orderSn: { type: String, default: null },
+    orderPush: { type: Schema.Types.Mixed },
+    orderPushSourceCreatedAt: { type: Date },
     status: { type: String, default: null, index: true },
     /** Raw Shopee — bắt buộc lưu khi sync (READY_TO_SHIP / SHIPPED / ...) */
     shopee_order_status: { type: String, default: null, index: true },
@@ -3524,7 +3529,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
 
     // Field Shopee còn lại → data.* (bỏ cờ nội bộ — tránh đè true→false)
     for (const [key, value] of Object.entries(order)) {
-      if (key === "id" || key === "_id" || key === "_webhook_stub") continue;
+      if (key === "id" || key === "_id" || key === "_webhook_stub" || key.startsWith("_orderPush")) continue;
       if (INTERNAL_FLAG_KEYS.has(key)) continue;
       if (key === "has_tracking") continue;
       if (key === "return_sn" && (clearReturnSn || !String(value || "").trim())) continue;
@@ -3690,6 +3695,13 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     // → lỗi "Updating the path 'is_handed_over' would create a conflict".
     // Khi SHIPPED đã $set clear flags → phải gỡ các key trùng khỏi $setOnInsert.
     const insertWatermark = incomingUpdateAt || new Date();
+    const orderPush = orderPushWriteFields({
+      channel: channelStr,
+      orderSn,
+      _orderPushCreatedAt: order._orderPushCreatedAt,
+      _orderPushAwaitCreation: order._orderPushAwaitCreation,
+    });
+    if (orderPush.sourceDate) $set.orderPushSourceCreatedAt = orderPush.sourceDate;
     const $setOnInsertRaw: Record<string, unknown> = {
       _id,
       is_handed_over: false,
@@ -3710,6 +3722,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       "data.localStatus": "NONE",
       "data.internal_status": "NONE",
     };
+    if (orderPush.pending) $setOnInsertRaw.orderPush = orderPush.pending;
     if (!incomingUpdateAt) {
       // Không bịa last_shopee_update_at bằng giờ server. Field trống → pull bắt buộc get_order_detail.
       delete $setOnInsertRaw.last_shopee_update_at;

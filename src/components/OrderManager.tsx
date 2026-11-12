@@ -1,4 +1,5 @@
 import { OrderProductImage } from './OrderProductImage';
+import OrderPushDetails from './OrderPushDetails';
 import { getOrderListFinance } from '../utils/orderListFinance';
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
@@ -826,6 +827,8 @@ interface OrderManagerProps {
   onEndScanSession?: () => void;
   /** Mở sẵn sub-tab khi vào từ menu (vd: received_cancel_returns) */
   initialOrdersSubTab?: OrderTab | null;
+  pushOrderId?: string | null;
+  onDismissPushOrder?: () => void;
   /** Báo App khi user đổi sub-tab (để giữ hint/menu + URL đồng bộ) */
   onOrdersSubTabChange?: (tab: OrderTab) => void;
   /** Waterfall F5: báo App sau khi refresh + counter boot xong — mới load products/tab phụ. */
@@ -1135,6 +1138,8 @@ export default function OrderManager({
   onCloseScanner,
   onEndScanSession,
   initialOrdersSubTab = null,
+  pushOrderId,
+  onDismissPushOrder,
   onOrdersSubTabChange,
   onOrdersBootReady,
 }: OrderManagerProps) {
@@ -9084,6 +9089,9 @@ export default function OrderManager({
         if (!isPullRefreshing) setPullDistance(0);
       }}
     >
+      {pushOrderId && onDismissPushOrder && (
+        <OrderPushDetails key={pushOrderId} id={pushOrderId} onDismiss={onDismissPushOrder} renderDetails={renderOrderDetails} />
+      )}
       {/* Pull-to-refresh indicator — chỉ hiện trên mobile khi vuốt */}
       <div
         className="om-pull-refresh-indicator md:hidden pointer-events-none flex items-center justify-center overflow-hidden transition-[height] duration-150 ease-out"

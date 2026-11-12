@@ -19,12 +19,16 @@
 
 # index.html luôn tải mới; file JS/CSS có hash được cache lâu
 <IfModule mod_headers.c>
-  <FilesMatch "^index\.html$">
+  <FilesMatch "^(index\.html|order-push-sw\.js|app\.webmanifest)$">
     Header set Cache-Control "no-cache, no-store, must-revalidate"
     Header set Pragma "no-cache"
     Header set Expires "0"
   </FilesMatch>
-  <FilesMatch "\.(js|css)$">
+  <FilesMatch "^(?!order-push-sw\.js$).*\.(js|css)$">
     Header set Cache-Control "public, max-age=31536000, immutable"
   </FilesMatch>
+</IfModule>
+
+<IfModule mod_mime.c>
+  AddType application/manifest+json .webmanifest
 </IfModule>

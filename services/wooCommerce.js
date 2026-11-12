@@ -41,17 +41,17 @@ async function wooFetch(url, options = {}, timeoutMs = 15000) {
         ...(options.headers || {}),
       },
     });
-    clearTimeout(timer);
     const text = await res.text();
     let json;
     try { json = JSON.parse(text); } catch { json = { raw: text }; }
-    return { ok: res.ok, status: res.status, data: json };
+    return { ok: res.ok, status: res.status, data: json, headers: res.headers };
   } catch (e) {
-    clearTimeout(timer);
     if (e?.name === "AbortError") {
       throw new Error(`WooCommerce API timeout (>${timeoutMs}ms)`);
     }
     throw e;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -99,10 +99,6 @@ function mapWooLineItem(item) {
  * Đảm bảo TẤT CẢ trường bắt buộc của OrderSchema (mongoStore.ts) đều có mặt.
  */
 export function mapWooOrderToInternal(wooOrder, shopConfig) {
-  // ── DEBUG: Log payload nhận về từ WooCommerce ─────────────────────────────
-  console.log(`[WooCommerce Map] Raw order keys: ${Object.keys(wooOrder || {}).join(", ")}`);
-  console.log(`[WooCommerce Map] wooOrder.id=${wooOrder?.id} wooOrder.number=${wooOrder?.number} wooOrder.status=${wooOrder?.status}`);
-
   // WooCommerce REST API v3 trả billing/shipping trực tiếp (không phải billing_address)
   const billing = wooOrder.billing || {};
   const shipping = wooOrder.shipping || {};
@@ -121,7 +117,6 @@ export function mapWooOrderToInternal(wooOrder, shopConfig) {
   // ── Trạng thái: map từ wooStatus sang internal status ───────────────────────
   const internalStatus = mapWooOrderStatus(wooOrder.status);
   const wooStatus = String(wooOrder.status || "").trim();
-  console.log(`[WooCommerce Map] wooStatus="${wooStatus}" → internalStatus="${internalStatus}"`);
 
   // ── Thông tin khách hàng (BẮT BUỘC) ────────────────────────────────────────
   // Tên: gộp first_name + last_name (billing ưu tiên, shipping fallback)
@@ -153,12 +148,7 @@ export function mapWooOrderToInternal(wooOrder, shopConfig) {
 
   // ── Danh sách sản phẩm (Line Items) ────────────────────────────────────────
   const rawLineItems = Array.isArray(wooOrder.line_items) ? wooOrder.line_items : [];
-  console.log(`[WooCommerce Map] line_items count=${rawLineItems.length}`);
-  const lineItems = rawLineItems.map((item, idx) => {
-    const mapped = mapWooLineItem(item);
-    console.log(`[WooCommerce Map]   item[${idx}]: productId=${mapped.productId} name="${mapped.name}" qty=${mapped.quantity} total=${mapped.total}`);
-    return mapped;
-  });
+  const lineItems = rawLineItems.map(mapWooLineItem);
 
   // ── Tổng tiền ─────────────────────────────────────────────────────────────
   const totalAmount = Number(wooOrder.total || 0);
@@ -254,6 +244,9 @@ export function mapWooOrderToInternal(wooOrder, shopConfig) {
 
     // ── Ngày ──────────────────────────────────────────────────────────────────
     date: orderDate,
+    _orderPushCreatedAt: wooOrder.date_created_gmt
+      ? String(wooOrder.date_created_gmt).replace(/(?<!Z|[+-]\d{2}:?\d{2})$/i, 'Z')
+      : undefined,
     orderDate,
     dateModified,
     createdAt: orderDate,
@@ -265,22 +258,6 @@ export function mapWooOrderToInternal(wooOrder, shopConfig) {
     notes: wooOrder.customer_note || "",
     last_synced_at: new Date().toISOString(),
   };
-
-  // ── DEBUG: Log kết quả mapping ─────────────────────────────────────────────
-  console.log("Mapped Order Data:", {
-    id: mappedOrder.id,
-    orderSn: mappedOrder.orderSn,
-    channel: mappedOrder.channel,
-    status: mappedOrder.status,
-    customerName: mappedOrder.customerName,
-    customerPhone: mappedOrder.customerPhone,
-    customerAddress: mappedOrder.customerAddress,
-    customerEmail: mappedOrder.customerEmail,
-    billing: mappedOrder.billing,
-    shipping: mappedOrder.shipping,
-    itemsCount: mappedOrder.itemsCount,
-    totalAmount: mappedOrder.totalAmount,
-  });
 
   return mappedOrder;
 }
@@ -322,11 +299,14 @@ export async function fetchWooCommerceOrders(shopConfig, opts = {}) {
   const params = {
     per_page: perPage,
     page,
-    orderby: "date",
-    order: "desc",
+    orderby: opts.orderby || "date",
+    order: opts.order || "desc",
   };
   if (opts.after) params.after = opts.after;
   if (opts.before) params.before = opts.before;
+  if (opts.modifiedAfter) params.modified_after = opts.modifiedAfter;
+  if (opts.modifiedBefore) params.modified_before = opts.modifiedBefore;
+  if (opts.datesAreGmt != null) params.dates_are_gmt = opts.datesAreGmt;
   if (opts.status) params.status = opts.status;
 
   const url = buildWooUrl(wooUrl, "orders", params);
@@ -344,10 +324,13 @@ export async function fetchWooCommerceOrders(shopConfig, opts = {}) {
     throw new Error(`WooCommerce Orders API lỗi: ${errMsg}`);
   }
 
-  const orders = Array.isArray(result.data) ? result.data : [];
-  // totalPages/total from response body when available; otherwise assume 1 page if < perPage
-  const totalPages = orders.length < (opts.perPage || 100) ? 1 : Math.max(1, page + 1);
-  const totalOrders = orders.length;
+  // Never advance the checkpoint for an HTML login/error page with HTTP 200.
+  if (!Array.isArray(result.data)) throw new Error("WooCommerce Orders API returned an invalid order list");
+  const orders = result.data;
+  const headerPages = Number(result.headers?.get("x-wp-totalpages"));
+  const headerTotal = Number(result.headers?.get("x-wp-total"));
+  const totalPages = headerPages > 0 ? headerPages : orders.length < perPage ? page : page + 1;
+  const totalOrders = headerTotal >= orders.length ? headerTotal : orders.length;
 
   return {
     orders: orders.map((o) => mapWooOrderToInternal(o, { ...shopConfig, shopName, shopId: consumerKey })),

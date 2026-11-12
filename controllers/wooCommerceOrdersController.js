@@ -3,12 +3,10 @@
  * Fetch orders from WooCommerce REST API and persist to internal order store.
  */
 import {
-  fetchWooCommerceOrders,
-  resolveWooCredentials,
   updateWooOrderStatus,
-  mapWooOrderToInternal,
 } from "../services/wooCommerce.js";
-import { sleep } from "../utils/concurrency.js";
+import { createWooCommerceOrderSync, scheduleWooCommerceOrderSync } from "../services/wooCommerceOrderSync.js";
+import { createWooCommerceSyncState } from "../services/wooCommerceSyncState.js";
 
 let deps = {
   loadChannelSettings: () => ({ shops: [] }),
@@ -22,6 +20,24 @@ let deps = {
 
 export function initWooCommerceOrdersController(partial) {
   deps = { ...deps, ...partial };
+  orderSync = createWooCommerceOrderSync({
+    loadChannelSettings: () => deps.loadChannelSettings(),
+    isMongoReady: () => deps.isMongoReady(),
+    persistOrders: (orders) => deps.persistWooOrdersToStore(orders),
+    state: createWooCommerceSyncState(),
+  });
+}
+
+let orderSync;
+let stopAutomaticSync;
+
+export function startWooCommerceOrderSync() {
+  if (!stopAutomaticSync) stopAutomaticSync = scheduleWooCommerceOrderSync({ run: (opts) => orderSync.run(opts) });
+}
+
+export function stopWooCommerceOrderSync() {
+  stopAutomaticSync?.();
+  stopAutomaticSync = undefined;
 }
 
 /**
@@ -65,153 +81,20 @@ function resolveWooShopConfig(shop) {
  * Body: { shopId? (specific shop), lookback_days? (default 7), page? }
  */
 export async function syncWooCommerceOrders(req, res) {
-  const t0 = Date.now();
   try {
-    const targetShopId = req.body?.shopId
-      ? String(req.body.shopId).trim()
-      : null;
-    const lookbackDays = Math.max(1, Math.min(30, Number(req.body?.lookback_days || req.body?.days || 7)));
-    const perPage = Math.min(100, Math.max(10, Number(req.body?.per_page || 50)));
-
-    const settings = deps.loadChannelSettings();
-    const shops = (settings?.shops || []).filter(
-      (s) => s.platform === "woocommerce" && s.connected !== false
-    );
-
-    const filtered = targetShopId
-      ? shops.filter((s) => String(s.shopId || s.id || "") === targetShopId)
-      : shops;
-
-    if (filtered.length === 0) {
-      return res.status(200).json({
-        success: false,
-        error: "no_woo_shops",
-        message: targetShopId
-          ? `Không tìm thấy shop WooCommerce với shopId="${targetShopId}"`
-          : "Chưa có shop WooCommerce nào được kết nối và bật đồng bộ.",
-      });
-    }
-
-    const afterDate = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
-    const allResults = [];
-    const allErrors = [];
-    let totalOrdersImported = 0;
-
-    for (const shop of filtered) {
-      const shopConfig = resolveWooShopConfig(shop);
-      const shopLabel = `${shop.shopName || shopConfig.wooUrl} [${shop.shopId}]`;
-
-      try {
-        let page = 1;
-        let hasMore = true;
-        let shopImported = 0;
-        let shopPageErrors = 0;
-
-        while (hasMore) {
-          const result = await fetchWooCommerceOrders(shopConfig, {
-            after: afterDate,
-            perPage,
-            page,
-          });
-
-          const orders = result.orders || [];
-          if (orders.length === 0) {
-            hasMore = false;
-            break;
-          }
-
-          try {
-            // ── DEBUG: Log trước khi persist để kiểm chứng dữ liệu đã map đủ chưa ──
-            for (const mappedOrder of orders) {
-              console.log(`[WooCommerce Sync] Mapped Order Data:`, {
-                id: mappedOrder.id,
-                orderSn: mappedOrder.orderSn,
-                channel: mappedOrder.channel,
-                status: mappedOrder.status,
-                customerName: mappedOrder.customerName,
-                customerPhone: mappedOrder.customerPhone,
-                customerAddress: mappedOrder.customerAddress,
-                billing: mappedOrder.billing,
-                shipping: mappedOrder.shipping,
-                itemsCount: mappedOrder.itemsCount,
-                totalAmount: mappedOrder.totalAmount,
-              });
-            }
-            const saved = await deps.persistWooOrdersToStore(orders);
-            shopImported += saved;
-            totalOrdersImported += saved;
-          } catch (persistErr) {
-            console.error(`[WooCommerce Sync] persist error shop=${shopLabel}:`, persistErr?.message || persistErr);
-            shopPageErrors++;
-            allErrors.push({
-              shopId: shop.shopId,
-              shopName: shop.shopName,
-              error: persistErr?.message || "Lỗi lưu đơn vào database",
-              page,
-            });
-          }
-
-          hasMore = page < result.totalPages && page < 10;
-          page++;
-          if (hasMore) await sleep(300);
-        }
-
-        allResults.push({
-          shopId: shop.shopId,
-          shopName: shop.shopName,
-          wooUrl: shopConfig.wooUrl,
-          imported: shopImported,
-          errors: shopPageErrors,
-          success: true,
-        });
-
-        console.log(`[WooCommerce Sync] shop=${shopLabel} imported=${shopImported} errors=${shopPageErrors}`);
-      } catch (err) {
-        const errMsg = err?.message || String(err);
-        console.error(`[WooCommerce Sync] shop=${shopLabel} ERROR: ${errMsg}`);
-        allErrors.push({
-          shopId: shop.shopId,
-          shopName: shop.shopName,
-          error: errMsg,
-        });
-        allResults.push({
-          shopId: shop.shopId,
-          shopName: shop.shopName,
-          imported: 0,
-          errors: 1,
-          success: false,
-          error: errMsg,
-        });
-      }
-      await sleep(300);
-    }
-
-    const ms = Date.now() - t0;
-    const successShops = allResults.filter((r) => r.success).length;
-    const failedShops = allResults.filter((r) => !r.success).length;
-
-    return res.status(failedShops === filtered.length ? 500 : 200).json({
-      success: failedShops === 0,
-      message:
-        failedShops === 0
-          ? `Đồng bộ WooCommerce hoàn tất — ${totalOrdersImported} đơn từ ${successShops} shop`
-          : `${successShops}/${filtered.length} shop đồng bộ thành công`,
-      totalOrdersImported,
-      shops: allResults,
-      errors: allErrors,
-      durationMs: ms,
-      shopsSynced: successShops,
-      shopsFailed: failedShops,
+    const result = await orderSync.run({
+      shopId: req.body?.shopId,
+      lookback_days: req.body?.lookback_days ?? req.body?.days,
+      per_page: req.body?.per_page,
+      trigger: "manual",
     });
+    const status = result.error === "woo_sync_busy" ? 409
+      : result.error === "mongodb_not_ready" ? 503
+      : result.shopsFailed > 0 ? 500 : 200;
+    return res.status(status).json(result);
   } catch (err) {
-    const ms = Date.now() - t0;
     console.error("[WooCommerce Sync] Fatal error:", err?.message || err);
-    return res.status(500).json({
-      success: false,
-      error: "woo_sync_fatal",
-      message: err?.message || "Lỗi không xác định",
-      durationMs: ms,
-    });
+    return res.status(500).json({ success: false, error: "woo_sync_fatal", message: err?.message || "Đồng bộ WooCommerce thất bại." });
   }
 }
 

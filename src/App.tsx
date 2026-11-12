@@ -9,6 +9,8 @@ import InventoryAudit from './components/InventoryAudit';
 import Financials from './components/Financials';
 import FinancialReconciliation from './components/FinancialReconciliation';
 import SettingsView from './components/Settings';
+import OrderPushSettings from './components/OrderPushSettings';
+import { disableOrderPushOnLogout } from './utils/orderPush';
 import SupplierManager from './components/SupplierManager';
 import ImportManager from './components/ImportManager';
 import MaterialImportManager from './components/MaterialImportManager';
@@ -781,6 +783,13 @@ export default function App() {
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+  const [pushOrderId, setPushOrderId] = useState(() => new URLSearchParams(window.location.search).get('pushOrder'));
+  const dismissPushOrder = useCallback(() => {
+    setPushOrderId(null);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('pushOrder');
+    window.history.replaceState(window.history.state, '', url);
+  }, []);
   const [focusScanner, setFocusScanner] = useState<boolean>(false);
   const [ordersSubTabHint, setOrdersSubTabHint] = useState<OrdersSubTabId | null>(() =>
     resolveOrdersSubTabFromUrl(),
@@ -924,7 +933,9 @@ export default function App() {
     }
 
     const sub = tab === 'orders' ? ordersSubTabHint || resolveOrdersSubTabFromUrl() : null;
-    const nextUrl = buildNavUrl(tab, sub);
+    const nextUrl = buildNavUrl(tab, sub) + (tab === 'orders' && pushOrderId
+      ? '&pushOrder=' + encodeURIComponent(pushOrderId)
+      : '');
     const cur = `${window.location.pathname}${window.location.search}`;
     if (cur !== nextUrl) {
       window.history.replaceState({ tab, ordersTab: sub }, '', nextUrl);
@@ -2003,6 +2014,8 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    void disableOrderPushOnLogout(localStorage.getItem('admin_token')).catch(() => {});
+    setPushOrderId(null);
     safeRemoveItem('admin_token');
     setIsAuthenticated(false);
     setAdminUser('');
@@ -3305,6 +3318,8 @@ export default function App() {
               onUpdateProduct={handleUpdateProduct}
               focusScanner={focusScanner}
               initialOrdersSubTab={ordersSubTabHint}
+              pushOrderId={pushOrderId}
+              onDismissPushOrder={dismissPushOrder}
               onOrdersSubTabChange={(tab) => {
                 setOrdersSubTabHint((prev) => (prev === tab ? prev : tab));
                 writeSessionTab('omni_orders_subtab', tab);
@@ -3424,12 +3439,15 @@ export default function App() {
           )}
 
           {activeTab === 'settings' && (
-            <SettingsView 
-              settings={settings}
-              onUpdateSettings={persistChannelSettings}
-              logs={logs}
-              onClearLogs={handleClearLogs}
-            />
+            <>
+              <OrderPushSettings />
+              <SettingsView
+                settings={settings}
+                onUpdateSettings={persistChannelSettings}
+                logs={logs}
+                onClearLogs={handleClearLogs}
+              />
+            </>
           )}
         </div>
       </main>
