@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Loader2, Printer, RefreshCw, Ban, Receipt, Pencil, Trash2 } from 'lucide-react';
 import type { Order } from '../types';
+import type { MobileOrderCardControls } from './OrderListRows';
 import { orderCreatedAtMs, parseOrderTimeMs } from '../utils/sanitizeOrder';
 import {
   PosInvoiceTemplate,
@@ -391,6 +392,7 @@ export function ExternalOrdersTable({
   onOrderUpdated,
   onEditPosOrder,
   onOrderEdited,
+  renderMobileOrder,
   onOrderDeleted,
 }: {
   orders: Order[];
@@ -399,6 +401,7 @@ export function ExternalOrdersTable({
   onOrderUpdated?: (order: Order) => void;
   onEditPosOrder?: (order: Order) => void;
   onOrderEdited?: (order: Order) => void;
+  renderMobileOrder?: (order: Order, controls: MobileOrderCardControls) => React.ReactNode;
   onOrderDeleted?: (order: Order) => void;
 }) {
   const [actionKey, setActionKey] = useState<string | null>(null);
@@ -604,34 +607,41 @@ export function ExternalOrdersTable({
         </table>
       </div>
 
-      <div className="om-order-card-list flex flex-col divide-y divide-gray-100 w-full bg-white rounded-2xl border border-gray-100 md:hidden">
+      {renderMobileOrder && <div className="flex w-full flex-col gap-3 md:hidden">
         {orders.map((order) => {
           const provider = providerOf(order);
           const tn = trackingOf(order);
+          const pos = isPosOrder(order);
           const st = resolveExternalStatus(order);
           const meta = STATUS_META[st];
           const key = orderKeyOf(order);
           const printBusy = printingOrderId === order.id || printingOrderId === order.orderSn;
           const rowBusy = actionKey === key;
           const busyKind = printBusy ? 'print' : rowBusy ? actionKind : null;
-          return (
-            <div key={`card-${order.id || order.orderSn}`} className="p-4 space-y-2">
-              <div className="flex items-start justify-between gap-2">
-                <OrderTimeCell order={order} status={st} />
-                <span className={`shrink-0 px-2 py-0.5 text-[10px] font-bold rounded-full border ${meta.className}`}>
-                  {meta.label}
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <ProviderBadge provider={provider} />
-                <span className="font-mono text-xs font-bold">{tn || 'Chưa có mã hãng'}</span>
-              </div>
-              <p className="text-xs font-bold text-slate-800">
-                {order.customerName || '—'} · {order.customerPhone || '—'}
-              </p>
-              <p className="text-[11px] text-slate-500 leading-snug">{formatAddress(order)}</p>
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-black text-sm">{codOf(order).toLocaleString('vi-VN')}đ</span>
+          const canPrintWaybill = !pos && provider !== 'self' && Boolean(tn);
+          return renderMobileOrder(order, {
+            waybill: pos ? '' : tn,
+            channelLabel: pos ? 'POS' : 'Ngoài sàn',
+            badge: <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${meta.className}`}>{meta.label}</span>,
+            print: (
+              <button
+                type="button"
+                disabled={Boolean(busyKind)}
+                onClick={() => canPrintWaybill ? onPrintWaybill(order) : handlePrintSingleInvoice(order)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-2.5 text-[11px] font-bold text-blue-700 active:bg-blue-50 disabled:opacity-60"
+              >
+                {busyKind === 'print' || busyKind === 'invoice' ? <Loader2 className="size-4 animate-spin" /> : <Printer className="size-4" />}
+                {canPrintWaybill ? 'In phiếu' : 'In hóa đơn'}
+              </button>
+            ),
+            details: (
+              <div className="flex flex-wrap items-start justify-between gap-3 border-t border-slate-100 px-3 py-2.5">
+                <div className="min-w-0 flex-1 space-y-1 text-xs text-slate-700">
+                  <OrderTimeCell order={order} status={st} />
+                  <p className="font-semibold">{order.customerName || '-'} · {order.customerPhone || '-'}</p>
+                  <p>{formatAddress(order)}</p>
+                  <p>Thu hộ: {codOf(order).toLocaleString('vi-VN')} đ</p>
+                </div>
                 <GhnActionButtons
                   order={order}
                   busyKind={busyKind}
@@ -640,13 +650,13 @@ export function ExternalOrdersTable({
                   onSyncGhn={(o) => void runGhnAction(o, 'sync')}
                   onCancelGhn={(o) => void runGhnAction(o, 'cancel')}
                   onEditOrder={editOrder}
-                  onDeleteOrder={(o) => void deleteOrder(o)}
+                  onDeleteOrder={(order) => void deleteOrder(order)}
                 />
               </div>
-            </div>
-          );
+            ),
+          });
         })}
-      </div>
+      </div>}
       </div>
 
       {editingOrder && <ExternalOrderContactDialog order={editingOrder} onClose={() => setEditingOrder(null)} onSaved={(order) => { setEditingOrder(null); onOrderEdited?.(order); }} />}

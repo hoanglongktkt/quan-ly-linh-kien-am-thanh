@@ -7,8 +7,10 @@ import {
   type LiveQrScannerHandle,
   type ScannerZoomCaps,
 } from '../utils/cameraScanner';
-import { findOrderByScanPayload, lookupOrderByScanCode, scanFeedback } from '../utils/orderScan';
+import { findOrderByScanPayload, lookupOrderByScanCode, lookupPickingOrder, scanFeedback } from '../utils/orderScan';
 import { matchesProcessedPickupTab } from '../utils/orderHandover';
+import { getCarrierWaybillDisplay } from '../utils/orderTracking';
+import { safeGetItem } from '../utils/safeStorage';
 import {
   Barcode,
   Camera,
@@ -23,7 +25,10 @@ import { Order, SyncLog } from '../types';
 
 interface OrderPickingProps {
   orders: Order[];
-  onUpdateOrders: (orders: Order[]) => void;
+  initialOrder?: Order;
+  initialOrderCode?: string;
+  onBackToOrders?: () => void;
+  onOrderPacked: (order: Order) => void;
   onAddLog?: (log: SyncLog) => void;
 }
 
@@ -50,9 +55,10 @@ function vibratePick() {
   }
 }
 
-export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: OrderPickingProps) {
+export default function OrderPicking({ orders, initialOrder, initialOrderCode, onBackToOrders, onOrderPacked, onAddLog }: OrderPickingProps) {
   const [scanInput, setScanInput] = useState('');
-  const [activeOrder, setActiveOrder] = useState<Order | null>(null);
+  const [activeOrder, setActiveOrder] = useState<Order | null>(initialOrder ?? null);
+  const [loadingInitialOrder, setLoadingInitialOrder] = useState(Boolean(initialOrderCode && !initialOrder));
   const [pickedKeys, setPickedKeys] = useState<Set<string>>(new Set());
   const [scanError, setScanError] = useState('');
   const [cameraOpen, setCameraOpen] = useState(false);
@@ -74,9 +80,27 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
   const inputRef = useRef<HTMLInputElement>(null);
   const liveScannerRef = useRef<LiveQrScannerHandle | null>(null);
 
+  useEffect(() => {
+    if (!initialOrderCode || initialOrder) return;
+    const controller = new AbortController();
+    void lookupPickingOrder(initialOrderCode, safeGetItem('admin_token'), controller.signal)
+      .then((order) => {
+        if (controller.signal.aborted) return;
+        if (order) setActiveOrder(order);
+        else setScanError('Không tìm thấy đơn hàng cần mở.');
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setScanError('Không thể tải chi tiết đơn hàng. Thử lại.');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingInitialOrder(false);
+      });
+    return () => controller.abort();
+  }, [initialOrder, initialOrderCode]);
+
   const pickLines: PickLine[] = useMemo(() => {
     if (!activeOrder) return [];
-    return (activeOrder.items ?? []).map((item, idx) => ({
+    return (activeOrder.items ?? []).filter(Boolean).map((item, idx) => ({
       key: `${item.productId || 'item'}-${idx}`,
       productId: item.productId,
       productTitle: item.productTitle,
@@ -91,6 +115,8 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
   const totalLines = pickLines.length;
   const progressPct = totalLines > 0 ? Math.round((pickedCount / totalLines) * 100) : 0;
   const allPicked = totalLines > 0 && pickedCount === totalLines;
+  const canPick = Boolean(activeOrder && isPickableOrder(activeOrder) && totalLines > 0);
+  const waybill = activeOrder ? getCarrierWaybillDisplay(activeOrder) : '';
 
   const resetSession = useCallback(() => {
     setActiveOrder(null);
@@ -194,20 +220,28 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
   };
 
   const handleMoveToPacking = async () => {
-    if (!activeOrder) return;
+    if (!activeOrder || !canPick || submitting) return;
     if (!allPicked) {
       alert(`Chưa nhặt đủ sản phẩm! (${pickedCount}/${totalLines})`);
       return;
     }
 
     setSubmitting(true);
+    setScanError('');
     try {
-      const updated = orders.map((o) =>
-        o.id === activeOrder.id
-          ? { ...o, status: 'shipping' as const, isPrepared: true }
-          : o
-      );
-      onUpdateOrders(updated);
+      const token = safeGetItem('admin_token');
+      const orderKey = activeOrder.id || activeOrder.orderSn;
+      const response = await fetch(`/api/orders/${encodeURIComponent(orderKey)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ status: 'shipping', isPrepared: true }),
+      });
+      const saved = await response.json();
+      if (!response.ok || saved?.status !== 'shipping' || saved?.isPrepared !== true) {
+        setScanError(saved?.message || 'Không thể chuyển đơn sang đóng gói. Thử lại.');
+        return;
+      }
+      onOrderPacked(saved as Order);
       onAddLog?.({
         id: `log-${Date.now()}`,
         timestamp: new Date().toISOString(),
@@ -218,6 +252,8 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
       });
       vibratePick();
       resetSession();
+    } catch {
+      setScanError('Không thể chuyển đơn sang đóng gói. Thử lại.');
     } finally {
       setSubmitting(false);
     }
@@ -288,7 +324,9 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
 
   return (
     <div className="max-md:space-y-3 space-y-5 max-w-3xl mx-auto pb-24 md:pb-6">
-      {!activeOrder ? (
+      {loadingInitialOrder ? (
+        <p role="status" className="flex items-center justify-center gap-2 rounded-xl bg-white p-5 text-sm text-slate-700"><Loader2 className="size-4 animate-spin" /> Đang tải chi tiết đơn hàng…</p>
+      ) : !activeOrder ? (
         <div className="bg-white max-md:rounded-b-2xl md:rounded-2xl border border-gray-100 max-md:border-x-0 max-md:border-t-0 shadow-xs max-md:px-3 max-md:pt-2 max-md:pb-4 p-4 sm:p-5 space-y-3 md:space-y-4">
           <form onSubmit={handleScanSubmit} className="space-y-3">
             <label className="text-xs font-bold text-gray-600 uppercase tracking-wide">
@@ -443,21 +481,25 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
         <div className="space-y-4">
           <div className="bg-white rounded-2xl border border-gray-100 shadow-xs p-4 flex items-start justify-between gap-3">
             <div>
-              <p className="text-[11px] font-bold text-gray-400 uppercase">Đơn đang nhặt</p>
+              <h1 className="text-sm font-bold text-slate-700">Chi tiết đơn hàng</h1>
               <p className="text-base font-extrabold text-gray-900 font-mono">#{activeOrder.orderSn}</p>
-              <p className="text-[11px] font-semibold text-emerald-600 mt-0.5">{PROCESSED_STATUS_LABEL}</p>
+              {waybill && <p className="text-xs text-slate-600">Mã vận đơn: <span className="font-semibold">{waybill}</span></p>}
+              <p className={`text-[11px] font-semibold mt-0.5 ${canPick ? 'text-emerald-600' : 'text-slate-600'}`}>
+                {canPick ? PROCESSED_STATUS_LABEL : totalLines === 0 ? 'Đơn chưa có danh sách sản phẩm.' : 'Đơn không ở trạng thái Chờ lấy hàng.'}
+              </p>
             </div>
             <button
               type="button"
-              onClick={resetSession}
+              onClick={onBackToOrders ?? resetSession}
+              disabled={submitting}
               className="min-h-11 min-w-11 flex items-center justify-center rounded-xl border border-gray-200 text-gray-500 hover:bg-gray-50"
-              title="Quét đơn khác"
+              aria-label={onBackToOrders ? 'Về danh sách đơn hàng' : 'Quét đơn khác'}
             >
               <X className="w-5 h-5" />
             </button>
           </div>
 
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-xs p-4 space-y-2">
+          {canPick && <div className="bg-white rounded-2xl border border-gray-100 shadow-xs p-4 space-y-2">
             <div className="flex items-center justify-between text-xs font-bold text-gray-600">
               <span>Đã nhặt {pickedCount}/{totalLines} sản phẩm</span>
               <span className="text-emerald-600">{progressPct}%</span>
@@ -468,7 +510,7 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
                 style={{ width: `${progressPct}%` }}
               />
             </div>
-          </div>
+          </div>}
 
           <ul className="space-y-3">
             {pickLines.map((line) => {
@@ -515,7 +557,7 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
                     </p>
                   </div>
 
-                  <label className="flex flex-col items-center gap-1 shrink-0 cursor-pointer">
+                  {canPick && <label className="flex flex-col items-center gap-1 shrink-0 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={isPicked}
@@ -523,13 +565,14 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
                       className="w-5 h-5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
                     />
                     <span className="text-[10px] font-bold text-gray-400">Đã nhặt</span>
-                  </label>
+                  </label>}
                 </li>
               );
             })}
           </ul>
 
-          <button
+          {scanError && <p role="alert" className="rounded-xl border border-rose-100 bg-rose-50 px-3 py-2.5 text-xs font-semibold text-rose-700">{scanError}</p>}
+          {canPick && <button
             type="button"
             disabled={!allPicked || submitting}
             onClick={() => void handleMoveToPacking()}
@@ -545,9 +588,9 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
               <CheckCircle2 className="w-5 h-5" />
             )}
             Chuyển sang đóng gói
-          </button>
+          </button>}
 
-          {!allPicked && totalLines > 0 && (
+          {canPick && !allPicked && (
             <p className="text-center text-[11px] text-amber-600 font-semibold">
               Tích checkbox cho tất cả {totalLines} sản phẩm để kích hoạt nút.
             </p>

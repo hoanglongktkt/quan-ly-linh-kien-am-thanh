@@ -415,8 +415,8 @@ body {
   }
 }
 
-/* Order Manager — mobile only (≤768px) */
-@media (max-width: 768px) {
+/* Order Manager mobile layout */
+@media (width < 48rem) {
   .om-mobile-hide-prepare,
   .om-mobile-hide-print {
     display: none !important;
@@ -430,106 +430,13 @@ body {
     display: none !important;
   }
 
-  /* Tab đơn hàng: xếp dọc trên mobile (full-width), PC giữ hàng ngang */
-  .om-orders-sub-tabs {
-    margin-top: 0 !important;
-    flex-direction: column !important;
-    flex-wrap: nowrap !important;
-    overflow-x: visible !important;
-    overflow-y: visible !important;
-    gap: 0.375rem !important;
-    border-bottom: 1px solid rgb(229 231 235) !important;
-    padding: 0.25rem !important;
-    white-space: normal !important;
-  }
-
-  .om-orders-sub-tabs > button {
-    width: 100% !important;
-    flex-shrink: 0 !important;
-    white-space: normal !important;
-    justify-content: flex-start !important;
-    text-align: left !important;
-    text-transform: uppercase !important;
-  }
-
-  .om-orders-mobile-hide-subtab,
   .om-orders-mobile-hide-scanner-panel,
   .om-orders-filters-panel {
     display: none !important;
   }
 
-  .om-orders-sub-tabs .om-orders-mobile-show-subtab {
-    width: 100% !important;
-    flex-shrink: 0;
-    justify-content: flex-start;
-    text-align: left;
-    border-radius: 0.75rem;
-    border: 1px solid rgb(243 244 246);
-    border-bottom-width: 1px !important;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    min-height: 44px;
-    padding-left: 0.875rem;
-    padding-right: 0.875rem;
-  }
-
-  .om-orders-sub-tabs .om-orders-mobile-show-subtab[class*='border-blue-600'] {
-    border-color: rgb(37 99 235) !important;
-    background-color: rgb(239 246 255 / 0.5);
-  }
-
-  /* Tab đang chọn — cố định phía trên khi đã cuộn qua danh sách tab */
-  .om-orders-mobile-sticky-active-tab {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    z-index: 40;
-    padding: 0.5rem 0.5rem 0.5rem;
-    background: rgb(255 255 255 / 0.96);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    box-shadow: 0 1px 0 rgb(229 231 235);
-  }
-
-  .om-orders-mobile-sticky-active-tab__btn {
-    width: 100%;
-    max-width: 1500px;
-    margin-left: auto;
-    margin-right: auto;
-    min-height: 44px;
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
-    gap: 0.375rem;
-    text-align: left;
-    padding: 0.875rem 1rem;
-    border-radius: 0.75rem;
-    border: 1px solid rgb(37 99 235);
-    background: rgb(239 246 255 / 0.9);
-    font-size: 0.75rem;
-    font-weight: 800;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    color: rgb(37 99 235);
-  }
-
-  .om-orders-mobile-sticky-active-tab__btn.is-teal {
-    border-color: rgb(13 148 136);
-    background: rgb(240 253 250 / 0.95);
-    color: rgb(15 118 110);
-  }
-
-  .om-orders-mobile-sticky-active-tab__btn.is-indigo {
-    border-color: rgb(79 70 229);
-    background: rgb(238 242 255 / 0.95);
-    color: rgb(67 56 202);
-  }
-
-  .om-orders-mobile-sticky-active-tab__btn.is-emerald {
-    border-color: rgb(5 150 105);
-    background: rgb(236 253 245 / 0.95);
-    color: rgb(4 120 87);
+  .om-mobile-inline-price {
+    min-height: 28px;
   }
 
   .om-orders-mobile-hide-search,

@@ -5,6 +5,7 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  Copy,
   ImageIcon,
   Loader2,
   Package,
@@ -43,6 +44,7 @@ import {
   shouldShowAwaitingShopeeTracking,
 } from '../utils/shopeeCancelReturnClassify';
 import { parseJsonResponse } from '../utils/apiClient';
+import { orderCreatedAtMs } from '../utils/sanitizeOrder';
 import { HighlightedText } from './HighlightedText';
 
 export type OrderListRowActions = {
@@ -88,6 +90,11 @@ type SharedRowProps = {
   onPatchItemImportPrice?: (orderId: string, itemIndex: number, importPrice: number) => void;
   onPatchItemSellingPrice?: (orderId: string, itemIndex: number, sellingPrice: number) => void;
 };
+
+const mobileOrderDate = new Intl.DateTimeFormat('vi-VN', {
+  timeZone: 'Asia/Ho_Chi_Minh', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+});
+const mobileOrderMoney = new Intl.NumberFormat('vi-VN');
 
 /** Mã đơn nguyên bản cho URL Shopee (bỏ # và tiền tố shopee-). */
 function rawShopeeOrderSn(order: Order): string {
@@ -187,12 +194,14 @@ function QuickPrintButton({
   labelWaitState,
   onPrint,
   className = '',
+  mobile = false,
 }: {
   order: Order;
   printingOrderId: string | null;
   labelWaitState?: Record<string, LabelWaitState>;
   onPrint: (e: React.MouseEvent, order: Order) => void;
   className?: string;
+  mobile?: boolean;
 }) {
   const isPrinting = printingOrderId === order.id || printingOrderId === order.orderSn;
   const hasFile = orderHasPrintFile(order);
@@ -208,7 +217,9 @@ function QuickPrintButton({
           : 'idle';
   const disabled = kind === 'printing' || kind === 'waiting';
   const styles =
-    kind === 'printing' || kind === 'waiting'
+    mobile && (kind === 'ready' || kind === 'idle')
+      ? 'bg-white text-blue-700 border-blue-200 active:bg-blue-50'
+      : kind === 'printing' || kind === 'waiting'
       ? 'bg-gray-300 text-gray-600 border-gray-400 cursor-wait'
       : kind === 'ready'
         ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700'
@@ -221,10 +232,10 @@ function QuickPrintButton({
       : kind === 'waiting'
         ? 'Đang chờ mã...'
         : kind === 'ready'
-          ? 'Sẵn sàng in'
+          ? mobile ? 'In phiếu' : 'Sẵn sàng in'
           : kind === 'retry'
             ? 'Thử lấy lại mã'
-            : 'In nhanh';
+            : mobile ? 'In phiếu' : 'In nhanh';
   const title =
     kind === 'printing'
       ? 'Đang in...'
@@ -332,12 +343,12 @@ function shopChannelClass(channel: Order['channel']): string {
 }
 
 /** Tag ĐVVC cạnh tag shop — chỉ đọc text/render, không đụng filter. */
-function ShippingCarrierBadge({ order }: { order: Order }) {
+function ShippingCarrierBadge({ order, mobile = false }: { order: Order; mobile?: boolean }) {
   const meta = getShippingCarrierBadgeMeta(order);
   if (!meta) return null;
   return (
     <span
-      className={`px-2 py-0.5 text-[10px] font-bold rounded truncate max-w-[10rem] inline-block shrink-0 ${meta.className}`}
+      className={`px-2 py-0.5 text-[10px] font-bold rounded truncate inline-block ${mobile ? 'max-w-full' : 'max-w-[10rem] shrink-0'} ${meta.className}`}
       title={meta.label}
     >
       {meta.label}
@@ -455,6 +466,8 @@ function resolveOrderItemSku(
   return String(
     item.modelSku ||
       (item as { sku?: string }).sku ||
+      (item as { model_sku?: string }).model_sku ||
+      (item as { item_sku?: string }).item_sku ||
       matched?.sku ||
       '',
   ).trim();
@@ -488,6 +501,7 @@ export function OrderItemImportPriceInline({
   onUpdateProduct,
   onPatchItemImportPrice,
   onPatchItemSellingPrice,
+  mobile = false,
 }: {
   order: Order;
   item: Order['items'][number];
@@ -496,6 +510,7 @@ export function OrderItemImportPriceInline({
   onUpdateProduct?: UpdateProductFn;
   onPatchItemImportPrice?: (orderId: string, itemIndex: number, importPrice: number) => void;
   onPatchItemSellingPrice?: (orderId: string, itemIndex: number, sellingPrice: number) => void;
+  mobile?: boolean;
 }) {
   const [editing, setEditing] = useState<'import' | 'selling' | null>(null);
   const [draft, setDraft] = useState('');
@@ -686,6 +701,7 @@ export function OrderItemImportPriceInline({
   const renderPriceEditor = (field: 'import' | 'selling') => {
     const isEditing = editing === field;
     const label = field === 'import' ? 'Giá nhập' : 'Giá bán kho';
+    const shortLabel = field === 'import' ? 'Nhập' : 'Kho';
     const display = field === 'import' ? importPrice : sellingPrice;
     const warnZero = display <= 0;
     const onSave = field === 'import' ? saveImportEdit : saveSellingEdit;
@@ -739,11 +755,11 @@ export function OrderItemImportPriceInline({
       <button
         type="button"
         onClick={(e) => startEdit(field, e)}
-        className="inline-flex items-center gap-1 text-[10px] text-gray-500 hover:text-blue-600 transition-colors group"
+        className={`inline-flex items-center text-[10px] text-gray-500 hover:text-blue-600 transition-colors group ${mobile ? 'om-mobile-inline-price shrink-0 gap-0.5 whitespace-nowrap' : 'gap-1'}`}
         title={`Sửa nhanh ${label.toLowerCase()}`}
       >
         <span>
-          {label}:{' '}
+          {mobile ? shortLabel : label}:{' '}
           <span className={warnZero ? 'font-semibold text-amber-600' : 'font-semibold text-gray-600'}>
             {formatImportPriceVnd(display)}
           </span>
@@ -754,14 +770,14 @@ export function OrderItemImportPriceInline({
   };
 
   return (
-    <div className="mt-1 min-w-0">
-      <div className="text-sm text-gray-500 flex items-center gap-2 mt-1 flex-wrap">
-        <span className="font-mono text-[10px] text-gray-500 truncate max-w-[9rem]" title={sku}>
+    <div className={`min-w-0 ${mobile ? '' : 'mt-1'}`}>
+      <div className={mobile ? `flex min-w-0 items-center gap-1 text-slate-600 tabular-nums ${editing ? 'flex-wrap' : ''}` : 'text-sm text-gray-500 flex items-center gap-2 mt-1 flex-wrap'}>
+        <span className={mobile ? 'min-w-0 truncate text-[10px]' : 'font-mono text-[10px] text-gray-500 truncate max-w-[9rem]'} title={sku}>
           SKU: {sku}
         </span>
-        <span className="text-gray-300 shrink-0">|</span>
+        <span className="text-[10px] text-gray-400 shrink-0" aria-hidden="true">{mobile ? '•' : '|'}</span>
         {renderPriceEditor('import')}
-        <span className="text-gray-300 shrink-0">|</span>
+        <span className="text-[10px] text-gray-400 shrink-0" aria-hidden="true">{mobile ? '•' : '|'}</span>
         {renderPriceEditor('selling')}
       </div>
       {errorMsg ? <p className="text-[9px] text-rose-600 mt-0.5 leading-tight">{errorMsg}</p> : null}
@@ -777,6 +793,7 @@ function OrderItemsCell({
   onUpdateProduct,
   onPatchItemImportPrice,
   onPatchItemSellingPrice,
+  mobile = false,
 }: {
   order: Order;
   compactTitle?: boolean;
@@ -784,6 +801,7 @@ function OrderItemsCell({
   onUpdateProduct?: UpdateProductFn;
   onPatchItemImportPrice?: (orderId: string, itemIndex: number, importPrice: number) => void;
   onPatchItemSellingPrice?: (orderId: string, itemIndex: number, sellingPrice: number) => void;
+  mobile?: boolean;
 }) {
   return (
     <div className="space-y-2">
@@ -796,22 +814,22 @@ function OrderItemsCell({
             idx,
         );
         return (
-          <div key={`${itemKey}-${idx}`} className="flex items-start gap-2">
+          <div key={`${itemKey}-${idx}`} className={`flex gap-2 ${mobile ? 'items-center' : 'items-start'}`}>
             {item.productImage ? (
               <OrderProductImage
                 src={item.productImage}
                 alt={itemTitle}
-                className="w-10 h-10 rounded-lg object-cover border border-gray-200 shrink-0 bg-gray-50"
+                className={`${mobile ? 'size-12' : 'w-10 h-10'} rounded-lg object-cover border border-gray-200 shrink-0 bg-gray-50`}
               />
             ) : (
-              <div className="w-10 h-10 rounded-lg border border-gray-200 bg-gray-50 flex items-center justify-center shrink-0">
+              <div className={`${mobile ? 'size-12' : 'w-10 h-10'} rounded-lg border border-gray-200 bg-gray-50 flex items-center justify-center shrink-0`}>
                 <ImageIcon className="w-4 h-4 text-gray-300" />
               </div>
             )}
             <div className={compactTitle ? 'flex-1 min-w-0' : 'min-w-0 flex-1'}>
               {compactTitle ? (
                 <div className="flex justify-between items-start gap-2">
-                  <span className="truncate text-[11px] font-medium leading-tight text-gray-700">{itemTitle}</span>
+                  <span title={mobile ? itemTitle : undefined} className={mobile ? 'truncate text-[13px] font-semibold leading-snug text-slate-900' : 'truncate text-[11px] font-medium leading-tight text-gray-700'}>{itemTitle}</span>
                   <span className="text-blue-600 text-xs shrink-0 font-black">x{item.quantity}</span>
                 </div>
               ) : (
@@ -832,6 +850,7 @@ function OrderItemsCell({
                 onUpdateProduct={onUpdateProduct}
                 onPatchItemImportPrice={onPatchItemImportPrice}
                 onPatchItemSellingPrice={onPatchItemSellingPrice}
+                mobile={mobile}
               />
             </div>
           </div>
@@ -1192,6 +1211,14 @@ export const OrderTableRow = React.memo(function OrderTableRow({
   );
 });
 
+export type MobileOrderCardControls = {
+  waybill: string;
+  channelLabel: string;
+  badge: React.ReactNode;
+  print: React.ReactNode;
+  details: React.ReactNode;
+};
+
 export const OrderCardRow = React.memo(function OrderCardRow({
   order,
   isChecked,
@@ -1212,9 +1239,11 @@ export const OrderCardRow = React.memo(function OrderCardRow({
   onUpdateProduct,
   onPatchItemImportPrice,
   onPatchItemSellingPrice,
-}: SharedRowProps) {
+  mobile = false,
+  mobileControls,
+}: SharedRowProps & { mobile?: boolean; mobileControls?: MobileOrderCardControls }) {
   const shopName = resolveOrderShopDisplayName(order, shops);
-  const waybill = getOrderWaybillCode(order);
+  const waybill = mobileControls?.waybill ?? getOrderWaybillCode(order);
   const revenue = formatOrderNetRevenueDisplay(order, systemFees);
   const wooKey = order.id || order.orderSn;
   const cust = activeSubTab === 'web_orders' || order.channel === 'woocommerce' ? resolveWooCustomerInfo(order) : null;
@@ -1223,6 +1252,202 @@ export const OrderCardRow = React.memo(function OrderCardRow({
       (matchesProcessedPickupTab(order) && Boolean(waybill))) &&
     !isOrderHandedOverToCarrier(order);
   const printed = isOrderPrintedEffective(order);
+
+  const secondaryActions = (
+    !isCancelReturnGroupTab(activeSubTab) && (
+    <div className="flex items-center gap-1 flex-wrap justify-end">
+      {cust && (
+        <>
+          <div className="w-full text-left mb-1.5 px-1 space-y-0.5">
+            <p className="text-[11px] font-extrabold text-slate-800 truncate">
+              <HighlightedText text={cust.name} highlight={searchQuery} />
+            </p>
+            <p className="text-[10px] font-mono text-slate-600">
+              <HighlightedText text={cust.phone || '—'} highlight={searchQuery} />
+            </p>
+            <p className="text-[9px] text-slate-500 line-clamp-2 leading-snug">{cust.address || '—'}</p>
+          </div>
+          <button
+            type="button"
+            disabled={wooActionLoadingId === wooKey || order.status === 'completed'}
+            onClick={() => void actions.onWooAction(order, 'completed')}
+            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all disabled:opacity-50 inline-flex items-center gap-1"
+          >
+            {wooActionLoadingId === wooKey ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <CheckCircle2 className="w-3.5 h-3.5" />
+            )}
+            Đã xử lý
+          </button>
+          <button
+            type="button"
+            disabled={wooActionLoadingId === wooKey || order.status === 'cancelled'}
+            onClick={() => void actions.onWooAction(order, 'on-hold')}
+            className="px-3 py-1.5 bg-rose-500 hover:bg-rose-600 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all disabled:opacity-50 inline-flex items-center gap-1"
+          >
+            {wooActionLoadingId === wooKey ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <XCircle className="w-3.5 h-3.5" />
+            )}
+            Ngưng xử lý
+          </button>
+        </>
+      )}
+
+      {order.status === 'pending_confirm' && order.channel === 'woocommerce' ? null : order.status ===
+          'pending_confirm' && order.channel !== 'woocommerce' ? (
+        <button
+          type="button"
+          onClick={() =>
+            actions.onPatchStatus(order, 'unprocessed', `Xác nhận thành công đơn hàng #${order.orderSn}`)
+          }
+          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all"
+        >
+          Xác nhận đơn
+        </button>
+      ) : null}
+
+      {isShopeeReadyToShipStatus(order) && !isProcessedCondition(order) && !isCancelReturnGroupTab(activeSubTab) && (
+        <>
+          {!isOrderPreparedEffective(order) ? (
+            <button
+              type="button"
+              onClick={() => actions.onPrepare(order)}
+              className="om-mobile-hide-prepare px-3 py-1.5 bg-rose-500 hover:bg-rose-600 text-white font-extrabold text-xs rounded-lg shadow-xs transition-all flex items-center gap-1"
+            >
+              <Package className="w-3.5 h-3.5" />
+              <span>Chuẩn bị hàng</span>
+            </button>
+          ) : (
+            <div className="om-mobile-hide-prepare p-2 rounded-lg border border-emerald-200 bg-emerald-50" title="Đã soạn">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+            </div>
+          )}
+        </>
+      )}
+
+      {showHandover && !isCancelReturnGroupTab(activeSubTab) && (
+        <>
+          <div
+            className={`om-mobile-hide-print p-2 rounded-lg border ${
+              printed ? 'bg-emerald-50 border-emerald-200' : 'bg-rose-50 border-rose-200'
+            }`}
+            title={printed ? 'Đã in' : 'Chưa in'}
+          >
+            {printed ? <Check className="w-4 h-4 text-emerald-600" /> : <X className="w-4 h-4 text-rose-600" />}
+          </div>
+          {printed ? (
+            <button
+              type="button"
+              onClick={() => void actions.onResetPrint([order])}
+              disabled={resettingPrint}
+              className="om-mobile-hide-print p-2 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50 transition-all"
+              title="Đánh dấu chưa in"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void actions.onMarkPrinted([order])}
+              disabled={resettingPrint}
+              className="om-mobile-hide-print p-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 transition-all"
+              title="Đánh dấu đã in"
+            >
+              <Check className="w-4 h-4" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void actions.onHandOver(order)}
+            disabled={handingOverOrderId === order.id}
+            className="hidden md:inline-flex p-2 bg-indigo-600 hover:bg-indigo-700 border border-indigo-700 text-white rounded-lg transition-all disabled:opacity-60"
+            title="Giao cho ĐVVC"
+          >
+            <Truck className={`w-4 h-4 ${handingOverOrderId === order.id ? 'animate-pulse' : ''}`} />
+          </button>
+        </>
+      )}
+
+      {activeSubTab !== 'return_requests' && !isCancelReturnGroupTab(activeSubTab) && order.status === 'return_pending' && (
+        <button
+          type="button"
+          onClick={() =>
+            actions.onPatchStatus(
+              order,
+              'return_received',
+              `Bấm nút nhận hàng hoàn trả cho đơn ${order.orderSn}.`,
+            )
+          }
+          className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white font-extrabold text-xs rounded-xl shadow-xs"
+        >
+          Nhận Hoàn
+        </button>
+      )}
+    </div>
+    )
+  );
+
+  if (mobile) {
+    const isReturn = activeSubTab === 'return_requests' || isCancelReturnGroupTab(activeSubTab) || shouldShowCancelReturnStatus(order);
+    const canPrint = !isReturn && order.status !== 'cancelled' && (
+      order.channel !== 'shopee' || orderHasPrintFile(order) || matchesProcessedPickupTab(order) || activeSubTab === 'processed'
+    );
+    const createdAt = orderCreatedAtMs(order);
+    const paid = Number(order.totalAmount) || 0;
+
+    return (
+      <article className="w-full min-w-0 rounded-xl bg-white shadow-sm ring-1 ring-slate-200/80">
+        <header className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] items-start gap-2 px-3 pb-2 pt-2.5">
+          <div className="flex min-w-0 flex-wrap items-center gap-1">
+            <span className="max-w-full truncate rounded-md bg-orange-50 px-1.5 py-1 text-[10px] font-bold leading-none text-amber-800" title={shopName}>{mobileControls?.channelLabel ?? shopName}</span>
+            <ShippingCarrierBadge order={order} mobile />
+            {mobileControls?.badge}
+          </div>
+          <div className="min-w-0 text-right">
+            {waybill ? (
+              <div className="-mt-1 flex items-center justify-end gap-0.5">
+                <span className="min-w-0 break-all text-sm font-bold leading-tight text-slate-900 tabular-nums" title={waybill}>
+                  <HighlightedText text={waybill} highlight={searchQuery} />
+                </span>
+                <button type="button" aria-label="Sao chép mã vận đơn" onClick={() => copyOrderSn(waybill)} className="om-mobile-inline-price grid w-8 shrink-0 place-items-center rounded-md text-slate-600 active:bg-slate-100">
+                  <Copy className="size-4" aria-hidden="true" />
+                </button>
+              </div>
+            ) : order.channel === 'shopee' ? renderMissingTrackingBadge(order) : null}
+            <div className="flex min-w-0 flex-wrap items-center justify-end gap-x-1 text-[10px] leading-4 text-slate-500 tabular-nums">
+              <OrderSnLabel order={order} searchQuery={searchQuery} className="min-w-0 break-all" />
+              {createdAt > 0 && <span className="shrink-0">• {mobileOrderDate.format(createdAt)}</span>}
+            </div>
+            <ReturnTrackingLine order={order} searchQuery={searchQuery} />
+          </div>
+        </header>
+
+        <div className="border-t border-slate-100 px-3 py-2.5">
+          <OrderItemsCell order={order} compactTitle mobile products={products} onUpdateProduct={onUpdateProduct} onPatchItemImportPrice={onPatchItemImportPrice} onPatchItemSellingPrice={onPatchItemSellingPrice} />
+        </div>
+
+        <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-3 py-2">
+          <dl className="space-y-1 text-xs leading-tight text-slate-600 tabular-nums">
+            <div className="flex flex-wrap items-baseline gap-x-1.5"><dt>Khách trả</dt><dd className="font-bold text-slate-900">{mobileOrderMoney.format(paid)} đ</dd></div>
+            <div className="flex flex-wrap items-baseline gap-x-1.5"><dt>Tiền lãi</dt><dd className={`font-bold ${profitAmountClass(revenue.amount, revenue.pending)}`}>{revenue.amount > 0 ? '+' : ''}{mobileOrderMoney.format(revenue.amount)} đ</dd></div>
+          </dl>
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            {mobileControls ? mobileControls.print : canPrint ? <QuickPrintButton order={order} printingOrderId={printingOrderId} labelWaitState={labelWaitState} onPrint={actions.onPrint} mobile /> : !isReturn && <DeliveryStatusBadge order={order} />}
+            <button type="button" onClick={() => actions.onToggleDetails(order.id)} aria-expanded={isExpanded} aria-label={isExpanded ? 'Thu gọn chi tiết đơn' : 'Mở chi tiết đơn'} className="grid w-11 place-items-center rounded-lg border border-slate-200 text-slate-700 active:bg-slate-100">
+              <ChevronDown className={`size-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} aria-hidden="true" />
+            </button>
+          </div>
+        </footer>
+        {!mobileControls && isReturn && (
+          <div className="px-3 pb-2.5"><ReturnWarehouseStatusBlock order={order} compact confirming={confirmingReturn} onConfirm={actions.onConfirmReturn} /></div>
+        )}
+        {isExpanded && (mobileControls?.details ?? <><div className="px-3">{secondaryActions}</div>{renderDetails(order)}</>)}
+      </article>
+    );
+  }
 
   return (
     <div className={`w-full transition-colors ${isChecked ? 'bg-blue-50/20' : 'bg-white'}`}>
@@ -1332,140 +1557,7 @@ export const OrderCardRow = React.memo(function OrderCardRow({
             <DeliveryStatusBadge order={order} size="md" />
           )}
 
-          {!isCancelReturnGroupTab(activeSubTab) && (
-          <div className="flex items-center gap-1 flex-wrap justify-end">
-            {cust && (
-              <>
-                <div className="w-full text-left mb-1.5 px-1 space-y-0.5">
-                  <p className="text-[11px] font-extrabold text-slate-800 truncate">
-                    <HighlightedText text={cust.name} highlight={searchQuery} />
-                  </p>
-                  <p className="text-[10px] font-mono text-slate-600">
-                    <HighlightedText text={cust.phone || '—'} highlight={searchQuery} />
-                  </p>
-                  <p className="text-[9px] text-slate-500 line-clamp-2 leading-snug">{cust.address || '—'}</p>
-                </div>
-                <button
-                  type="button"
-                  disabled={wooActionLoadingId === wooKey || order.status === 'completed'}
-                  onClick={() => void actions.onWooAction(order, 'completed')}
-                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all disabled:opacity-50 inline-flex items-center gap-1"
-                >
-                  {wooActionLoadingId === wooKey ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                  )}
-                  Đã xử lý
-                </button>
-                <button
-                  type="button"
-                  disabled={wooActionLoadingId === wooKey || order.status === 'cancelled'}
-                  onClick={() => void actions.onWooAction(order, 'on-hold')}
-                  className="px-3 py-1.5 bg-rose-500 hover:bg-rose-600 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all disabled:opacity-50 inline-flex items-center gap-1"
-                >
-                  {wooActionLoadingId === wooKey ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <XCircle className="w-3.5 h-3.5" />
-                  )}
-                  Ngưng xử lý
-                </button>
-              </>
-            )}
-
-            {order.status === 'pending_confirm' && order.channel === 'woocommerce' ? null : order.status ===
-                'pending_confirm' && order.channel !== 'woocommerce' ? (
-              <button
-                type="button"
-                onClick={() =>
-                  actions.onPatchStatus(order, 'unprocessed', `Xác nhận thành công đơn hàng #${order.orderSn}`)
-                }
-                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all"
-              >
-                Xác nhận đơn
-              </button>
-            ) : null}
-
-            {isShopeeReadyToShipStatus(order) && !isProcessedCondition(order) && !isCancelReturnGroupTab(activeSubTab) && (
-              <>
-                {!isOrderPreparedEffective(order) ? (
-                  <button
-                    type="button"
-                    onClick={() => actions.onPrepare(order)}
-                    className="om-mobile-hide-prepare px-3 py-1.5 bg-rose-500 hover:bg-rose-600 text-white font-extrabold text-xs rounded-lg shadow-xs transition-all flex items-center gap-1"
-                  >
-                    <Package className="w-3.5 h-3.5" />
-                    <span>Chuẩn bị hàng</span>
-                  </button>
-                ) : (
-                  <div className="om-mobile-hide-prepare p-2 rounded-lg border border-emerald-200 bg-emerald-50" title="Đã soạn">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  </div>
-                )}
-              </>
-            )}
-
-            {showHandover && !isCancelReturnGroupTab(activeSubTab) && (
-              <>
-                <div
-                  className={`om-mobile-hide-print p-2 rounded-lg border ${
-                    printed ? 'bg-emerald-50 border-emerald-200' : 'bg-rose-50 border-rose-200'
-                  }`}
-                  title={printed ? 'Đã in' : 'Chưa in'}
-                >
-                  {printed ? <Check className="w-4 h-4 text-emerald-600" /> : <X className="w-4 h-4 text-rose-600" />}
-                </div>
-                {printed ? (
-                  <button
-                    type="button"
-                    onClick={() => void actions.onResetPrint([order])}
-                    disabled={resettingPrint}
-                    className="om-mobile-hide-print p-2 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50 transition-all"
-                    title="Đánh dấu chưa in"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => void actions.onMarkPrinted([order])}
-                    disabled={resettingPrint}
-                    className="om-mobile-hide-print p-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 transition-all"
-                    title="Đánh dấu đã in"
-                  >
-                    <Check className="w-4 h-4" />
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => void actions.onHandOver(order)}
-                  disabled={handingOverOrderId === order.id}
-                  className="hidden md:inline-flex p-2 bg-indigo-600 hover:bg-indigo-700 border border-indigo-700 text-white rounded-lg transition-all disabled:opacity-60"
-                  title="Giao cho ĐVVC"
-                >
-                  <Truck className={`w-4 h-4 ${handingOverOrderId === order.id ? 'animate-pulse' : ''}`} />
-                </button>
-              </>
-            )}
-
-            {activeSubTab !== 'return_requests' && !isCancelReturnGroupTab(activeSubTab) && order.status === 'return_pending' && (
-              <button
-                type="button"
-                onClick={() =>
-                  actions.onPatchStatus(
-                    order,
-                    'return_received',
-                    `Bấm nút nhận hàng hoàn trả cho đơn ${order.orderSn}.`,
-                  )
-                }
-                className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white font-extrabold text-xs rounded-xl shadow-xs"
-              >
-                Nhận Hoàn
-              </button>
-            )}
-          </div>
-          )}
+          {secondaryActions}
         </div>
       </div>
       {isExpanded ? renderDetails(order) : null}

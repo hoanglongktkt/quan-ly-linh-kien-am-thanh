@@ -311,7 +311,7 @@ export async function lookupOrderByScanCode(
   localOrders: Order[],
   token?: string | null,
   scanIndex?: OrderScanIndex,
-  opts?: { lean?: boolean },
+  opts?: { lean?: boolean; signal?: AbortSignal },
 ): Promise<Order | null> {
   const trimmed = raw.trim();
   if (!trimmed) return null;
@@ -323,6 +323,9 @@ export async function lookupOrderByScanCode(
 
   const leanQ = opts?.lean !== false ? '&lean=scanner' : '';
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const cancel = () => controller?.abort();
+  if (opts?.signal?.aborted) cancel();
+  else opts?.signal?.addEventListener('abort', cancel, { once: true });
   const timer =
     controller && typeof window !== 'undefined'
       ? window.setTimeout(() => controller.abort(), SCAN_LOOKUP_TIMEOUT_MS)
@@ -352,7 +355,21 @@ export async function lookupOrderByScanCode(
     throw new ScanLookupError(msg || 'network', 'network');
   } finally {
     if (timer !== undefined) window.clearTimeout(timer);
+    opts?.signal?.removeEventListener('abort', cancel);
   }
+}
+
+/** Read the full order and verify its identity before opening picking from a quick lookup. */
+export async function lookupPickingOrder(raw: string, token: string | null, signal: AbortSignal): Promise<Order | null> {
+  const text = raw.trim().replace(/^#+/, '');
+  const keys = buildScanLookupKeys(text);
+  const codes = /^(?:https?:\/\/|[\[{])/i.test(text) ? keys.slice(1) : [text];
+  for (const code of codes.filter((value) => value.length >= 4 && value.length <= 80).slice(0, 4)) {
+    if (signal.aborted) return null;
+    const order = await lookupOrderByScanCode(code, [], token, undefined, { lean: false, signal });
+    if (order && lookupExactFromScanIndex(buildOrderScanIndex([order]), [normalizeOrderScanKey(code)])) return order;
+  }
+  return null;
 }
 
 /**

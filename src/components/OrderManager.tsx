@@ -90,6 +90,7 @@ import {
   Barcode, 
   ArrowRight, 
   AlertCircle, 
+  BellOff,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -105,7 +106,6 @@ import {
   RefreshCw,
   Trash2,
   SwitchCamera,
-  Zap,
 } from 'lucide-react';
 import { Order, ConnectedShop, SyncLog, Product, SystemFee } from '../types';
 import ManualOrderPage from './ManualOrderPage';
@@ -150,6 +150,7 @@ import {
   OrderItemImportPriceInline,
 } from './OrderListRows';
 import OrderDateFilter from './OrderDateFilter';
+import { MobileOrdersOverview, MobileOrderTabs, MobileQuickOrderButton } from './MobileOrdersToolbar';
 import {
   classifyShopeeCancelReturnKind,
   isShopeeCancelledStatus,
@@ -658,6 +659,19 @@ type OrderTab =
 
 export type OrdersSubTabId = OrderTab;
 
+const MOBILE_ORDER_TABS: readonly { id: OrderTab; label: string }[] = [
+  { id: 'all', label: 'Tất cả' },
+  { id: 'unprocessed', label: 'Chưa xử lý' },
+  { id: 'processed', label: 'Chờ lấy hàng' },
+  { id: 'shipping', label: 'Đang giao' },
+  { id: 'cancel_returns', label: 'Hoàn/Hủy' },
+  { id: 'pending_confirm', label: 'Chờ xác nhận' },
+  { id: 'handed_over_carrier', label: 'Đã giao ĐVVC' },
+  { id: 'received_cancel_returns', label: 'Đã nhận hoàn/hủy' },
+  { id: 'order_products', label: 'Sản phẩm trong đơn' },
+  { id: 'web_orders', label: 'Đơn trên web' },
+];
+
 type CancelReturnTab = 'all' | 'refund_return' | 'cancelled' | 'failed_delivery';
 
 const ORDER_TAB_SET = new Set<string>([
@@ -829,6 +843,7 @@ interface OrderManagerProps {
   focusScanner?: boolean;
   onCloseScanner?: () => void;
   onEndScanSession?: () => void;
+  onOpenPickingOrder: (order: Order) => void;
   /** Mở sẵn sub-tab khi vào từ menu (vd: received_cancel_returns) */
   initialOrdersSubTab?: OrderTab | null;
   pushOrderId?: string | null;
@@ -1148,6 +1163,7 @@ export default function OrderManager({
   focusScanner = false,
   onCloseScanner,
   onEndScanSession,
+  onOpenPickingOrder,
   initialOrdersSubTab = null,
   pushOrderId,
   onDismissPushOrder,
@@ -1304,29 +1320,9 @@ export default function OrderManager({
       }
     };
   }, []);
-  const isMobileViewport = useMediaQuery('(max-width: 768px)');
+  const isMobileViewport = useMediaQuery('(width < 48rem)');
   const isWideDesktop = useMediaQuery('(min-width: 1440px)');
   const useOrderCardList = isMobileViewport || isWideDesktop;
-  const ordersSubTabsRef = useRef<HTMLDivElement | null>(null);
-  const [mobileStickyActiveTab, setMobileStickyActiveTab] = useState(false);
-
-  useEffect(() => {
-    if (!isMobileViewport) {
-      setMobileStickyActiveTab(false);
-      return;
-    }
-    const el = ordersSubTabsRef.current;
-    if (!el || typeof IntersectionObserver === 'undefined') return;
-    const io = new IntersectionObserver(
-      ([entry]) => {
-        setMobileStickyActiveTab(!entry.isIntersecting);
-      },
-      { root: null, threshold: 0, rootMargin: '0px 0px 0px 0px' },
-    );
-    io.observe(el);
-    return () => io.disconnect();
-  }, [isMobileViewport, activeSubTab]);
-
   // Sync = background job; FE chỉ ACK + lock nút + toast (không đổi text nút).
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncSummary, setLastSyncSummary] = useState<string | null>(null);
@@ -7325,36 +7321,6 @@ export default function OrderManager({
     return Number.isFinite(serverN) ? serverN : 0;
   };
 
-  /** Mobile: nhãn + style tab đang chọn để ghim phía trên khi cuộn. */
-  const mobileStickyTabInfo = useMemo(() => {
-    switch (activeSubTab) {
-      case 'unprocessed':
-        return { label: 'Đơn chưa xử lý', count: getCount('unprocessed'), tone: 'blue' as const, icon: null as 'W' | 'N' | 'zap' | null };
-      case 'processed':
-        return { label: 'Chờ lấy hàng (Đã xử lý)', count: getCount('processed'), tone: 'blue' as const, icon: null };
-      case 'handed_over_carrier':
-        return { label: 'Đã giao cho ĐVVC', count: getCount('handed_over_carrier'), tone: 'blue' as const, icon: null };
-      case 'cancel_returns':
-        return { label: 'Đơn hủy, đơn hoàn', count: getCount('cancel_returns'), tone: 'blue' as const, icon: null };
-      case 'received_cancel_returns':
-        return { label: 'Đã nhận đơn hủy, đơn hoàn', count: getCount('received_cancel_returns'), tone: 'teal' as const, icon: null };
-      case 'order_products':
-        return { label: 'Những sản phẩm có trong đơn', count: getCount('order_products'), tone: 'blue' as const, icon: null };
-      case 'web_orders':
-        return { label: 'Đơn trên web', count: getCount('web_orders'), tone: 'indigo' as const, icon: 'W' as const };
-      case 'external_orders':
-        return { label: 'Danh Sách Đơn Ngoài Sàn', count: getCount('external_orders'), tone: 'emerald' as const, icon: 'N' as const };
-      case 'quick_pos':
-        return { label: 'Tạo đơn nhanh', count: null as number | null, tone: 'blue' as const, icon: 'zap' as const };
-      case 'create_external':
-        return { label: 'Tạo đơn ngoại sàn', count: null as number | null, tone: 'emerald' as const, icon: 'N' as const };
-      default:
-        return null;
-    }
-  // Counts đổi theo counter / aggregate — đủ để refresh nhãn sticky
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSubTab, serverOrderCounts, aggregatedOrderProducts.length]);
-
   /**
    * Chỉ lọc cục bộ: Shop + Sàn + Search + Print.
    * Backend đã lọc theo `?tab=` — CẤM filter lại activeSubTab (processed/unprocessed/...).
@@ -9154,6 +9120,23 @@ export default function OrderManager({
     progressDone &&
     /thất bại|lỗi|không có đơn|không thể|hết thời gian/i.test(progressMessage || '');
 
+  const selectMobileTab = (tab: OrderTab) => {
+    setSearchQuery('');
+    setSelectedPlatform(tab === 'web_orders' ? 'woocommerce' : 'all');
+    setSelectedShopId('all');
+    if (tab === 'handed_over_carrier') {
+      openHandedOverCarrierTab({ skipFetch: false });
+      return;
+    }
+    selectOrdersSubTab(tab);
+  };
+
+  const enableOrderAudio = () => {
+    unlockAudio();
+    setAudioEnabled(true);
+    playNotificationSound();
+  };
+
   return (
     <div
       className="space-y-6 max-md:space-y-2 om-orders-page relative"
@@ -9167,6 +9150,21 @@ export default function OrderManager({
         if (!isPullRefreshing) setPullDistance(0);
       }}
     >
+      {isMobileViewport && (
+        <>
+          <MobileOrdersOverview onOpenOrder={onOpenPickingOrder} refreshKey={getCount('all')} />
+          <MobileOrderTabs
+            tabs={MOBILE_ORDER_TABS.map((tab) => ({ ...tab, count: getCount(tab.id) }))}
+            active={activeSubTab === 'pending_verification' ? 'pending_confirm' : activeSubTab}
+            onSelect={selectMobileTab}
+          />
+          <div className="flex min-h-7 items-center justify-between gap-2 px-1 text-[11px] text-slate-600">
+            <p>Tiền lãi đã trừ phí sàn và giá vốn.</p>
+            {!audioEnabled && <button type="button" onClick={enableOrderAudio} aria-label="Bật âm thanh thông báo" className="om-mobile-inline-price inline-flex shrink-0 items-center gap-1 rounded-lg px-1.5 text-amber-800 active:bg-amber-100"><BellOff className="size-3.5" aria-hidden="true" /> Bật âm báo</button>}
+          </div>
+          <MobileQuickOrderButton onClick={() => selectMobileTab('quick_pos')} />
+        </>
+      )}
       {pushOrderId && onDismissPushOrder && (
         <OrderPushDetails key={pushOrderId} id={pushOrderId} onDismiss={onDismissPushOrder} renderDetails={renderOrderDetails} />
       )}
@@ -9522,18 +9520,14 @@ export default function OrderManager({
         </div>
       </div>
 
-      {!audioEnabled && (
+      {!isMobileViewport && !audioEnabled && (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2">
           <span className="text-xs font-semibold text-amber-800">
             Âm thanh thông báo đơn mới đang tắt
           </span>
           <button
             type="button"
-            onClick={() => {
-              unlockAudio();
-              setAudioEnabled(true);
-              playNotificationSound();
-            }}
+            onClick={enableOrderAudio}
             className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold cursor-pointer"
           >
             Bật âm thanh thông báo
@@ -9556,44 +9550,8 @@ export default function OrderManager({
         </div>
       )}
 
-      {/* 2. SUB-TABS: Mobile xếp dọc, Desktop xếp ngang — orders[] từ App.fetchOrders → GET /api/orders (cùng origin). Không import mock JSON. */}
-      {isMobileViewport && mobileStickyActiveTab && mobileStickyTabInfo && (
-        <div className="om-orders-mobile-sticky-active-tab md:hidden" role="status" aria-live="polite">
-          <button
-            type="button"
-            className={`om-orders-mobile-sticky-active-tab__btn ${
-              mobileStickyTabInfo.tone === 'teal'
-                ? 'is-teal'
-                : mobileStickyTabInfo.tone === 'indigo'
-                  ? 'is-indigo'
-                  : mobileStickyTabInfo.tone === 'emerald'
-                    ? 'is-emerald'
-                    : ''
-            }`}
-            onClick={() => {
-              ordersSubTabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }}
-          >
-            {mobileStickyTabInfo.icon === 'W' && (
-              <span className="w-4 h-4 bg-indigo-600 text-white font-extrabold text-[9px] rounded flex items-center justify-center shrink-0">W</span>
-            )}
-            {mobileStickyTabInfo.icon === 'N' && (
-              <span className="w-4 h-4 bg-emerald-600 text-white font-extrabold text-[9px] rounded flex items-center justify-center shrink-0">N</span>
-            )}
-            {mobileStickyTabInfo.icon === 'zap' && (
-              <Zap className="w-4 h-4 shrink-0 text-blue-600" />
-            )}
-            <span className="uppercase text-left">{mobileStickyTabInfo.label}</span>
-            {mobileStickyTabInfo.count != null && (
-              <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-white/90 border border-gray-200 tabular-nums">
-                {mobileStickyTabInfo.count}
-              </span>
-            )}
-          </button>
-        </div>
-      )}
+      {!isMobileViewport && (
       <div
-        ref={ordersSubTabsRef}
         className="om-orders-sub-tabs border-b border-gray-200 flex flex-col gap-1.5 md:flex-row md:flex-wrap md:gap-1 bg-white p-1 rounded-xl md:overflow-x-visible whitespace-normal scrollbar-hide"
       >        <button
           onClick={() => selectOrdersSubTab('all')}
@@ -9737,21 +9695,8 @@ export default function OrderManager({
           </span>
         </button>
 
-        {/* Mobile-only: Tạo đơn nhanh */}
-        <button
-          type="button"
-          onClick={() => selectOrdersSubTab('quick_pos')}
-          className={`md:hidden om-orders-mobile-show-subtab px-4 py-3.5 w-full justify-start text-left text-xs font-bold uppercase tracking-wider border max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
-            showQuickPosPage || activeSubTab === 'quick_pos'
-              ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50'
-              : 'border-blue-100 text-blue-600 hover:bg-blue-50 hover:border-blue-300'
-          }`}
-        >
-          <Zap className="w-4 h-4 shrink-0 text-blue-600" />
-          <span className="uppercase text-left text-blue-600">Tạo đơn nhanh</span>
-        </button>
-
       </div>
+      )}
 
       {activeSubTab === 'cancel_returns' && (
         <div className="bg-white border border-gray-100 rounded-2xl shadow-xs overflow-x-auto">
@@ -10152,7 +10097,7 @@ export default function OrderManager({
           )}
         </div>
       ) : (
-      <div className="bg-white rounded-xl md:rounded-3xl border border-gray-100 shadow-xs overflow-hidden">
+      <div className={isMobileViewport ? 'min-w-0 space-y-3 px-1' : 'bg-white rounded-xl md:rounded-3xl border border-gray-100 shadow-xs overflow-hidden'}>
         {ordersLoading && !(pendingPosOrders.length > 0 && displayOrders.length > 0) ? (
           <div className="py-10 md:py-20 text-center text-gray-400 text-xs flex flex-col items-center gap-2 md:gap-3 px-3">
             <RefreshCw className="w-8 h-8 md:w-10 md:h-10 text-slate-300 animate-spin" />
@@ -10207,6 +10152,31 @@ export default function OrderManager({
               orders={paginatedDisplayOrders}
               printingOrderId={printingOrderId}
               onPrintWaybill={(order) => void handlePrintExternalWaybill(order)}
+              renderMobileOrder={isMobileViewport ? (order, controls) => (
+                <OrderCardRow
+                  key={order.id || order.orderSn}
+                  order={order}
+                  mobile
+                  mobileControls={controls}
+                  isChecked={false}
+                  isExpanded={expandedOrderId === order.id}
+                  activeSubTab="external_orders"
+                  searchQuery={searchQuery}
+                  shops={shops}
+                  products={products}
+                  systemFees={systemFees}
+                  printingOrderId={printingOrderId}
+                  handingOverOrderId={null}
+                  wooActionLoadingId={null}
+                  confirmingReturn={false}
+                  resettingPrint={false}
+                  actions={orderRowActions}
+                  renderDetails={renderOrderDetails}
+                  onUpdateProduct={onUpdateProduct}
+                  onPatchItemImportPrice={handlePatchItemImportPrice}
+                  onPatchItemSellingPrice={handlePatchItemSellingPrice}
+                />
+              ) : undefined}
               onEditPosOrder={(order) => { setEditingPosOrder(null); setEditingPosError(''); setEditingPosKey(order.id || order.orderSn); selectOrdersSubTab('quick_pos'); }}
               onOrderEdited={(updated) => {
                 const next = orders.map((o) => o.id === updated.id || o.orderSn === updated.orderSn ? updated : o);
@@ -10299,10 +10269,11 @@ export default function OrderManager({
             </div>
             )}
             {useOrderCardList && (
-            <div className="om-order-card-list om-order-card-list-mounted flex flex-col divide-y divide-gray-100 w-full">
+            <div className={`om-order-card-list om-order-card-list-mounted flex flex-col w-full ${isMobileViewport ? 'gap-3' : 'divide-y divide-gray-100'}`}>
               {paginatedDisplayOrders.map((order) => (
                 <OrderCardRow
                   key={order.id}
+                  mobile={isMobileViewport}
                   order={order}
                   isChecked={selectedOrderIdSet.has(order.id)}
                   isExpanded={expandedOrderId === order.id}

@@ -61,7 +61,7 @@ import {
   Menu,
   X,
   ScanLine,
-  ShoppingBasket,
+  ClipboardCheck,
   PackageCheck,
   CheckCircle2,
   Loader2,
@@ -342,15 +342,28 @@ function resolveTabFromPath(): string {
   return isMobileViewport() ? 'orders' : 'dashboard';
 }
 
-function buildNavUrl(tab: string, ordersSubTab?: string | null): string {
+type MobileProductsView = 'list' | 'audit';
+
+function readMobileProductsView(): MobileProductsView {
+  return new URLSearchParams(window.location.search).get('productsView') === 'audit' ? 'audit' : 'list';
+}
+
+function buildNavUrl(tab: string, ordersSubTab?: string | null, productsView?: MobileProductsView): string {
   if (tab === 'picking') return '/picking';
   const params = new URLSearchParams();
   params.set('tab', tab);
   if (tab === 'orders' && ordersSubTab) {
     params.set('ordersTab', ordersSubTab);
   }
+  if (tab === 'products' && productsView === 'audit') params.set('productsView', 'audit');
   const qs = params.toString();
   return qs ? `/?${qs}` : '/';
+}
+
+function readPickingTarget(): { code: string; order?: Order } | null {
+  const url = new URL(window.location.href);
+  const code = url.searchParams.get('order')?.trim();
+  return url.pathname.replace(/\/$/, '') === '/picking' && code ? { code } : null;
 }
 
 const DEMO_SHOP_INTERNAL_IDS = new Set(['shop-shopee-1', 'shop-shopee-2', 'shop-tiktok-1', 'shop-woo-1']);
@@ -793,12 +806,13 @@ export default function App() {
     window.history.replaceState(window.history.state, '', url);
   }, []);
   const [focusScanner, setFocusScanner] = useState<boolean>(false);
+  const [pickingTarget, setPickingTarget] = useState(readPickingTarget);
   const [ordersSubTabHint, setOrdersSubTabHint] = useState<OrdersSubTabId | null>(() =>
     resolveOrdersSubTabFromUrl(),
   );
   const [externalOrderCount, setExternalOrderCount] = useState(0);
   // Mobile: tab 'products' có 2 màn — Kiểm hàng (audit) và Danh sách sản phẩm (list).
-  const [mobileProductsView, setMobileProductsView] = useState<'audit' | 'list'>('audit');
+  const [mobileProductsView, setMobileProductsView] = useState(readMobileProductsView);
 
   // Selected products for bulk editing
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -903,6 +917,8 @@ export default function App() {
       setCustomerHistoryPhone(historyPhone);
       const nextTab = resolveTabFromPath();
       setActiveTab(nextTab);
+      setMobileProductsView(readMobileProductsView());
+      setPickingTarget(readPickingTarget());
       setOrdersSubTabHint(nextTab === 'orders' ? resolveOrdersSubTabFromUrl() : null);
       setFocusScanner(false);
     };
@@ -936,7 +952,7 @@ export default function App() {
     }
 
     const sub = tab === 'orders' ? ordersSubTabHint || resolveOrdersSubTabFromUrl() : null;
-    const nextUrl = buildNavUrl(tab, sub) + (tab === 'orders' && pushOrderId
+    const nextUrl = buildNavUrl(tab, sub, mobileProductsView) + (tab === 'orders' && pushOrderId
       ? '&pushOrder=' + encodeURIComponent(pushOrderId)
       : '');
     const cur = `${window.location.pathname}${window.location.search}`;
@@ -2026,6 +2042,7 @@ export default function App() {
     setIsAuthenticated(false);
     setAdminUser('');
     setActiveTab('dashboard');
+    setPickingTarget(null);
     setFocusScanner(false);
     writeSessionTab('omni_active_tab', 'dashboard');
     window.history.replaceState({ tab: 'dashboard' }, '', '/?tab=dashboard');
@@ -2729,10 +2746,14 @@ export default function App() {
 
   const navigateTab = (
     tab: string,
-    opts?: { openScanner?: boolean; ordersSubTab?: OrdersSubTabId | null },
+    opts?: { openScanner?: boolean; ordersSubTab?: OrdersSubTabId | null; pickingOrder?: Order; productsView?: MobileProductsView },
   ) => {
+    const destinationOrder = tab === 'picking' ? opts?.pickingOrder : undefined;
+    const pickingCode = destinationOrder?.orderSn || destinationOrder?.id || '';
+    setPickingTarget(pickingCode ? { code: pickingCode, order: destinationOrder } : null);
     setCustomerHistoryPhone(null);
     setActiveTab(tab);
+    if (tab === 'products') setMobileProductsView(opts?.productsView ?? 'list');
     setMobileDrawerOpen(false);
     setFocusScanner(tab === 'orders' && Boolean(opts?.openScanner));
 
@@ -2754,8 +2775,13 @@ export default function App() {
       writeSessionTab('omni_orders_subtab', nextOrdersSub);
     }
 
-    const nextUrl = buildNavUrl(tab, tab === 'orders' ? nextOrdersSub : null);
+    const nextUrl = buildNavUrl(tab, nextOrdersSub, opts?.productsView) + (pickingCode ? `?order=${encodeURIComponent(pickingCode)}` : '');
     window.history.pushState({ tab, ordersTab: nextOrdersSub }, '', nextUrl);
+  };
+
+  const clearPickingTarget = () => {
+    setPickingTarget(null);
+    window.history.replaceState({ tab: 'picking' }, '', '/picking');
   };
 
   const openCustomerHistory = (phone: string) => {
@@ -3152,13 +3178,13 @@ export default function App() {
       )}
 
       {/* Main Content Area — md:ml-64 tránh bị sidebar fixed đè lên */}
-      <main className="md:flex-1 min-w-0 w-full md:ml-64">
+      <main className={`md:flex-1 min-w-0 w-full md:ml-64 ${activeTab === 'orders' && !focusScanner ? 'max-md:bg-[#F1F5F9]' : ''}`}>
         {/* Header toolbar */}
-        <header className={`bg-white border-b border-gray-100 shadow-xs shrink-0 ${focusScanner ? 'max-md:hidden' : 'max-md:flex'} ${hideDesktopOrdersHeader ? 'md:hidden' : 'md:flex'}`}>
+        <header className={`bg-white border-b border-gray-100 shadow-xs shrink-0 ${focusScanner ? 'max-md:hidden' : 'max-md:flex'} ${hideDesktopOrdersHeader ? 'md:hidden' : 'md:flex'} ${activeTab === 'orders' ? 'max-md:border-slate-900 max-md:bg-slate-900' : ''}`}>
           <div className="app-main-container w-full px-4 md:px-6 py-3 md:py-4 flex items-center justify-between gap-3">
           <button
             type="button"
-            className="md:hidden shrink-0 min-h-11 min-w-11 app-touch-target flex items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 active:bg-gray-100"
+            className={`md:hidden shrink-0 min-h-11 min-w-11 app-touch-target flex items-center justify-center rounded-xl border ${activeTab === 'orders' ? 'border-slate-700 bg-slate-800 text-white active:bg-slate-700' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50 active:bg-gray-100'}`}
             onClick={() => setMobileDrawerOpen(true)}
             aria-label="Mở menu điều hướng"
           >
@@ -3168,6 +3194,7 @@ export default function App() {
             <BrandLogo size={36} className="rounded-lg" />
           </div>
           <div className={`flex-1 min-w-0 ${activeTab === 'dashboard' || activeTab === 'picking' || activeTab === 'products' ? 'max-md:hidden' : ''}`}>
+            {activeTab === 'orders' && <h2 className="truncate text-base font-semibold tracking-tight text-white md:hidden">Quản lý cửa hàng</h2>}
             {activeTab !== 'dashboard' && !hideDesktopOrdersHeader && (
               <>
                 <h2 className={`text-lg font-extrabold text-gray-900 tracking-tight ${activeTab === 'orders' ? 'om-orders-mobile-hide-page-title' : ''}`}>
@@ -3221,7 +3248,7 @@ export default function App() {
         </header>
 
         {/* Active Tab rendering */}
-        <div className={`app-main-container app-page-content app-scroll-list ${activeTab === 'picking' || activeTab === 'products' || activeTab === 'orders' ? 'max-md:pt-1 max-md:px-2' : 'max-md:pt-2 max-md:px-3'} ${activeTab === 'dashboard' ? 'px-4 pt-3 pb-24 md:px-6 md:pt-4 md:pb-6' : 'p-4 md:p-6 pb-24 md:pb-6'}`}>
+        <div className={`app-main-container app-page-content app-scroll-list ${activeTab === 'orders' ? 'max-md:pt-0 max-md:px-2' : activeTab === 'picking' || activeTab === 'products' ? 'max-md:pt-1 max-md:px-2' : 'max-md:pt-2 max-md:px-3'} ${activeTab === 'dashboard' ? 'px-4 pt-3 pb-24 md:px-6 md:pt-4 md:pb-6' : 'p-4 md:p-6 pb-24 md:pb-6'}`}>
           {activeTab === 'dashboard' && (
             <ErrorBoundary label="Tổng quan">
               <Dashboard
@@ -3292,8 +3319,15 @@ export default function App() {
 
           {activeTab === 'picking' && (
             <OrderPicking
+              key={pickingTarget?.code || 'picking'}
               orders={orders}
-              onUpdateOrders={handleUpdateOrders}
+              initialOrder={pickingTarget?.order}
+              initialOrderCode={pickingTarget?.code}
+              onBackToOrders={pickingTarget ? () => navigateTab('orders') : undefined}
+              onOrderPacked={(saved) => {
+                handleUpdateOrders(ordersStateRef.current.map((order) => order.id === saved.id ? saved : order), { persist: false, invalidateList: true });
+                if (pickingTarget && readPickingTarget()?.code === pickingTarget.code) clearPickingTarget();
+              }}
               onAddLog={handleAddLog}
             />
           )}
@@ -3323,6 +3357,7 @@ export default function App() {
                 writeSessionTab('omni_orders_subtab', tab);
               }}
               onExternalOrderCountChange={setExternalOrderCount}
+              onOpenPickingOrder={(order) => navigateTab('picking', { pickingOrder: order })}
               onOrdersBootReady={() => {
                 setOrdersNetworkBootReady((prev) => (prev ? prev : true));
               }}
@@ -3475,8 +3510,9 @@ export default function App() {
         </button>
 
         <button
-          onClick={() => { setMobileProductsView('list'); navigateTab('products'); }}
+          onClick={() => navigateTab('products')}
           type="button"
+          aria-current={activeTab === 'products' && mobileProductsView === 'list' ? 'page' : undefined}
           className={`flex flex-1 min-w-0 flex-col items-center justify-center gap-0.5 min-h-12 px-0.5 py-2 app-touch-target cursor-pointer transition-all ${
             activeTab === 'products' && mobileProductsView === 'list'
               ? 'text-blue-500 font-extrabold'
@@ -3501,16 +3537,17 @@ export default function App() {
         </button>
 
         <button
-          onClick={() => navigateTab('picking')}
+          onClick={() => navigateTab('products', { productsView: 'audit' })}
           type="button"
+          aria-current={activeTab === 'products' && mobileProductsView === 'audit' ? 'page' : undefined}
           className={`flex flex-1 min-w-0 flex-col items-center justify-center gap-0.5 min-h-12 px-0.5 py-2 app-touch-target cursor-pointer transition-all ${
-            activeTab === 'picking'
-              ? 'text-emerald-400 font-extrabold'
+            activeTab === 'products' && mobileProductsView === 'audit'
+              ? 'text-blue-500 font-extrabold'
               : 'text-slate-400 hover:text-white font-medium'
           }`}
         >
-          <ShoppingBasket className="w-5 h-5" />
-          <span className="max-w-full truncate text-[9px] uppercase tracking-wide font-extrabold whitespace-nowrap leading-none">Nhặt hàng</span>
+          <ClipboardCheck className="w-5 h-5" />
+          <span className="max-w-full truncate text-[9px] uppercase tracking-wide font-extrabold whitespace-nowrap leading-none">Kiểm kho</span>
         </button>
 
         <button

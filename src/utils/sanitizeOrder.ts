@@ -250,7 +250,7 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
             price: Number(it?.model_discounted_price ?? it?.item_price ?? it?.price) || 0,
             originalPrice: Number(it?.model_original_price ?? it?.originalPrice) || undefined,
             modelId: it?.model_id != null ? String(it.model_id) : undefined,
-            modelSku: it?.model_sku != null ? String(it.model_sku) : undefined,
+            modelSku: String(it?.model_sku || it?.modelSku || it?.item_sku || it?.sku || '').trim() || undefined,
             modelName: it?.model_name != null ? String(it.model_name) : undefined,
             importPrice:
               Number(it?.importPrice ?? it?.import_price ?? it?.last_import_price) > 0
