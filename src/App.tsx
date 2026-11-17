@@ -54,6 +54,7 @@ import {
   Users,
   ArrowDownToLine,
   ClipboardList,
+  FileText,
   Globe,
   LogOut,
   Barcode,
@@ -795,6 +796,7 @@ export default function App() {
   const [ordersSubTabHint, setOrdersSubTabHint] = useState<OrdersSubTabId | null>(() =>
     resolveOrdersSubTabFromUrl(),
   );
+  const [externalOrderCount, setExternalOrderCount] = useState(0);
   // Mobile: tab 'products' có 2 màn — Kiểm hàng (audit) và Danh sách sản phẩm (list).
   const [mobileProductsView, setMobileProductsView] = useState<'audit' | 'list'>('audit');
 
@@ -2787,22 +2789,26 @@ export default function App() {
         : 'hover:bg-slate-800 hover:text-white text-slate-400'
     }`;
 
-  const isOrdersCreateNav = (id: 'quick_pos' | 'create_external') =>
+  const isOrdersChildNav = (id: OrdersSubTabId) =>
     activeTab === 'orders' && ordersSubTabHint === id;
 
-  const ordersCreateNavClass = (id: 'quick_pos' | 'create_external', activeBg: string) =>
-    `w-full flex items-center gap-2.5 pl-8 pr-3 py-2 min-h-9 rounded-lg text-[11px] font-semibold tracking-wide transition-all cursor-pointer ${
-      isOrdersCreateNav(id)
+  const ordersChildNavClass = (id: OrdersSubTabId, activeBg: string) =>
+    `w-full flex items-center gap-2.5 pl-8 pr-3 py-2 min-h-9 rounded-lg text-left text-[11px] font-semibold tracking-wide transition-all cursor-pointer ${
+      isOrdersChildNav(id)
         ? `${activeBg} text-white font-bold shadow-sm`
         : 'hover:bg-slate-800 hover:text-slate-200 text-slate-500'
     }`;
+
+  const isOrdersChildTab = ordersSubTabHint === 'quick_pos' || ordersSubTabHint === 'create_external' ||
+    ordersSubTabHint === 'external_orders' || ordersSubTabHint === 'drafts';
+  const hideDesktopOrdersHeader = activeTab === 'orders' && ordersSubTabHint !== 'received_cancel_returns';
 
   const goOrdersTab = (ordersSubTab?: OrdersSubTabId | null) => {
     if (ordersSubTab) {
       navigateTab('orders', { ordersSubTab });
       return;
     }
-    if (ordersSubTabHint === 'quick_pos' || ordersSubTabHint === 'create_external') {
+    if (isOrdersChildTab) {
       navigateTab('orders', { ordersSubTab: 'all' });
       return;
     }
@@ -2821,6 +2827,37 @@ export default function App() {
   if (!isAuthenticated) {
     return <LoginPage onLoginSuccess={handleLoginSuccess} />;
   }
+
+  const ordersChildNavigation = (
+    <div role="group" aria-label="Các mục trong Quản lý đơn hàng" className="space-y-1">
+      <button type="button" onClick={() => goOrdersTab('quick_pos')} className={ordersChildNavClass('quick_pos', 'bg-sky-600')}>
+        <Zap className="w-3.5 h-3.5 shrink-0" /> Tạo đơn nhanh
+      </button>
+      <button type="button" onClick={() => goOrdersTab('create_external')} className={ordersChildNavClass('create_external', 'bg-emerald-600')}>
+        <PlusSquare className="w-3.5 h-3.5 shrink-0" /> Tạo đơn ngoại sàn
+      </button>
+      <button
+        type="button"
+        onClick={() => goOrdersTab('external_orders')}
+        className={ordersChildNavClass('external_orders', 'bg-emerald-600')}
+        aria-current={isOrdersChildNav('external_orders') ? 'page' : undefined}
+      >
+        <ShoppingBag className="w-3.5 h-3.5 shrink-0" />
+        <span className="flex-1">Danh Sách Đơn Ngoài Sàn</span>
+        <span className="rounded-full bg-emerald-100 px-1.5 text-[10px] font-bold text-emerald-800 tabular-nums">
+          {externalOrderCount}
+        </span>
+      </button>
+      <button
+        type="button"
+        onClick={() => goOrdersTab('drafts')}
+        className={ordersChildNavClass('drafts', 'bg-amber-600')}
+        aria-current={isOrdersChildNav('drafts') ? 'page' : undefined}
+      >
+        <FileText className="w-3.5 h-3.5 shrink-0" /> Đơn nháp
+      </button>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-gray-50/50 md:flex md:flex-row antialiased font-sans text-gray-900 selection:bg-blue-100 selection:text-blue-900">
@@ -2904,7 +2941,7 @@ export default function App() {
           <button
             onClick={() => goOrdersTab()}
             className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
-              activeTab === 'orders' && ordersSubTabHint !== 'quick_pos' && ordersSubTabHint !== 'create_external'
+              activeTab === 'orders' && !isOrdersChildTab
                 ? 'bg-blue-600 text-white font-extrabold shadow-sm'
                 : 'hover:bg-slate-800 hover:text-white text-slate-400'
             }`}
@@ -2912,24 +2949,7 @@ export default function App() {
             <ClipboardList className="w-4 h-4 shrink-0" /> Quản lý đơn hàng
           </button>
 
-          <button
-            type="button"
-            onClick={() => goOrdersTab('quick_pos')}
-            className={ordersCreateNavClass('quick_pos', 'bg-sky-600')}
-          >
-            <Zap className="w-3.5 h-3.5 shrink-0" /> Tạo đơn nhanh
-          </button>
-
-          <button
-            type="button"
-            onClick={() => goOrdersTab('create_external')}
-            className={ordersCreateNavClass('create_external', 'bg-emerald-600')}
-          >
-            <PlusSquare className="w-3.5 h-3.5 shrink-0" /> Tạo đơn ngoại sàn
-          </button>
-          <button type="button" onClick={() => goOrdersTab('drafts')} className="w-full flex items-center gap-2 px-4 py-3 min-h-11 rounded-xl text-xs font-bold text-amber-500 hover:bg-slate-800">
-            Đơn nháp
-          </button>
+          {ordersChildNavigation}
 
           <button
             onClick={() => navigateTab('orders', { ordersSubTab: 'received_cancel_returns' })}
@@ -3070,40 +3090,14 @@ export default function App() {
               <button
                 onClick={() => goOrdersTab()}
                 className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
-                  activeTab === 'orders' && ordersSubTabHint !== 'quick_pos' && ordersSubTabHint !== 'create_external'
+                  activeTab === 'orders' && !isOrdersChildTab
                     ? 'bg-blue-600 text-white font-extrabold shadow-sm'
                     : 'hover:bg-slate-800 hover:text-white text-slate-400'
                 }`}
               >
                 <ClipboardList className="w-4 h-4 shrink-0" /> Quản lý đơn hàng
               </button>
-              <button
-                type="button"
-                onClick={() => goOrdersTab('quick_pos')}
-                className={ordersCreateNavClass('quick_pos', 'bg-sky-600')}
-              >
-                <Zap className="w-3.5 h-3.5 shrink-0" /> Tạo đơn nhanh
-              </button>
-              <button
-                type="button"
-                onClick={() => goOrdersTab('create_external')}
-                className={ordersCreateNavClass('create_external', 'bg-emerald-600')}
-              >
-                <PlusSquare className="w-3.5 h-3.5 shrink-0" /> Tạo đơn ngoại sàn
-          </button>
-          <button type="button" onClick={() => goOrdersTab('drafts')} className="w-full flex items-center gap-2 px-4 py-3 min-h-11 rounded-xl text-xs font-bold text-amber-500 hover:bg-slate-800">
-            Đơn nháp
-              </button>
-              <button
-                onClick={() => navigateTab('orders', { ordersSubTab: 'external_orders' })}
-                className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
-                  activeTab === 'orders' && ordersSubTabHint === 'external_orders'
-                    ? 'bg-emerald-600 text-white font-extrabold shadow-sm'
-                    : 'hover:bg-slate-800 hover:text-white text-slate-400'
-                }`}
-              >
-                <ShoppingBag className="w-4 h-4 shrink-0" /> Đơn ngoại sàn
-              </button>
+              {ordersChildNavigation}
               <button
                 onClick={() => navigateTab('orders', { ordersSubTab: 'received_cancel_returns' })}
                 className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
@@ -3160,7 +3154,7 @@ export default function App() {
       {/* Main Content Area — md:ml-64 tránh bị sidebar fixed đè lên */}
       <main className="md:flex-1 min-w-0 w-full md:ml-64">
         {/* Header toolbar */}
-        <header className={`bg-white border-b border-gray-100 shadow-xs shrink-0 ${focusScanner ? 'max-md:hidden md:flex' : 'flex'}`}>
+        <header className={`bg-white border-b border-gray-100 shadow-xs shrink-0 ${focusScanner ? 'max-md:hidden' : 'max-md:flex'} ${hideDesktopOrdersHeader ? 'md:hidden' : 'md:flex'}`}>
           <div className="app-main-container w-full px-4 md:px-6 py-3 md:py-4 flex items-center justify-between gap-3">
           <button
             type="button"
@@ -3174,16 +3168,13 @@ export default function App() {
             <BrandLogo size={36} className="rounded-lg" />
           </div>
           <div className={`flex-1 min-w-0 ${activeTab === 'dashboard' || activeTab === 'picking' || activeTab === 'products' ? 'max-md:hidden' : ''}`}>
-            {activeTab !== 'dashboard' && (
+            {activeTab !== 'dashboard' && !hideDesktopOrdersHeader && (
               <>
                 <h2 className={`text-lg font-extrabold text-gray-900 tracking-tight ${activeTab === 'orders' ? 'om-orders-mobile-hide-page-title' : ''}`}>
                   {activeTab === 'products' && 'Quản Lý Danh Sách Sản Phẩm'}
                   {activeTab === 'publish' && 'Hệ Thống Đăng Bán Sản Phẩm Đa Kênh'}
                   {activeTab === 'chat' && 'Trả Lời Tin Nhắn Khách'}
-                  {activeTab === 'orders' &&
-                    (ordersSubTabHint === 'received_cancel_returns'
-                      ? 'Đã nhận đơn hủy, đơn hoàn'
-                      : 'Hệ Thống Quản Lý Đơn Hàng Đa Sàn')}
+                  {activeTab === 'orders' && ordersSubTabHint === 'received_cancel_returns' && 'Đã nhận đơn hủy, đơn hoàn'}
                   {activeTab === 'picking' && 'Nhặt Hàng (Picking)'}
                   {activeTab === 'suppliers' && 'Quản Lý Đối Tác Nhà Cung Cấp'}
                   {activeTab === 'vip-customers' && !customerHistoryPhone && 'Khách Hàng VIP'}
@@ -3198,10 +3189,7 @@ export default function App() {
                   {activeTab === 'products' && 'Quản lý giá nhập, giá bán lẻ, tồn kho và xuất bản kênh.'}
                   {activeTab === 'publish' && 'Đăng bán sản phẩm lên nhiều gian hàng đồng thời, lồng khung hình sỉ hàng loạt và tối ưu tiêu đề chống spam bằng AI.'}
                   {activeTab === 'chat' && 'Hộp thư hội thoại khách hàng — giao diện mẫu, chưa kết nối API.'}
-                  {activeTab === 'orders' &&
-                    (ordersSubTabHint === 'received_cancel_returns'
-                      ? 'Đối soát kiện hủy/hoàn đã nhận về kho — dữ liệu lưu vĩnh viễn.'
-                      : 'Quản lý 8 trạng thái đơn Shopee & TikTok, chuẩn bị hàng đóng gói và in vận đơn nhiệt.')}
+                  {activeTab === 'orders' && ordersSubTabHint === 'received_cancel_returns' && 'Đối soát kiện hủy/hoàn đã nhận về kho — dữ liệu lưu vĩnh viễn.'}
                   {activeTab === 'picking' && 'Quét mã đơn, tích sản phẩm đã nhặt và chuyển sang đóng gói.'}
                   {activeTab === 'suppliers' && 'Quản lý thông tin liên hệ, công nợ sỉ và tiền độ thanh toán cho xưởng sỉ.'}
                   {activeTab === 'vip-customers' && !customerHistoryPhone && 'Xếp hạng khách quen theo tổng chi tiêu từ Sổ địa chỉ — lọc tháng/năm để chọn khách tặng quà.'}
@@ -3334,6 +3322,7 @@ export default function App() {
                 setOrdersSubTabHint((prev) => (prev === tab ? prev : tab));
                 writeSessionTab('omni_orders_subtab', tab);
               }}
+              onExternalOrderCountChange={setExternalOrderCount}
               onOrdersBootReady={() => {
                 setOrdersNetworkBootReady((prev) => (prev ? prev : true));
               }}

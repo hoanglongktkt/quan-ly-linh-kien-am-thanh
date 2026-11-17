@@ -835,6 +835,7 @@ interface OrderManagerProps {
   onDismissPushOrder?: () => void;
   /** Báo App khi user đổi sub-tab (để giữ hint/menu + URL đồng bộ) */
   onOrdersSubTabChange?: (tab: OrderTab) => void;
+  onExternalOrderCountChange?: (count: number) => void;
   /** Waterfall F5: báo App sau khi refresh + counter boot xong — mới load products/tab phụ. */
   onOrdersBootReady?: () => void;
 }
@@ -1151,6 +1152,7 @@ export default function OrderManager({
   pushOrderId,
   onDismissPushOrder,
   onOrdersSubTabChange,
+  onExternalOrderCountChange,
   onOrdersBootReady,
 }: OrderManagerProps) {
   const [currentPage, setCurrentPage] = useState(1);
@@ -1173,14 +1175,14 @@ export default function OrderManager({
   const [selectedShopId, setSelectedShopId] = useState<string>('all');
   const [selectedPlatform, setSelectedPlatform] = useState<'all' | 'shopee' | 'tiktok' | 'lazada' | 'woocommerce' | 'manual'>('all');
   const [showShopeeDropdown, setShowShopeeDropdown] = useState(false);
-  const [showTikTokDropdown, setShowTikTokDropdown] = useState(false);
   const [showWooDropdown, setShowWooDropdown] = useState(false);
   const shopsKey = shopsIdentityKey(shops);
+  const isExternalOrdersTab = activeSubTab === 'external_orders';
   const resolvedShopIds = useMemo(
-    () => resolveShopIdsForFetch(shops, selectedShopId, selectedPlatform),
+    () => isExternalOrdersTab ? [] : resolveShopIdsForFetch(shops, selectedShopId, selectedPlatform),
     // shopsKey = primitive fingerprint — CẤM đưa `shops` array vào deps (loop re-render).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectedShopId, selectedPlatform, shopsKey],
+    [isExternalOrdersTab, selectedShopId, selectedPlatform, shopsKey],
   );
   const shopIdsKey = resolvedShopIds.join(',');
   const shopScopeRef = useRef({ shopIds: resolvedShopIds, shopIdsKey, selectedPlatform });
@@ -1330,6 +1332,12 @@ export default function OrderManager({
   const [lastSyncSummary, setLastSyncSummary] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [serverOrderCounts, setServerOrderCounts] = useState<Record<string, number> | null>(null);
+  const externalOrderCount = serverOrderCounts?.external_orders;
+  useEffect(() => {
+    if (externalOrderCount !== undefined && Number.isFinite(externalOrderCount)) {
+      onExternalOrderCountChange?.(externalOrderCount);
+    }
+  }, [externalOrderCount, onExternalOrderCountChange]);
   const serverOrderCountsRef = useRef<Record<string, number> | null>(null);
   const [fulfillmentProducts, setFulfillmentProducts] = useState<AggregatedOrderProduct[] | null>(null);
   const [fulfillmentProductsLoading, setFulfillmentProductsLoading] = useState(false);
@@ -7335,7 +7343,7 @@ export default function OrderManager({
       case 'web_orders':
         return { label: 'Đơn trên web', count: getCount('web_orders'), tone: 'indigo' as const, icon: 'W' as const };
       case 'external_orders':
-        return { label: 'Đơn ngoại sàn', count: getCount('external_orders'), tone: 'emerald' as const, icon: 'N' as const };
+        return { label: 'Danh Sách Đơn Ngoài Sàn', count: getCount('external_orders'), tone: 'emerald' as const, icon: 'N' as const };
       case 'quick_pos':
         return { label: 'Tạo đơn nhanh', count: null as number | null, tone: 'blue' as const, icon: 'zap' as const };
       case 'create_external':
@@ -8052,7 +8060,6 @@ export default function OrderManager({
 
   // Separate shops for multi-store badges
   const shopeeShops = shops.filter(s => s.platform === 'shopee');
-  const tiktokShops = shops.filter(s => s.platform === 'tiktok');
   const woocommerceShops = shops.filter(s => s.platform === 'woocommerce');
 
   const selectedShopeeShop =
@@ -9358,7 +9365,6 @@ export default function OrderManager({
             <button 
               onClick={() => {
                 setShowShopeeDropdown(!showShopeeDropdown);
-                setShowTikTokDropdown(false);
                 setShowWooDropdown(false);
                 if (selectedPlatform !== 'shopee') {
                   setSelectedPlatform('shopee');
@@ -9412,7 +9418,6 @@ export default function OrderManager({
               onClick={() => {
                 setShowWooDropdown(!showWooDropdown);
                 setShowShopeeDropdown(false);
-                setShowTikTokDropdown(false);
                 if (selectedPlatform !== 'woocommerce') {
                   setSelectedPlatform('woocommerce');
                   setSelectedShopId('all');
@@ -9459,69 +9464,6 @@ export default function OrderManager({
                     </button>
                   ))
                 )}
-              </div>
-            )}
-          </div>
-
-          {/* Lazada Demo Pill (Greyed out as inactive like mockup) */}
-          <button 
-            type="button"
-            className="px-4 py-2 bg-slate-100 border border-slate-200 rounded-xl text-xs font-semibold text-slate-400 flex items-center gap-2 cursor-not-allowed"
-            title="Lazada Chưa kết nối API"
-          >
-            <span className="w-5 h-5 bg-slate-300 text-white font-bold text-[9px] rounded flex items-center justify-center">L</span>
-            <span>Lazada (Chưa liên kết)</span>
-          </button>
-
-          {/* TikTok Dropdown Trigger */}
-          <div className="relative">
-            <button 
-              onClick={() => {
-                setShowTikTokDropdown(!showTikTokDropdown);
-                setShowShopeeDropdown(false);
-                setShowWooDropdown(false);
-                if (selectedPlatform !== 'tiktok') {
-                  setSelectedPlatform('tiktok');
-                  setSelectedShopId('all');
-                }
-              }}
-              className={`px-4 py-2 bg-white hover:bg-zinc-50 border rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 shadow-xs cursor-pointer ${
-                selectedPlatform === 'tiktok' ? 'border-zinc-900 ring-2 ring-zinc-900/10 text-zinc-950' : 'border-gray-200 text-gray-700'
-              }`}
-            >
-              <span className="w-5 h-5 bg-zinc-950 text-white font-bold text-[10px] rounded flex items-center justify-center">T</span>
-              <span>TikTok Shop ({tiktokShops.length} gian hàng)</span>
-              <ChevronDown className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-            </button>
-
-            {showTikTokDropdown && (
-              <div className="absolute top-11 left-0 bg-white border border-gray-100 rounded-2xl shadow-xl py-2 w-64 z-20 animate-in fade-in duration-100">
-                <button
-                  onClick={() => {
-                    setSelectedPlatform('tiktok');
-                    setSelectedShopId('all');
-                    setShowTikTokDropdown(false);
-                  }}
-                  className="w-full text-left px-4 py-2 text-xs font-bold text-zinc-900 hover:bg-zinc-50 flex items-center justify-between"
-                >
-                  <span>Tất cả TikTok Shop</span>
-                  <span className="text-[10px] bg-zinc-100 text-zinc-800 px-1.5 py-0.2 rounded">Chọn</span>
-                </button>
-                <div className="border-t border-gray-50 my-1"></div>
-                {tiktokShops.map(shop => (
-                  <button
-                    key={shop.id}
-                    onClick={() => {
-                      setSelectedPlatform('tiktok');
-                      setSelectedShopId(String(shop.shopId));
-                      setShowTikTokDropdown(false);
-                    }}
-                    className="w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center justify-between font-medium"
-                  >
-                    <span className="truncate">{shop.shopName}</span>
-                    <span className="text-[10px] font-mono text-gray-400 shrink-0">ID: {shop.shopId}</span>
-                  </button>
-                ))}
               </div>
             )}
           </div>
@@ -9795,26 +9737,7 @@ export default function OrderManager({
           </span>
         </button>
 
-        <button
-          onClick={() => {
-            selectOrdersSubTab('external_orders');
-            setSelectedPlatform('manual');
-            setSelectedShopId('all');
-          }}
-          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 max-md:w-full max-md:justify-start max-md:text-left text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
-            activeSubTab === 'external_orders'
-              ? 'border-emerald-600 text-emerald-700 font-extrabold bg-emerald-50/40'
-              : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
-          }`}
-        >
-          <span className="w-4 h-4 bg-emerald-600 text-white font-extrabold text-[9px] rounded flex items-center justify-center shrink-0">N</span>
-          <span className="uppercase text-left">Đơn ngoại sàn</span>
-          <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
-            {getCount('external_orders')}
-          </span>
-        </button>
-
-        {/* Mobile-only: Tạo đơn nhanh — ngay dưới Đơn ngoại sàn */}
+        {/* Mobile-only: Tạo đơn nhanh */}
         <button
           type="button"
           onClick={() => selectOrdersSubTab('quick_pos')}
