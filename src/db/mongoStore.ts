@@ -11,6 +11,7 @@ export { normalizeScannedCode } from "../../modules/orders/scanCode.ts";
 import { resolveShopeeOrderIdentities } from "../../services/orderSync/orderIdentity.js";
 import { orderPushWriteFields } from "../../services/orderPush.js";
 import mongoose, { Schema, type Model } from "mongoose";
+import { applyPosStockEdit, planPosStockEdit, posQuantities } from "../../modules/orders/posOrderEdit.ts";
 import { markWebhookOrderPersisted, observeWebhookStage, webhookObservation, hasShortOrderDeadline } from "../../modules/operations/telemetry.js";
 import { assertSyncActive } from "../../modules/shopee-sync/syncYield.js";
 import { createSerialWriteQueue } from "../../modules/orders/serialWriteQueue.js";
@@ -43,6 +44,7 @@ import {
   applyImportStockAndPriceOnDisk,
   inheritShopeeLinkFromParent,
   updateProductSkuOnDisk,
+  applyPosStockEditOnDisk,
 } from "./productsDiskStore.ts";
 import {
   setChannelListingsDiskAppRoot,
@@ -1301,6 +1303,7 @@ export async function loadProductByIdFromStore(productId: string): Promise<any |
 export async function loadProductsByIdsFromStore(
   productIds: string[],
   shopeeItemIds: string[] = [],
+  session?: mongoose.ClientSession,
 ): Promise<any[]> {
   if (isProductsDiskMode()) return loadProductsByIdsFromDisk(productIds, shopeeItemIds);
   requireMongo();
@@ -1325,6 +1328,7 @@ export async function loadProductsByIdsFromStore(
 
   const docs = await ProductModel.find(orClauses.length === 1 ? orClauses[0] : { $or: orClauses })
     .maxTimeMS(6000)
+    .session(session ?? null)
     .lean();
   return docsToProducts(docs);
 }
@@ -3095,6 +3099,194 @@ export async function insertPosOrderToStore(order: any): Promise<void> {
   if (!result.acknowledged) {
     throw new Error("pos_order_write_not_acknowledged");
   }
+}
+
+const posEditError = (status: number, message: string) => Object.assign(new Error(message), { status });
+const posOrdersCollection = () => mongoose.connection.db!.collection<
+  OrderDoc & { pos_pending_edit?: Record<string, any>; note?: string }
+>(OrderModel.collection.name);
+
+export async function markPosOrderReadyForEdit(
+  orderId: string, stock?: { deducted: number; allocations: Record<string, number> },
+) {
+  if (!stock) return;
+  await withPosDbRetry("pos_stock_flags", () => posOrdersCollection().updateOne(
+    { _id: orderId },
+    { $set: {
+      "data.stock_deducted": true,
+      "data.stock_deducted_at": new Date().toISOString(),
+      "data.stock_deducted_qty": stock.deducted,
+      "data.pos_stock_allocations": stock.allocations,
+    } },
+  ));
+}
+
+async function findPosOrderForEdit(key: string, session?: mongoose.ClientSession) {
+  const doc = await posOrdersCollection().findOne({
+    $and: [
+      { $or: [{ _id: key }, { orderSn: key }] },
+      { $or: [{ source: "pos" }, { "data.source": "pos" }, { "data.is_quick_order": true }] },
+      { $or: [{ channel: "manual" }, { channel: { $exists: false } }] },
+    ],
+  }, { session });
+  if (!doc) throw posEditError(404, "Không tìm thấy đơn tạo nhanh.");
+  return doc;
+}
+
+export async function loadPosOrderForEdit(key: string) {
+  requireMongo();
+  return hydrateOrderFromMongoDoc(await findPosOrderForEdit(key));
+}
+
+function externalOrderFilter(key: string) {
+  return {
+    channel: "manual",
+    $or: [{ _id: key }, { orderSn: key }, { "data.orderSn": key }],
+  };
+}
+
+export async function updateExternalOrderContact(key: string, contact: {
+  customerName: string; customerPhone: string; customerAddress: string; note: string;
+}) {
+  requireMongo();
+  const doc = await posOrdersCollection().findOneAndUpdate(
+    {
+      ...externalOrderFilter(key),
+      source: { $ne: "pos" },
+      "data.source": { $ne: "pos" },
+      "data.is_quick_order": { $ne: true },
+    },
+    [
+      { $set: {
+        ...Object.fromEntries(Object.entries(contact).flatMap(([field, value]) => [
+          [field, { $literal: value }],
+          [`data.${field}`, { $literal: value }],
+        ])),
+        "data.shippingAddress.fullAddress": { $literal: contact.customerAddress },
+      } },
+    ],
+    { returnDocument: "after" },
+  );
+  return hydrateOrderFromMongoDoc(doc);
+}
+
+export async function deleteExternalOrderFromStore(key: string): Promise<boolean> {
+  requireMongo();
+  const filter = externalOrderFilter(key);
+  const deleted = await posOrdersCollection().deleteOne({
+    ...filter,
+    pos_pending_edit: { $exists: false },
+  });
+  if (deleted.deletedCount) return true;
+  if (await posOrdersCollection().findOne(filter, { projection: { _id: 1 } })) {
+    throw posEditError(409, "Đơn đang được cập nhật. Vui lòng thử lại.");
+  }
+  return false;
+}
+
+export async function updateExternalLogisticsInStore(order: Record<string, any>) {
+  requireMongo();
+  const { status, shopee_order_status, is_rts } = order;
+  const fields = { status, shopee_order_status, is_rts,
+    external_status: order.external_status, ghn_status: order.ghn_status,
+    ghn_synced_at: order.ghn_synced_at, ghnShopId: order.ghnShopId };
+  const doc = await posOrdersCollection().findOneAndUpdate(
+    externalOrderFilter(String(order.id || order.orderSn || "").trim()),
+    { $set: {
+      status, shopee_order_status, is_rts,
+      ...Object.fromEntries(Object.entries(fields)
+        .filter(([, value]) => value !== undefined)
+        .map(([field, value]) => [`data.${field}`, value])),
+    } },
+    { returnDocument: "after" },
+  );
+  if (!doc) throw posEditError(404, "Không tìm thấy đơn ngoại sàn.");
+  return hydrateOrderFromMongoDoc(doc);
+}
+
+export async function updatePosOrderInStore(key: string, revision: number, patch: Record<string, any>) {
+  requireMongo();
+  const disk = isProductsDiskMode();
+  const save = async (session?: mongoose.ClientSession) => {
+    const doc = await findPosOrderForEdit(key, session);
+    const current = hydrateOrderFromMongoDoc(doc);
+    const currentRevision = Number(current.pos_revision) || 0;
+    if (currentRevision === revision + 1 && Object.keys(patch).every((field) =>
+      JSON.stringify(doc.data?.[field]) === JSON.stringify(patch[field]))) {
+      return { order: current, stocks: {} };
+    }
+    if (currentRevision !== revision || current.status === "cancelled" ||
+        ["cancelled", "rts"].includes(String(current.external_status || "").toLowerCase())) {
+      throw posEditError(409, "Đơn đã thay đổi hoặc đã hủy. Hãy mở lại đơn để kiểm tra.");
+    }
+    const versionFilter = revision ? { "data.pos_revision": revision } : {
+      $or: [{ "data.pos_revision": 0 }, { "data.pos_revision": { $exists: false } }],
+    };
+    const orderFilter = { _id: doc._id, ...versionFilter };
+    const pending = doc.pos_pending_edit;
+    const changes = pending || patch;
+    const sameRequest = JSON.stringify(patch) === JSON.stringify(changes);
+    const oldQuantities = posQuantities(current.items);
+    const newQuantities = posQuantities(changes.items);
+    const quantityChanged = Object.keys({ ...oldQuantities, ...newQuantities }).some(
+      (id) => oldQuantities[id] !== newQuantities[id],
+    );
+    if (quantityChanged && current.stock_deducted === false) {
+      throw posEditError(409, "Đơn đang chờ cập nhật tồn kho. Vui lòng thử lại sau.");
+    }
+    const plan = planPosStockEdit(current, changes.items);
+    let allocations = plan.allocations;
+    let stocks: Record<string, number> = {};
+    const usesDisk = Boolean(pending || (disk && plan.deltas.length));
+    if (usesDisk) {
+      if (!pending) {
+        const reserved = await posOrdersCollection().updateOne(
+          { ...orderFilter, pos_pending_edit: { $exists: false } },
+          { $set: { pos_pending_edit: patch } },
+        );
+        if (!reserved.matchedCount) throw posEditError(409, "Đơn đang được cập nhật. Vui lòng thử lại.");
+      }
+      ({ allocations, stocks } = await applyPosStockEditOnDisk(String(doc._id), revision + 1, plan));
+    } else if (plan.deltas.length) {
+      const products = await loadProductsByIdsFromStore(plan.deltas.map(({ id }) => id), [], session);
+      const result = applyPosStockEdit(products, plan);
+      allocations = result.allocations;
+      stocks = result.stocks;
+      for (const product of result.changed.values()) {
+        await mongoose.connection.db!.collection<ProductDoc>(ProductModel.collection.name).updateOne(
+          { _id: String(product.id) }, { $set: { data: stampInventorySortFields(product) } }, { session },
+        );
+      }
+    }
+    const updates = {
+      ...changes,
+      pos_revision: revision + 1,
+      ...(quantityChanged ? {
+        pos_stock_allocations: allocations,
+        stock_deducted_qty: Object.values(allocations).reduce((sum, quantity) => sum + quantity, 0),
+      } : {}),
+    };
+    const result = await posOrdersCollection().findOneAndUpdate(
+      { ...orderFilter, ...(!usesDisk ? { pos_pending_edit: { $exists: false } } : {}) },
+      {
+        $set: {
+          ...Object.fromEntries(Object.entries(updates).map(([field, value]) => [`data.${field}`, value])),
+          customerName: changes.customerName,
+          customerPhone: changes.customerPhone,
+          customerAddress: changes.customerAddress,
+          shipping_carrier: changes.shipping_carrier,
+          note: changes.note,
+        },
+        $unset: { pos_pending_edit: "" },
+      },
+      { returnDocument: "after", session },
+    );
+    if (!result) throw posEditError(409, "Đơn đã được cập nhật. Hãy mở lại đơn để kiểm tra.");
+    return { order: hydrateOrderFromMongoDoc(result), stocks, needsReload: !sameRequest };
+  };
+  const result = disk ? await save() : await mongoose.connection.transaction(save);
+  if (result.needsReload) throw posEditError(409, "Đã khôi phục lần lưu trước. Hãy mở lại đơn để kiểm tra.");
+  return result;
 }
 
 /**
@@ -7031,6 +7223,7 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
     status: d?.status != null ? d.status : data.status,
     shopee_order_status: rawStatus || data.shopee_order_status || undefined,
     channel: channelHydrated || undefined,
+    source: d?.source || data.source || undefined,
     shopId: shopIdHydrated,
     shop_id: shopIdHydrated,
     shopName: d?.shopName || data.shopName || data.shop_name || undefined,
@@ -8125,6 +8318,10 @@ export function buildOrderCreatedAtMongoFilter(range: {
   return { last_shopee_update_at: { $gte: range.start, $lte: range.end } };
 }
 
+function buildExternalOrderDateFilter(range: { start: Date; end: Date }) {
+  return { create_time: { $gte: range.start, $lte: range.end } };
+}
+
 /** Cùng 1 trường Date với list thường — không $or last_shopee_update_at + data.date. */
 export function buildCancelReturnActivityDateFilter(range: {
   start: Date;
@@ -8598,9 +8795,12 @@ const TAB_COUNT_CACHE_MS = 8_000;
 let tabCountCache: { key: string; expiresAt: number; value: Record<string, number> } | null =
   null;
 
+let tabCountVersion = 0;
+
 /** Xóa cache badge ngay khi có đơn mới — tránh detector đọc số cũ 15s. */
 export function invalidateTabCountCache(): void {
   tabCountCache = null;
+  tabCountVersion += 1;
 }
 const dhhCountCache: { key: string; n: number } = { key: "", n: 0 };
 
@@ -8854,6 +9054,7 @@ const ORDER_LIST_UI_PROJECTION: Record<string, 1> = {
   pdfUrl: 1,
   pdfFilename: 1,
   channel: 1,
+  source: 1,
   fulfillment_type: 1,
   ship_method: 1,
   pickup_info: 1,
@@ -8868,6 +9069,14 @@ const ORDER_LIST_UI_PROJECTION: Record<string, 1> = {
   "data.carrier": 1,
   "data.provider": 1,
   "data.external_status": 1,
+  "data.source": 1,
+  "data.is_quick_order": 1,
+  "data.walk_in": 1,
+  "data.estimated_shipping_fee": 1,
+  "data.shippingFee": 1,
+  "data.prepaid_amount": 1,
+  "data.prepaidAmount": 1,
+  "data.order_discount": 1,
   "data.ghnShopId": 1,
   "data.ghn_status": 1,
   "data.ghn_synced_at": 1,
@@ -9803,6 +10012,7 @@ export async function countOrdersByTabsFromStore(opts?: {
   };
   try {
     requireMongo();
+    const countVersion = tabCountVersion;
     const cacheKey = tabCountCacheKey(opts);
     const now = Date.now();
     if (tabCountCache && tabCountCache.key === cacheKey && tabCountCache.expiresAt > now) {
@@ -9833,7 +10043,6 @@ export async function countOrdersByTabsFromStore(opts?: {
           return_pending: facetEq("st", "return_pending"),
           return_requests: facetEq("s", "TO_RETURN"),
           web_orders: facetEq("ch", "woocommerce"),
-          external_orders: facetEq("ch", "manual"),
           cancel_returns: facetStatusIn([...FACET_CANCEL]),
           cancel_returns_returned: facetEq("kind", "refund_return"),
           cancel_returns_cancelled: facetEq("kind", "cancelled"),
@@ -9841,7 +10050,6 @@ export async function countOrdersByTabsFromStore(opts?: {
         },
       },
     ];
-    const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
     const aggTask = (async () => {
       try {
         return await OrderModel.aggregate(pipeline as any[]).option({
@@ -9863,23 +10071,21 @@ export async function countOrdersByTabsFromStore(opts?: {
       );
       return null;
     });
-    const extTask = shopFilter
-      ? (async () => {
-          try {
-            const dateRange = parseOrderListDateRange({
-              startDate: opts?.startDate,
-              endDate: opts?.endDate,
-              forceDefault: true,
-            });
-            const extMatch: Record<string, unknown> = { channel: "manual" };
-            if (dateRange) Object.assign(extMatch, buildOrderCreatedAtMongoFilter(dateRange));
-            return Number(await OrderModel.countDocuments(extMatch).maxTimeMS(3000)) || 0;
-          } catch (extErr: any) {
-            console.warn("[MongoDB] external_orders count:", extErr?.message || extErr);
-            return null;
-          }
-        })()
-      : Promise.resolve(null);
+    const extTask = (async () => {
+      try {
+        const dateRange = parseOrderListDateRange({
+          startDate: opts?.startDate,
+          endDate: opts?.endDate,
+          forceDefault: true,
+        });
+        const extMatch: Record<string, unknown> = { channel: "manual" };
+        if (dateRange) Object.assign(extMatch, buildExternalOrderDateFilter(dateRange));
+        return Number(await OrderModel.countDocuments(extMatch).maxTimeMS(3000)) || 0;
+      } catch (extErr: unknown) {
+        console.warn("[MongoDB] external_orders count:", extErr instanceof Error ? extErr.message : extErr);
+        return null;
+      }
+    })();
     const [aggRows, opCounts, extN] = await Promise.all([aggTask, opTask, extTask]);
     const row = (aggRows?.[0] || {}) as Record<string, unknown>;
     const counts: Record<string, number> = { ...empty };
@@ -9893,7 +10099,6 @@ export async function countOrdersByTabsFromStore(opts?: {
     counts.return_pending = facetN(row, "return_pending");
     counts.return_requests = facetN(row, "return_requests");
     counts.web_orders = facetN(row, "web_orders");
-    counts.external_orders = facetN(row, "external_orders");
     counts.cancel_returns = facetN(row, "cancel_returns");
     counts.cancel_returns_returned = facetN(row, "cancel_returns_returned");
     counts.cancel_returns_cancelled = facetN(row, "cancel_returns_cancelled");
@@ -9914,7 +10119,9 @@ export async function countOrdersByTabsFromStore(opts?: {
       counts.pending_confirm = await safeCountDocuments(pendingCombined);
     }
     if (extN != null) counts.external_orders = extN;
-    tabCountCache = { key: cacheKey, expiresAt: now + TAB_COUNT_CACHE_MS, value: counts };
+    if (countVersion === tabCountVersion) {
+      tabCountCache = { key: cacheKey, expiresAt: now + TAB_COUNT_CACHE_MS, value: counts };
+    }
     const dhhShop = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds) || {};
     void DonHoanHuyModel.countDocuments(dhhShop)
       .maxTimeMS(2000)
@@ -10089,6 +10296,8 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
   counts: Record<string, number>;
   counters: CancelReturnCounters;
 }> {
+  const requestedTab = String(opts?.tab || "").trim().toLowerCase();
+  const isExternalOrdersTab = ["external_orders", "don-ngoai-san", "manual", "don_ngoai_san"].includes(requestedTab);
   const empty = {
     rows: [] as any[],
     total: 0,
@@ -10109,7 +10318,6 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
     );
     const skipCounts = Boolean(opts?.skipCounts);
     const search = String(opts?.query || "").trim();
-    const requestedTab = String(opts?.tab || "").trim().toLowerCase();
     const kind = parseCancelReturnKindParam(opts?.kind);
     const isCancelReturnsTab =
       requestedTab === "cancel_returns" ||
@@ -10122,11 +10330,6 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
       requestedTab === "return-requests" ||
       requestedTab === "yeu-cau-tra-hang" ||
       requestedTab === "yeu_cau_tra_hang";
-    const isExternalOrdersTab =
-      requestedTab === "external_orders" ||
-      requestedTab === "don-ngoai-san" ||
-      requestedTab === "manual" ||
-      requestedTab === "don_ngoai_san";
     const shopFilter = isExternalOrdersTab
       ? null
       : buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
@@ -10141,10 +10344,12 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
           ? RETURN_TAB_DATE_LOOKBACK_MS
           : DEFAULT_ORDER_DATE_LOOKBACK_MS,
       });
-      if (dateRange) Object.assign(firstMatch, buildOrderCreatedAtMongoFilter(dateRange));
+      if (dateRange) Object.assign(firstMatch, isExternalOrdersTab
+        ? buildExternalOrderDateFilter(dateRange)
+        : buildOrderCreatedAtMongoFilter(dateRange));
     }
     const tabFilter =
-      !search && requestedTab && requestedTab !== "all"
+      (!search || isExternalOrdersTab) && requestedTab && requestedTab !== "all"
         ? tabIndexFilter(requestedTab, kind)
         : null;
     if (
@@ -10207,10 +10412,10 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
           docs = groupPickingIds.map((id) => byId.get(id)).filter(Boolean);
         }
       } else {
-        const skipListHint = isCancelReturnsTab || isReturnRequestsTab;
+        const skipListHint = isCancelReturnsTab || isReturnRequestsTab || isExternalOrdersTab;
         const runListQuery = (maxTimeMS: number) => {
           let listQuery = OrderModel.find(listFilter)
-            .sort({ last_shopee_update_at: -1 })
+            .sort(isExternalOrdersTab ? { create_time: -1, _id: -1 } : { last_shopee_update_at: -1 })
             .skip((page - 1) * pageSize)
             .limit(pageSize)
             .select(ORDER_LIST_UI_PROJECTION)
@@ -10239,10 +10444,11 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
         "[MongoDB] queryOrdersPageFromStore find failed:",
         findErr?.message || findErr,
       );
+      if (isExternalOrdersTab) throw findErr;
       return { ...empty, page, pageSize };
     }
 
-    const cachedTotal = peekCachedTabTotal(
+    const cachedTotal = isExternalOrdersTab && search ? 0 : peekCachedTabTotal(
       {
         shopId: opts?.shopId,
         shopIds: opts?.shopIds,
@@ -10295,6 +10501,7 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
       "[MongoDB] queryOrdersPageFromStore FATAL:",
       err?.message || err,
     );
+    if (isExternalOrdersTab) throw err;
     return empty;
   }
 }

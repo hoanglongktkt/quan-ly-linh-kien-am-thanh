@@ -81,6 +81,8 @@ export function buildPosInvoiceFromOrder(order: Order): {
   lines: PosInvoiceLine[];
   subtotal: number;
   shippingFee: number;
+  discount: number;
+  note?: string;
   prepaid: number;
   amountDue: number;
 } {
@@ -117,6 +119,8 @@ export function buildPosInvoiceFromOrder(order: Order): {
     lines,
     subtotal,
     shippingFee,
+    discount: Number(raw.order_discount) || 0,
+    note: typeof order.note === 'string' ? order.note : undefined,
     prepaid,
     amountDue: Math.max(0, total - prepaid),
   };
@@ -135,6 +139,10 @@ export function PosInvoiceTemplate({
   prepaid,
   amountDue,
   className,
+  documentTitle = 'HÓA ĐƠN BÁN HÀNG',
+  discount = 0,
+  note,
+  quotation = false,
 }: {
   storeInfo: StoreInvoiceInfo;
   orderSn: string;
@@ -148,6 +156,10 @@ export function PosInvoiceTemplate({
   prepaid: number;
   amountDue: number;
   className?: string;
+  documentTitle?: string;
+  discount?: number;
+  note?: string;
+  quotation?: boolean;
 }) {
   return (
     <div
@@ -192,7 +204,7 @@ export function PosInvoiceTemplate({
           </div>
         </div>
         <div className="text-center font-bold text-xl uppercase tracking-wide text-slate-900 mt-3">
-          HÓA ĐƠN BÁN HÀNG
+          {documentTitle}
         </div>
       </div>
 
@@ -211,7 +223,7 @@ export function PosInvoiceTemplate({
         </div>
       </div>
 
-      <div className="text-center font-bold uppercase mt-4 mb-2">DANH SÁCH ĐƠN HÀNG</div>
+      <div className="text-center font-bold uppercase mt-4 mb-2">{quotation ? 'DANH SÁCH SẢN PHẨM BÁO GIÁ' : 'DANH SÁCH ĐƠN HÀNG'}</div>
 
       <table className="w-full text-xs border-collapse table-fixed">
         <thead>
@@ -256,15 +268,20 @@ export function PosInvoiceTemplate({
           <span>Phí giao ước tính</span>
           <span className="font-bold tabular-nums">{formatVnd(shippingFee)}₫</span>
         </div>
+        {discount > 0 && <div className="flex justify-between gap-4 px-2">
+          <span>Giảm giá</span><span className="font-bold tabular-nums">-{formatVnd(discount)}₫</span>
+        </div>}
         <div className="flex justify-between gap-4 px-2">
-          <span>Đã trả trước</span>
+          <span>{quotation ? 'Trả trước dự kiến' : 'Đã trả trước'}</span>
           <span className="font-bold tabular-nums">{formatVnd(prepaid)}₫</span>
         </div>
         <div className="flex justify-between gap-4 border-t border-slate-800 pt-2 px-2 text-sm font-black">
-          <span>Tổng thanh toán</span>
+          <span>{quotation ? 'Tổng báo giá còn lại' : 'Tổng thanh toán'}</span>
           <span className="tabular-nums">{formatVnd(amountDue)}₫</span>
         </div>
       </div>
+      {note && <div className="mt-5 text-xs whitespace-pre-wrap"><strong>Ghi chú: </strong>{note}</div>}
+      {quotation && <p className="mt-6 text-center text-xs text-slate-500">Báo giá tham khảo — chưa xác nhận đơn hàng và chưa thanh toán.</p>}
     </div>
   );
 }

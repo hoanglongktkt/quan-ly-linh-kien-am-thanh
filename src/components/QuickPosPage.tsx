@@ -6,6 +6,7 @@ import {
   Loader2,
   Printer,
   Save,
+  FileText,
   Settings2,
   Store,
   Trash2,
@@ -27,11 +28,14 @@ import {
 import {
   EMPTY_STORE_INFO,
   PosInvoiceTemplate,
+  buildPosInvoiceFromOrder,
   formatVnd,
   loadStoreInfo,
   saveStoreInfo,
   type StoreInvoiceInfo,
 } from './PosInvoiceTemplate';
+
+import { saveOrderDraft, type OrderDraft } from '../utils/orderDrafts';
 
 type PosLine = {
   productId: string;
@@ -45,6 +49,7 @@ type PosLine = {
   catalogSellingPrice?: number;
   posPriceHistory?: number[];
   customerPrice?: number;
+  weightGrams?: number;
 };
 
 function digitsPhone(value: string): string {
@@ -81,10 +86,17 @@ function resolveLineFromProduct(
 }
 
 interface QuickPosPageProps {
+  initialDraft?: OrderDraft | null;
+  initialOrder?: Order | null;
+  onEditSavedOrder?: (order: Order) => void;
+  onShowSavedOrders?: () => void;
+  onDraftSaved?: () => void;
+  onShowDrafts?: () => void;
   products: Product[];
-  orders: Order[];
+  orders?: Order[];
   onBack: () => void;
-  onUpdateOrders: (orders: Order[]) => void;
+  onOrderSaved?: (order: Order, created: boolean) => void;
+  onUpdateOrders?: (orders: Order[]) => void;
   onUpdateProduct?: (product: Product, opts?: { save?: boolean }) => void;
   onAddLog: (log: SyncLog) => void;
   authHeaders: () => Record<string, string>;
@@ -110,27 +122,42 @@ function entryDisplayAddress(entry: AddressBookEntry): string {
 }
 
 export default function QuickPosPage({
+  initialDraft, initialOrder, onEditSavedOrder, onShowSavedOrders, onDraftSaved, onShowDrafts,
   products,
-  orders,
   onBack,
-  onUpdateOrders,
+  onOrderSaved,
   onUpdateProduct,
   onAddLog,
   authHeaders,
 }: QuickPosPageProps) {
+  const [draft, setDraft] = useState<OrderDraft | null>(initialDraft || null);
+  const editing = Boolean(initialOrder);
+  const [revision, setRevision] = useState(Number(initialOrder?.pos_revision) || 0);
+  const newDraftId = useRef(crypto.randomUUID());
+  const restored = initialDraft?.payload;
   const searchRef = useRef<ImportProductSearchSelectHandle>(null);
   const phoneWrapRef = useRef<HTMLDivElement>(null);
-  const [customerName, setCustomerName] = useState('');
-  const [customerPhone, setCustomerPhone] = useState('');
-  const [customerAddress, setCustomerAddress] = useState('');
-  const [walkIn, setWalkIn] = useState(true);
-  const [note, setNote] = useState('');
-  const [lines, setLines] = useState<PosLine[]>([]);
-  const [shippingFee, setShippingFee] = useState(0);
-  const [prepaidAmount, setPrepaidAmount] = useState(0);
+  const [customerName, setCustomerName] = useState(initialOrder?.customerName ?? restored?.customerName ?? '');
+  const [customerPhone, setCustomerPhone] = useState(initialOrder?.customerPhone ?? restored?.customerPhone ?? '');
+  const [customerAddress, setCustomerAddress] = useState(
+    initialOrder ? (initialOrder.walk_in ? '' : initialOrder.customerAddress || '') : restored?.customerAddress || '',
+  );
+  const [walkIn, setWalkIn] = useState(initialOrder?.walk_in ?? restored?.walk_in ?? true);
+  const [note, setNote] = useState(String(initialOrder?.note ?? restored?.note ?? ''));
+  const [lines, setLines] = useState<PosLine[]>(() => (initialOrder?.items || restored?.items || []).map((it) => ({
+    ...it,
+    sku: it.sku || '',
+    sellingPrice: Number(it.price ?? ('sellingPrice' in it ? it.sellingPrice : 0)) || 0,
+    importPrice: Number(it.importPrice ?? ('import_price' in it ? it.import_price : 0)) || 0,
+  })));
+  const [shippingFee, setShippingFee] = useState(Number(initialOrder?.estimated_shipping_fee ?? initialOrder?.shippingFee ?? restored?.shippingFee) || 0);
+  const [prepaidAmount, setPrepaidAmount] = useState(Number(initialOrder?.prepaid_amount ?? initialOrder?.prepaidAmount ?? restored?.prepaidAmount) || 0);
+  const [orderDiscount, setOrderDiscount] = useState(Number(initialOrder?.order_discount) || 0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [lastOrder, setLastOrder] = useState<Order | null>(null);
+  const [lastOrder, setLastOrder] = useState<Order | null>(initialOrder || null);
+  const [saved, setSaved] = useState(false);
+  const submitInFlight = useRef(false);
   const [addressBook, setAddressBook] = useState<AddressBookEntry[]>([]);
   const [phoneSuggestOpen, setPhoneSuggestOpen] = useState(false);
   const [phoneQuery, setPhoneQuery] = useState('');
@@ -139,7 +166,7 @@ export default function QuickPosPage({
   const [qtyDrafts, setQtyDrafts] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    setStoreInfo(loadStoreInfo());
+    setStoreInfo(initialDraft?.storeInfo || loadStoreInfo());
   }, []);
 
   useEffect(() => {
@@ -209,7 +236,7 @@ export default function QuickPosPage({
     () => lines.reduce((s, l) => s + l.sellingPrice * l.quantity, 0),
     [lines],
   );
-  const totalAmount = Math.max(0, subtotal + Math.max(0, shippingFee));
+  const totalAmount = Math.max(0, subtotal + Math.max(0, shippingFee) - orderDiscount);
   const amountDue = Math.max(0, totalAmount - Math.max(0, prepaidAmount));
 
   const addProduct = (p: Product) => {
@@ -344,7 +371,43 @@ export default function QuickPosPage({
     });
   };
 
+  const buildPayload = () => ({
+    customerName: customerName.trim(),
+    customerPhone: customerPhone.trim(),
+    customerAddress: customerAddress.trim(),
+    walk_in: walkIn,
+    note: note.trim(),
+    shippingFee: Math.max(0, Math.round(shippingFee) || 0),
+    prepaidAmount: Math.max(0, Math.round(prepaidAmount) || 0),
+    orderDiscount,
+    items: lines.map((l) => ({
+      productId: l.productId,
+      productTitle: l.productTitle,
+      productImage: l.productImage,
+      sku: l.sku,
+      quantity: l.quantity,
+      price: l.sellingPrice,
+      sellingPrice: l.sellingPrice,
+      importPrice: l.importPrice,
+      weightGrams: l.weightGrams,
+    })),
+  });
+
+  const saveDraft = async () => {
+    if (saving || !lines.length) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const saved = await saveOrderDraft({ kind: 'pos', payload: buildPayload(), storeInfo }, draft, newDraftId.current, authHeaders);
+      setDraft(saved);
+      onDraftSaved?.();
+    } catch (error: unknown) {
+      setError(error instanceof Error ? error.message : 'Không lưu được đơn nháp.');
+    } finally { setSaving(false); }
+  };
+
   const submitOrder = async (andPrint: boolean) => {
+    if (saving || submitInFlight.current) return;
     if (lines.length === 0) {
       setError('Vui lòng thêm ít nhất 1 sản phẩm.');
       return;
@@ -354,33 +417,21 @@ export default function QuickPosPage({
       return;
     }
 
+    submitInFlight.current = true;
     setSaving(true);
     setError(null);
+    setSaved(false);
     try {
-      const res = await fetch('/api/orders/pos', {
-        method: 'POST',
+      const url = initialOrder ? `/api/orders/pos/${encodeURIComponent(initialOrder.id || initialOrder.orderSn)}` : '/api/orders/pos';
+      const res = await fetch(url, {
+        method: initialOrder ? 'PUT' : 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...authHeaders(),
         },
         body: JSON.stringify({
-          customerName: customerName.trim(),
-          customerPhone: customerPhone.trim(),
-          customerAddress: customerAddress.trim(),
-          walk_in: walkIn,
-          note: note.trim(),
-          shippingFee: Math.max(0, Math.round(shippingFee) || 0),
-          prepaidAmount: Math.max(0, Math.round(prepaidAmount) || 0),
-          items: lines.map((l) => ({
-            productId: l.productId,
-            productTitle: l.productTitle,
-            productImage: l.productImage,
-            sku: l.sku,
-            quantity: l.quantity,
-            price: l.sellingPrice,
-            sellingPrice: l.sellingPrice,
-            importPrice: l.importPrice,
-          })),
+          ...buildPayload(),
+          ...(initialOrder ? { revision } : draft ? { draftId: draft.id, draftVersion: draft.version } : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -391,21 +442,38 @@ export default function QuickPosPage({
       if (!order?.id || !order?.orderSn) {
         throw new Error('Server trả về đơn POS không hợp lệ.');
       }
+      setDraft(null);
+      newDraftId.current = crypto.randomUUID();
       setLastOrder(order);
-      onUpdateOrders([order, ...orders.filter((o) => o.id !== order.id)]);
+      setSaved(true);
+      setRevision(Number(order.pos_revision) || 0);
+      onOrderSaved(order, !initialOrder && !data.draftReplay);
       const soldLines = lines;
-      applyLocalStockOptimistic(order);
-      rememberLocalCustomerPrices(soldLines, customerPhone);
+      if (initialOrder && data.stocks && onUpdateProduct) {
+        for (const product of products) {
+          const children = getProductChildren(product);
+          const nextChildren = children.map((child) => Object.hasOwn(data.stocks, child.id)
+            ? { ...child, stock: data.stocks[child.id] } : child);
+          if (!Object.hasOwn(data.stocks, product.id) && nextChildren.every((child, index) => child === children[index])) continue;
+          onUpdateProduct({
+            ...product,
+            stock: data.stocks[product.id] ?? product.stock,
+            ...(children.length ? (product.children?.length ? { children: nextChildren } : { children_models: nextChildren }) : {}),
+          }, { save: false });
+        }
+      }
+      if (!initialOrder && !data.draftReplay) applyLocalStockOptimistic(order);
+      if (!initialOrder) rememberLocalCustomerPrices(soldLines, customerPhone);
       onAddLog({
         id: `log-pos-${Date.now()}`,
         timestamp: new Date().toISOString(),
         channel: 'manual',
         type: 'stock_sync',
         status: 'success',
-        message: `[POS] Tạo đơn nhanh ${order.orderSn} — trừ tồn ${data.stockDeducted ?? 0}`,
+        message: `[POS] ${initialOrder ? 'Cập nhật đơn' : 'Tạo đơn nhanh'} ${order.orderSn}`,
       });
 
-      void fetchAddressBook(authHeaders)
+      if (!initialOrder) void fetchAddressBook(authHeaders)
         .then((list) => {
           const digits = digitsPhone(customerPhone);
           if (!digits) {
@@ -447,10 +515,13 @@ export default function QuickPosPage({
           });
         });
       }
-      setLines([]);
-      setPrepaidAmount(0);
-      setShippingFee(0);
-      setNote('');
+      if (!initialOrder) {
+        setLines([]);
+        setQtyDrafts({});
+        setPrepaidAmount(0);
+        setShippingFee(0);
+        setNote('');
+      }
     } catch (err: any) {
       const raw = err?.message || 'Tạo đơn nhanh thất bại';
       const message = /checking out a connection|wait queue|WaitQueueTimeout|pos_order_update_timeout/i.test(
@@ -470,6 +541,7 @@ export default function QuickPosPage({
       });
       window.alert(`Không thể lưu đơn POS: ${message}`);
     } finally {
+      submitInFlight.current = false;
       setSaving(false);
     }
   };
@@ -571,10 +643,19 @@ export default function QuickPosPage({
           Quay lại đơn hàng
         </button>
         <div className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-1.5">
-          Mini POS — Tạo đơn nhanh
+          {editing ? `Sửa đơn ${initialOrder?.orderSn}` : 'Mini POS — Tạo đơn nhanh'}
         </div>
       </div>
 
+      {saved && lastOrder && <div role="status" className="no-print rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+        Đã lưu đơn <strong>{lastOrder.orderSn}</strong>
+        {!editing && onEditSavedOrder && <button type="button" disabled={saving} onClick={() => onEditSavedOrder(lastOrder)} className="ml-3 font-bold underline">Xem / sửa đơn vừa lưu</button>}
+        <button type="button" disabled={saving} onClick={onShowSavedOrders} className="ml-3 font-bold underline">Xem trong Đơn ngoại sàn</button>
+      </div>}
+      {!editing && <div className="no-print rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+        <span>{draft ? `Đang sửa ${draft.number}. Lưu đơn / Lưu & In để chuyển thành đơn chính thức.` : 'Lưu đơn nháp để làm báo giá, chưa trừ kho hay tính doanh thu.'}</span>
+        <button type="button" onClick={onShowDrafts} disabled={saving} className="ml-3 font-extrabold underline">Đơn nháp / Báo giá</button>
+      </div>}
       <div className="no-print grid grid-cols-1 lg:grid-cols-3 gap-4">
         <section className="lg:col-span-1 rounded-2xl border border-slate-200 bg-white p-4 space-y-3 shadow-sm">
           <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 overflow-hidden">
@@ -894,6 +975,7 @@ export default function QuickPosPage({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 rounded-xl bg-slate-50 border border-slate-100 p-3">
+            {editing && <label className="text-xs font-bold text-slate-600 space-y-1"><span>Giảm giá đơn</span><input type="number" min={0} value={orderDiscount} onChange={(e) => setOrderDiscount(Math.max(0, Math.round(Number(e.target.value) || 0)))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold" /></label>}
             <label className="text-xs font-bold text-slate-600 space-y-1">
               <span>Phí giao hàng ước tính</span>
               <input
@@ -935,6 +1017,7 @@ export default function QuickPosPage({
           )}
 
           <div className="flex flex-wrap items-center gap-2 justify-end">
+            {!editing && <button type="button" disabled={saving || lines.length === 0} onClick={() => void saveDraft()} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-amber-300 bg-amber-50 text-amber-900 text-xs font-extrabold disabled:opacity-50"><FileText className="w-4 h-4" /> Lưu đơn nháp</button>}
             <button
               type="button"
               disabled={saving || lines.length === 0}
@@ -942,7 +1025,7 @@ export default function QuickPosPage({
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-extrabold disabled:opacity-50 cursor-pointer"
             >
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              Lưu đơn
+              {editing ? 'Lưu thay đổi' : 'Lưu đơn'}
             </button>
             <button
               type="button"
@@ -957,7 +1040,7 @@ export default function QuickPosPage({
         </section>
       </div>
 
-      <PosInvoiceTemplate
+      {lastOrder ? <PosInvoiceTemplate storeInfo={storeInfo} {...buildPosInvoiceFromOrder(lastOrder)} /> : <PosInvoiceTemplate
         storeInfo={storeInfo}
         orderSn={lastOrder?.orderSn || '— chờ lưu đơn —'}
         dateText={
@@ -978,7 +1061,7 @@ export default function QuickPosPage({
         shippingFee={printFee}
         prepaid={printPrepaid}
         amountDue={Math.max(0, printTotal - printPrepaid)}
-      />
+      />}
     </div>
   );
 }

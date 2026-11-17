@@ -4,6 +4,8 @@
  */
 import fs from "fs";
 import path from "path";
+import { commitPosStockEditFiles, recoverPosStockEditFiles, withPosStockFileLock } from "../../utils/posStockEditFiles.js";
+import { applyPosStockEdit, planPosStockEdit } from "../../modules/orders/posOrderEdit.ts";
 import {
   normalizeProductSearchText,
   productRowMatchesSearch,
@@ -33,6 +35,7 @@ let writeChain: Promise<void> = Promise.resolve();
 
 export function setProductsDiskAppRoot(appRoot: string): void {
   appRootResolved = String(appRoot || "").trim();
+  productsCache = null;
 }
 
 function resolveAppRoot(): string {
@@ -74,6 +77,12 @@ export function inheritShopeeLinkFromParent(child: any, parent: any): any {
 
 export function readProductsFromDisk(): any[] {
   const file = getProductsDiskPath();
+  const dataDir = path.dirname(file);
+  if (fs.existsSync(path.join(dataDir, ".pos-stock-edit-journal.json"))) {
+    withPosStockFileLock(dataDir, () => {
+      if (recoverPosStockEditFiles(dataDir)) productsCache = null;
+    });
+  }
   if (!fs.existsSync(file)) {
     productsCache = { mtimeMs: 0, products: [] };
     return [];
@@ -133,6 +142,36 @@ export async function upsertProductsToDisk(products: any[]): Promise<number> {
   for (const p of incoming) byId.set(String(p.id), { ...byId.get(String(p.id)), ...p, id: p.id });
   await saveProductsToDisk([...byId.values()]);
   return incoming.length;
+}
+
+export async function applyPosStockEditOnDisk(
+  orderId: string, revision: number, plan: ReturnType<typeof planPosStockEdit>,
+) {
+  const dataDir = path.dirname(getProductsDiskPath());
+  const run = writeChain.then(() => withPosStockFileLock(dataDir, () => {
+    if (recoverPosStockEditFiles(dataDir)) productsCache = null;
+    const products = readProductsFromDisk();
+    const editFile = path.join(dataDir, "pos-stock-edits.json");
+    const edits = new Map<string, { revision: number; allocations: Record<string, number>; stocks: Record<string, number> }>(
+      fs.existsSync(editFile) ? JSON.parse(fs.readFileSync(editFile, "utf8")) : [],
+    );
+    const previous = edits.get(orderId);
+    if (previous && previous.revision >= revision) return previous;
+    const { changed, stocks, allocations } = applyPosStockEdit(products, plan);
+    const result = { revision, stocks, allocations };
+    edits.set(orderId, result);
+    try {
+      commitPosStockEditFiles(dataDir, {
+        "products.json": products.map((p) => stampInventorySortFields(changed.get(p.id) || p)),
+        "pos-stock-edits.json": [...edits],
+      });
+    } finally {
+      productsCache = null;
+    }
+    return result;
+  }));
+  writeChain = run.then(() => undefined, () => undefined);
+  return run;
 }
 
 const SKU_CHILD_KEYS = ["children", "children_models"] as const;

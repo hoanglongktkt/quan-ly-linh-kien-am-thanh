@@ -50,6 +50,12 @@ import {
   upsertDonHoanHuy,
   invalidateTabCountCache,
   insertPosOrderToStore,
+  loadPosOrderForEdit,
+  updatePosOrderInStore,
+  updateExternalOrderContact,
+  updateExternalLogisticsInStore,
+  deleteExternalOrderFromStore,
+  markPosOrderReadyForEdit,
   upsertPosProductsToStoreAsync,
 } from "../src/db/mongoStore.ts";
 import { saveAddressBookEntry, upsertLoyaltyFromPurchase, upsertPosCustomerPrices } from "../services/addressBook.js";
@@ -227,11 +233,13 @@ async function persistExternalOrder(order) {
     throw new Error("mongodb_not_ready");
   }
   await persistChangedOrdersPatch([order]);
-  try {
-    invalidateTabCountCache();
-  } catch {
-    /* cache optional */
-  }
+  invalidateExternalOrders();
+}
+
+async function persistExternalLogistics(order) {
+  const updated = await updateExternalLogisticsInStore(order);
+  invalidateExternalOrders();
+  return updated;
 }
 
 let ordersRefreshInFlight = null;
@@ -241,6 +249,14 @@ const ordersCounterCoalesce = new Map();
 /** Badge poll 10s — trả số cũ trong 8s, refresh nền, không chờ Mongo trên request. */
 const ORDER_COUNTER_CACHE_MS = 8_000;
 const orderCounterMemCache = new Map();
+let externalOrderVersion = 0;
+
+function invalidateExternalOrders() {
+  externalOrderVersion += 1;
+  invalidateOrdersRefreshCache();
+  invalidateTabCountCache();
+  orderCounterMemCache.clear();
+}
 
 function coalesceInFlight(map, key, factory) {
   const existing = map.get(key);
@@ -510,6 +526,7 @@ export async function refreshOrders(req, res) {
       groupPicking ? "pick" : "",
       req.query.startDate || req.query.start_date || "",
       req.query.endDate || req.query.end_date || "",
+      tab === "external_orders" || searchQ ? externalOrderVersion : "",
     ].join("|");
     console.log(
       `[GET /api/orders/refresh] params page=${page} limit=${limit} tab=${tab || "(none)"}` +
@@ -563,7 +580,7 @@ export async function refreshOrders(req, res) {
           queryOrdersPageFromStore({
             page,
             pageSize: limit,
-            tab: searchQ ? "" : tab,
+            tab: searchQ && tabLc !== "external_orders" ? "" : tab,
             kind: searchQ ? "" : kind,
             shopId,
             shopIds: shopIds.length ? shopIds : undefined,
@@ -781,7 +798,8 @@ function rememberOrderCounter(key, payload) {
 }
 
 function refreshOrderCounter(key, shopId, shopIds, dateQ) {
-  return coalesceInFlight(ordersCounterCoalesce, key, async () => {
+  const version = externalOrderVersion;
+  return coalesceInFlight(ordersCounterCoalesce, `${version}|${key}`, async () => {
     try {
       const counts = await countOrdersByTabsFromStore({
         shopId: shopId || undefined,
@@ -789,7 +807,7 @@ function refreshOrderCounter(key, shopId, shopIds, dateQ) {
         ...dateQ,
       });
       const payload = orderCounterPayload(counts);
-      rememberOrderCounter(key, payload);
+      if (version === externalOrderVersion) rememberOrderCounter(key, payload);
       return payload;
     } catch (err) {
       console.error(
@@ -3431,7 +3449,7 @@ async function deductStockForPosOrder(lineItems) {
     qtyById.set(id, (qtyById.get(id) || 0) + qty);
   }
   if (qtyById.size === 0) {
-    return { deducted: 0, updatedProducts: [] };
+    return { deducted: 0, allocations: {} };
   }
 
   const ids = [...qtyById.keys()];
@@ -3463,6 +3481,7 @@ async function deductStockForPosOrder(lineItems) {
 
   const dirty = new Map();
   let deducted = 0;
+  const allocations = new Map();
   for (const [productId, qty] of qtyById) {
     const hit = findTarget(productId);
     if (!hit) {
@@ -3475,7 +3494,9 @@ async function deductStockForPosOrder(lineItems) {
       });
       productMap.set(String(updated.id), updated);
       dirty.set(String(updated.id), updated);
-      deducted += qty;
+      const applied = Math.min(qty, Math.max(0, Math.round(Number(hit.product.stock) || 0)));
+      allocations.set(productId, applied);
+      deducted += applied;
     } else {
       const parentId = String(hit.parent.id || hit.parent._id || "");
       const parent = productMap.get(parentId) || hit.parent;
@@ -3486,6 +3507,7 @@ async function deductStockForPosOrder(lineItems) {
       const list = [...(parent[childKey] || [])];
       const cIdx = list.findIndex((c) => String(c?.id || c?._id || "").trim() === productId);
       if (cIdx < 0) continue;
+      const applied = Math.min(qty, Math.max(0, Math.round(Number(list[cIdx].stock) || 0)));
       list[cIdx] = deps.applyBulkProductUpdate(list[cIdx], {
         stock: { mode: "decrease", value: qty },
       });
@@ -3497,7 +3519,8 @@ async function deductStockForPosOrder(lineItems) {
       };
       productMap.set(parentId, nextParent);
       dirty.set(parentId, nextParent);
-      deducted += qty;
+      allocations.set(productId, applied);
+      deducted += applied;
     }
   }
 
@@ -3505,7 +3528,7 @@ async function deductStockForPosOrder(lineItems) {
   if (changed.length > 0) {
     await upsertPosProductsToStoreAsync(changed);
   }
-  return { deducted, updatedProducts: changed };
+  return { deducted, allocations: Object.fromEntries(allocations) };
 }
 
 function findPosProductTarget(productMap, productId) {
@@ -3594,17 +3617,8 @@ async function rememberPosSellingPrices(lineItems) {
   return { updated: changed.length };
 }
 
-/**
- * POST /api/orders/pos — Tạo đơn nhanh (Mini POS).
- * Độc lập hoàn toàn với createManualOrder (đơn ngoại sàn).
- * Trạng thái completed/delivered ngay + trừ tồn server-side.
- */
-export async function createPosOrder(req, res) {
-  const startedAt = Date.now();
-  const traceId = `POS-${startedAt.toString(36).toUpperCase()}`;
-  try {
-    console.log(`POS Step 1: validate request trace=${traceId}`);
-    const body = req.body || {};
+/** Chuẩn hóa cùng một bộ trường cho đơn POS mới và đơn POS được sửa. */
+function readPosOrderFields(body, { editing = false } = {}) {
     const {
       items,
       customerName = "",
@@ -3617,11 +3631,11 @@ export async function createPosOrder(req, res) {
       orderDiscount = 0,
     } = body;
 
-    if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: "Đơn hàng cần ít nhất 1 sản phẩm.",
-      });
+    if (!Array.isArray(items) || items.length === 0 || items.some((item) => !item || typeof item !== "object")) {
+      throw Object.assign(new Error("Đơn hàng cần ít nhất 1 sản phẩm hợp lệ."), { status: 400 });
+    }
+    if (editing && items.length > 80) {
+      throw Object.assign(new Error("Đơn tạo nhanh hỗ trợ tối đa 80 dòng sản phẩm."), { status: 400 });
     }
 
     const isWalkIn = walk_in === true || walk_in === "true" || walk_in === 1;
@@ -3630,10 +3644,7 @@ export async function createPosOrder(req, res) {
     const address = String(customerAddress || "").trim();
 
     if (!isWalkIn && !address) {
-      return res.status(400).json({
-        success: false,
-        error: "Vui lòng nhập địa chỉ giao hàng (hoặc tích «Mua tại cửa hàng»).",
-      });
+      throw Object.assign(new Error("Vui lòng nhập địa chỉ giao hàng (hoặc tích «Mua tại cửa hàng»)."), { status: 400 });
     }
 
     const lineItems = items.slice(0, 80).map((it) => {
@@ -3644,7 +3655,7 @@ export async function createPosOrder(req, res) {
         Math.round(Number(it.importPrice ?? it.import_price ?? it.cost_price) || 0),
       );
       return {
-        productId: String(it.productId || ""),
+        productId: String(it.productId || "").trim(),
         productTitle: String(it.productTitle || it.name || ""),
         name: String(it.productTitle || it.name || ""),
         productImage: it.productImage || it.imageUrl || "",
@@ -3661,10 +3672,7 @@ export async function createPosOrder(req, res) {
 
     for (const it of lineItems) {
       if (!String(it.productId || "").trim()) {
-        return res.status(400).json({
-          success: false,
-          error: "Mỗi dòng sản phẩm cần productId hợp lệ.",
-        });
+        throw Object.assign(new Error("Mỗi dòng sản phẩm cần productId hợp lệ."), { status: 400 });
       }
     }
 
@@ -3677,22 +3685,13 @@ export async function createPosOrder(req, res) {
     const discount = Math.max(0, Math.round(Number(orderDiscount) || 0));
     const totalAmount = Math.max(0, subtotal + fee - discount);
     const amountDue = Math.max(0, totalAmount - prepaid);
+    if (![subtotal, fee, prepaid, discount, totalAmount, amountDue].every(Number.isSafeInteger) ||
+        lineItems.some((item) => !Number.isSafeInteger(item.quantity) ||
+          !Number.isSafeInteger(item.importPrice) || !Number.isSafeInteger(item.weightGrams))) {
+      throw Object.assign(new Error("Số lượng, đơn giá hoặc số tiền không hợp lệ."), { status: 400 });
+    }
 
-    const mapped = mapExternalStatus("delivered");
-    const nowIso = new Date().toISOString();
-    const orderSn = `POS-${Date.now().toString(36).toUpperCase()}`;
-    const orderId = `pos-${orderSn}`;
-
-    // Lưu đơn TRƯỚC — không để trừ tồn chậm/timeout làm fail cả request (Lưu & In).
-    const newOrder = {
-      id: orderId,
-      _id: orderId,
-      orderSn,
-      order_sn: orderSn,
-      channel: "manual",
-      source: "pos",
-      is_quick_order: true,
-      shopId: null,
+    return {
       customerName: name,
       customerPhone: phone,
       customerAddress: isWalkIn ? "Mua tại cửa hàng" : address,
@@ -3712,8 +3711,6 @@ export async function createPosOrder(req, res) {
             fullAddress: address,
           },
       walk_in: isWalkIn,
-      carrier: "self",
-      provider: "self",
       shipping_carrier: isWalkIn ? "Tại cửa hàng" : "Tự giao hàng",
       totalAmount,
       revenue: totalAmount,
@@ -3725,6 +3722,95 @@ export async function createPosOrder(req, res) {
       prepaidAmount: prepaid,
       order_discount: discount,
       note: String(note || "").trim(),
+      items: lineItems,
+    };
+}
+
+export async function getPosOrder(req, res) {
+  try {
+    const order = await loadPosOrderForEdit(String(req.params.id || "").trim());
+    return res.json({ success: true, order });
+  } catch (error) {
+    if (!error.status) console.error("[POS] Load for edit:", error);
+    return res.status(error.status || 503).json({ success: false, error: error.status ? error.message : "Không tải được đơn tạo nhanh." });
+  }
+}
+
+export async function editPosOrder(req, res) {
+  try {
+    const { revision } = req.body || {};
+    if (!Number.isSafeInteger(revision) || revision < 0) {
+      return res.status(400).json({ success: false, error: "Thiếu phiên bản đơn. Hãy mở lại đơn." });
+    }
+    const patch = readPosOrderFields(req.body, { editing: true });
+    const result = await updatePosOrderInStore(String(req.params.id || "").trim(), revision, patch);
+    invalidateExternalOrders();
+    return res.json({ success: true, ...result });
+  } catch (error) {
+    if (!error.status) console.error("[POS] Edit failed:", error);
+    return res.status(error.status || 503).json({
+      success: false,
+      error: error.status ? error.message : "Chưa xác nhận được lần lưu. Vui lòng bấm lưu lại.",
+    });
+  }
+}
+
+export async function editExternalOrder(req, res) {
+  const key = String(req.params.id || "").trim();
+  if (!key) return res.status(400).json({ success: false, error: "Thiếu mã đơn ngoại sàn." });
+  const contact = Object.fromEntries(
+    ["customerName", "customerPhone", "customerAddress", "note"].map((field) => [
+      field, typeof req.body?.[field] === "string" ? req.body[field].trim() : "",
+    ]),
+  );
+  if (!contact.customerName || Object.values(contact).some((value) => value.length > 1000)) {
+    return res.status(400).json({ success: false, error: "Kiểm tra tên khách hàng và nội dung chỉnh sửa." });
+  }
+  const order = await updateExternalOrderContact(key, contact);
+  if (!order) return res.status(404).json({ success: false, error: "Không tìm thấy đơn ngoại sàn cần sửa." });
+  invalidateExternalOrders();
+  return res.json({ success: true, order });
+}
+
+export async function deleteExternalOrder(req, res) {
+  const key = String(req.params.id || "").trim();
+  if (!key) return res.status(400).json({ success: false, error: "Thiếu mã đơn ngoại sàn." });
+  try {
+    if (!await deleteExternalOrderFromStore(key)) {
+      return res.status(404).json({ success: false, error: "Không tìm thấy đơn ngoại sàn." });
+    }
+    invalidateExternalOrders();
+    return res.json({ success: true });
+  } catch (error) {
+    if (!error.status) throw error;
+    return res.status(error.status).json({ success: false, error: error.message });
+  }
+}
+
+/** Lưu đơn POS đã hoàn tất trước khi chạy các tác vụ cập nhật kho và khách hàng. */
+export async function createPosOrder(req, res) {
+  const startedAt = Date.now();
+  const traceId = `POS-${startedAt.toString(36).toUpperCase()}`;
+  try {
+    const fields = readPosOrderFields(req.body || {});
+    const { customerName: name, customerPhone: phone, customerAddress: address,
+      walk_in: isWalkIn, totalAmount, cod_amount: amountDue, items: lineItems } = fields;
+    const mapped = mapExternalStatus("delivered");
+    const nowIso = new Date().toISOString();
+    const orderSn = `POS-${Date.now().toString(36).toUpperCase()}`;
+    const orderId = `pos-${orderSn}`;
+    const newOrder = {
+      ...fields,
+      id: orderId,
+      _id: orderId,
+      orderSn,
+      order_sn: orderSn,
+      channel: "manual",
+      source: "pos",
+      is_quick_order: true,
+      shopId: null,
+      carrier: "self",
+      provider: "self",
       status: mapped.status,
       shopee_order_status: mapped.shopee,
       external_status: "delivered",
@@ -3734,7 +3820,6 @@ export async function createPosOrder(req, res) {
       tracking_no: null,
       isPrepared: true,
       isPrinted: false,
-      items: lineItems,
       stock_deducted: false,
       stock_deducted_at: null,
       stock_deducted_qty: 0,
@@ -3743,11 +3828,7 @@ export async function createPosOrder(req, res) {
 
     console.log(`POS Step 2: persist order FIRST trace=${traceId}`);
     await insertPosOrderToStore(newOrder);
-    try {
-      invalidateTabCountCache();
-    } catch {
-      /* cache optional */
-    }
+    invalidateExternalOrders();
     console.log(`POS Step 3: order persisted trace=${traceId} elapsed=${Date.now() - startedAt}ms`);
 
     // Trả 200 NGAY — trừ tồn + VIP chạy sau response để Lưu & In không bị timeout DB.
@@ -3764,20 +3845,10 @@ export async function createPosOrder(req, res) {
     }
 
     // Post-response: trừ tồn kho — lỗi chỉ log, không làm hỏng response đã gửi.
+    let stockResult;
     try {
       console.log(`POS Step 5: deduct stock (post-response) trace=${traceId}`);
-      const stockResult = await deductStockForPosOrder(lineItems);
-      newOrder.stock_deducted = true;
-      newOrder.stock_deducted_at = new Date().toISOString();
-      newOrder.stock_deducted_qty = stockResult.deducted;
-      try {
-        await insertPosOrderToStore(newOrder);
-      } catch (flagErr) {
-        console.warn(
-          `POS Step 5b: stock flags update skipped trace=${traceId}`,
-          flagErr?.message || flagErr,
-        );
-      }
+      stockResult = await deductStockForPosOrder(lineItems);
       console.log(
         `POS Step 6: stock ok trace=${traceId} deducted=${stockResult.deducted} elapsed=${Date.now() - startedAt}ms`,
       );
@@ -3787,6 +3858,10 @@ export async function createPosOrder(req, res) {
         stockErr?.message || stockErr,
       );
     }
+
+    await markPosOrderReadyForEdit(orderId, stockResult).catch((error) => {
+      console.error("[POS] Stock flags:", error?.message || error);
+    });
 
     // Post-response: cộng dồn VIP — lỗi chỉ log.
     try {
@@ -3827,6 +3902,9 @@ export async function createPosOrder(req, res) {
     console.log(`POS Step 7: loyalty finished trace=${traceId} elapsed=${Date.now() - startedAt}ms`);
     return;
   } catch (error) {
+    if (error.status === 400 && !res.headersSent) {
+      return res.status(400).json({ success: false, error: error.message });
+    }
     console.error(
       `POS FAILED trace=${traceId} elapsed=${Date.now() - startedAt}ms`,
       error,
@@ -4011,11 +4089,10 @@ export async function syncGhnOrderStatus(req, res) {
     const detail = await getGhnOrderDetail(trackingNo, order.ghnShopId || order.ghn_shop_id);
     const mappedKey = String(detail.externalStatus || "created");
     const mapped = mapExternalStatus(mappedKey);
-    const updated = applyExternalMappedStatus(order, mappedKey, {
+    const updated = await persistExternalLogistics(applyExternalMappedStatus(order, mappedKey, {
       ghn_status: detail.status,
       ghnShopId: detail.shopId || order.ghnShopId,
-    });
-    await persistExternalOrder(updated);
+    }));
 
     return res.json({
       success: true,
@@ -4072,10 +4149,9 @@ export async function cancelGhnOrder(req, res) {
     const currentExt = String(order.external_status || "").toLowerCase();
     const currentGhn = String(order.ghn_status || "").toLowerCase();
     if (currentExt === "cancelled" || currentGhn === "cancel" || currentGhn === "cancelled") {
-      const already = applyExternalMappedStatus(order, "cancelled", {
+      const already = await persistExternalLogistics(applyExternalMappedStatus(order, "cancelled", {
         ghn_status: order.ghn_status || "cancel",
-      });
-      await persistExternalOrder(already);
+      }));
       return res.json({
         success: true,
         alreadyCancelled: true,
@@ -4099,11 +4175,10 @@ export async function cancelGhnOrder(req, res) {
       trackingNo,
       order.ghnShopId || order.ghn_shop_id,
     );
-    const updated = applyExternalMappedStatus(order, "cancelled", {
+    const updated = await persistExternalLogistics(applyExternalMappedStatus(order, "cancelled", {
       ghn_status: "cancel",
       ghnShopId: cancelled.shopId || order.ghnShopId,
-    });
-    await persistExternalOrder(updated);
+    }));
 
     return res.json({
       success: true,
@@ -4123,10 +4198,9 @@ export async function cancelGhnOrder(req, res) {
         const key = String(req.params.id || req.body?.orderSn || "").trim();
         const order = await loadManualOrderByKey(key);
         if (order) {
-          const updated = applyExternalMappedStatus(order, "cancelled", {
+          const updated = await persistExternalLogistics(applyExternalMappedStatus(order, "cancelled", {
             ghn_status: "cancel",
-          });
-          await persistExternalOrder(updated);
+          }));
           return res.json({
             success: true,
             alreadyCancelled: true,

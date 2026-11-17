@@ -195,6 +195,7 @@ const ORDERS_SUB_TAB_IDS = new Set<string>([
   'order_products',
   'web_orders',
   'external_orders',
+  'drafts',
   'quick_pos',
   'create_external',
 ]);
@@ -1265,7 +1266,8 @@ export default function App() {
         else if (ids.length > 1) params.set('shop_ids', ids.join(','));
         if (q) {
           params.set('q', q);
-        } else if (tab) {
+        }
+        if (tab && (!q || tab === 'external_orders')) {
           params.set('tab', tab);
           if (kind) params.set('kind', kind);
         }
@@ -1678,7 +1680,8 @@ export default function App() {
       hint === 'all' ||
       hint === 'order_products' ||
       hint === 'quick_pos' ||
-      hint === 'create_external'
+      hint === 'create_external' ||
+      hint === 'drafts'
     ) {
       return '';
     }
@@ -1964,7 +1967,8 @@ export default function App() {
   };
 
   // Persist status/tracking changes made in the UI back to the real orders database.
-  const handleUpdateOrders = (updatedOrders: Order[], opts?: { persist?: boolean }) => {
+  const handleUpdateOrders = (updatedOrders: Order[], opts?: { persist?: boolean; invalidateList?: boolean }) => {
+    if (opts?.invalidateList) { ordersTabCacheRef.current.clear(); fetchOrdersSeqRef.current += 1; }
     const sanitized = sanitizeOrders(updatedOrders);
     const previousById = new Map(orders.map(o => [o.id, o]));
     ordersStateRef.current = sanitized;
@@ -2923,6 +2927,9 @@ export default function App() {
           >
             <PlusSquare className="w-3.5 h-3.5 shrink-0" /> Tạo đơn ngoại sàn
           </button>
+          <button type="button" onClick={() => goOrdersTab('drafts')} className="w-full flex items-center gap-2 px-4 py-3 min-h-11 rounded-xl text-xs font-bold text-amber-500 hover:bg-slate-800">
+            Đơn nháp
+          </button>
 
           <button
             onClick={() => navigateTab('orders', { ordersSubTab: 'received_cancel_returns' })}
@@ -3083,6 +3090,9 @@ export default function App() {
                 className={ordersCreateNavClass('create_external', 'bg-emerald-600')}
               >
                 <PlusSquare className="w-3.5 h-3.5 shrink-0" /> Tạo đơn ngoại sàn
+          </button>
+          <button type="button" onClick={() => goOrdersTab('drafts')} className="w-full flex items-center gap-2 px-4 py-3 min-h-11 rounded-xl text-xs font-bold text-amber-500 hover:bg-slate-800">
+            Đơn nháp
               </button>
               <button
                 onClick={() => navigateTab('orders', { ordersSubTab: 'external_orders' })}

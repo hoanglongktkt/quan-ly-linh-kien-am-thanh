@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Loader2, Printer, RefreshCw, Ban, Receipt } from 'lucide-react';
+import { Loader2, Printer, RefreshCw, Ban, Receipt, Pencil, Trash2 } from 'lucide-react';
 import type { Order } from '../types';
 import { orderCreatedAtMs, parseOrderTimeMs } from '../utils/sanitizeOrder';
 import {
@@ -10,6 +10,8 @@ import {
 } from './PosInvoiceTemplate';
 
 type ExternalStatusKey = 'created' | 'shipping' | 'delivered' | 'rts' | 'cancelled';
+
+const isPosOrder = (order: Order) => order.source === 'pos' || order.is_quick_order === true;
 
 function resolveExternalStatus(order: Order): ExternalStatusKey {
   const ext = String(
@@ -206,6 +208,73 @@ async function postGhnOrderAction(path: string, order: Order): Promise<Record<st
   return data;
 }
 
+async function saveExternalOrder(order: Order, contact?: FormData) {
+  const token = localStorage.getItem('admin_token') || '';
+  const response = await fetch(`/api/orders/external/${encodeURIComponent(orderKeyOf(order))}`, {
+    method: contact ? 'PATCH' : 'DELETE',
+    headers: { Authorization: `Bearer ${token}`, ...(contact ? { 'Content-Type': 'application/json' } : {}) },
+    body: contact ? JSON.stringify(Object.fromEntries(contact)) : undefined,
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || data?.success !== true) {
+    throw new Error(data?.message || data?.error || (contact ? 'Không lưu được đơn.' : 'Không xóa được đơn.'));
+  }
+  return data;
+}
+
+function ExternalOrderContactDialog({ order, onClose, onSaved }: {
+  order: Order;
+  onClose: () => void;
+  onSaved: (order: Order) => void;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => { dialogRef.current?.showModal(); }, []);
+  const inputClass = 'block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mt-1';
+  return createPortal(
+    <dialog ref={dialogRef} aria-labelledby="external-order-contact-title"
+      onCancel={(event) => { event.preventDefault(); if (!saving) onClose(); }}
+      className="m-auto w-[92vw] max-w-lg rounded-2xl bg-white p-5 text-slate-800 shadow-xl backdrop:bg-slate-950/50">
+      <form className="space-y-3" onSubmit={async (event) => {
+        event.preventDefault();
+        if (saving) return;
+        const contact = new FormData(event.currentTarget);
+        setSaving(true); setError('');
+        try {
+          const result = await saveExternalOrder(order, contact);
+          onSaved(result.order);
+        } catch (error) {
+          setError(error instanceof Error ? error.message : 'Không lưu được đơn.');
+          setSaving(false);
+        }
+      }}>
+        <h2 id="external-order-contact-title" className="font-bold">Chỉnh sửa đơn {order.orderSn}</h2>
+        {trackingOf(order) && providerOf(order) !== 'self' && <p className="text-xs text-slate-600">Thông tin chỉnh sửa chỉ áp dụng cho đơn trên phần mềm.</p>}
+        <label className="block text-xs font-semibold">Tên khách
+          <input name="customerName" defaultValue={order.customerName} required maxLength={1000} className={inputClass} />
+        </label>
+        <label className="block text-xs font-semibold">Số điện thoại
+          <input name="customerPhone" type="tel" defaultValue={order.customerPhone} maxLength={1000} className={inputClass} />
+        </label>
+        <label className="block text-xs font-semibold">Địa chỉ
+          <textarea name="customerAddress" defaultValue={order.customerAddress || (order.shippingAddress ? formatAddress(order) : '')} rows={2} maxLength={1000} className={inputClass} />
+        </label>
+        <label className="block text-xs font-semibold">Ghi chú
+          <textarea name="note" defaultValue={typeof order.note === 'string' ? order.note : ''} rows={2} maxLength={1000} className={inputClass} />
+        </label>
+        {error && <p role="alert" className="text-sm text-rose-700">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <button type="button" disabled={saving} onClick={onClose} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold">Đóng</button>
+          <button type="submit" disabled={saving} className="rounded-lg bg-emerald-700 px-3 py-2 text-sm font-bold text-white disabled:opacity-50">{saving ? 'Đang lưu…' : 'Lưu thay đổi'}</button>
+        </div>
+      </form>
+    </dialog>, document.body,
+  );
+}
+
+type ExternalAction = 'print' | 'invoice' | 'sync' | 'cancel' | 'delete';
+
 function GhnActionButtons({
   order,
   busyKind,
@@ -213,13 +282,17 @@ function GhnActionButtons({
   onPrintInvoice,
   onSyncGhn,
   onCancelGhn,
+  onEditOrder,
+  onDeleteOrder,
 }: {
   order: Order;
-  busyKind: 'print' | 'invoice' | 'sync' | 'cancel' | null;
+  busyKind: 'print' | 'invoice' | 'sync' | 'cancel' | 'delete' | null;
   onPrintWaybill: (order: Order) => void;
   onPrintInvoice: (order: Order) => void;
   onSyncGhn: (order: Order) => void;
   onCancelGhn: (order: Order) => void;
+  onEditOrder?: (order: Order) => void;
+  onDeleteOrder?: (order: Order) => void;
 }) {
   const provider = providerOf(order);
   const tn = trackingOf(order);
@@ -231,9 +304,16 @@ function GhnActionButtons({
   const anyBusy = Boolean(busyKind);
   const canGhn = provider === 'ghn' && Boolean(tn);
   const canCancel = canGhn && st !== 'cancelled' && st !== 'delivered';
+  const pos = isPosOrder(order);
 
   return (
     <div className="inline-flex flex-col items-stretch gap-1 min-w-[8.5rem]">
+      {(!pos || (st !== 'cancelled' && st !== 'rts')) && <button type="button" disabled={anyBusy} onClick={() => onEditOrder?.(order)} className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-lg disabled:opacity-50">
+        <Pencil className="w-3.5 h-3.5" /> Sửa đơn
+      </button>}
+      <button type="button" disabled={anyBusy} onClick={() => onDeleteOrder?.(order)} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-50">
+        {busyKind === 'delete' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />} Xóa đơn
+      </button>
       <button
         type="button"
         disabled={anyBusy}
@@ -248,6 +328,7 @@ function GhnActionButtons({
         )}
         In hóa đơn
       </button>
+      {!pos && <>
       <button
         type="button"
         disabled={anyBusy || provider === 'self' || !tn}
@@ -298,6 +379,7 @@ function GhnActionButtons({
         {cancelBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ban className="w-3.5 h-3.5" />}
         Hủy vận chuyển
       </button>
+      </>}
     </div>
   );
 }
@@ -307,14 +389,21 @@ export function ExternalOrdersTable({
   printingOrderId,
   onPrintWaybill,
   onOrderUpdated,
+  onEditPosOrder,
+  onOrderEdited,
+  onOrderDeleted,
 }: {
   orders: Order[];
   printingOrderId: string | null;
   onPrintWaybill: (order: Order) => void;
   onOrderUpdated?: (order: Order) => void;
+  onEditPosOrder?: (order: Order) => void;
+  onOrderEdited?: (order: Order) => void;
+  onOrderDeleted?: (order: Order) => void;
 }) {
   const [actionKey, setActionKey] = useState<string | null>(null);
-  const [actionKind, setActionKind] = useState<'print' | 'invoice' | 'sync' | 'cancel' | null>(null);
+  const [actionKind, setActionKind] = useState<ExternalAction | null>(null);
+  const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [singlePrintOrder, setSinglePrintOrder] = useState<Order | null>(null);
 
   const handlePrintSingleInvoice = (order: Order) => {
@@ -365,6 +454,27 @@ export function ExternalOrdersTable({
       document.body.classList.remove('pos-invoice-printing');
     };
   }, [singlePrintOrder]);
+
+  const editOrder = (order: Order) => {
+    if (actionKey || printingOrderId) return;
+    if (isPosOrder(order)) onEditPosOrder?.(order);
+    else setEditingOrder(order);
+  };
+
+  const deleteOrder = async (order: Order) => {
+    if (actionKey || printingOrderId) return;
+    const hasWaybill = Boolean(trackingOf(order)) && providerOf(order) !== 'self';
+    if (!window.confirm(`Xóa vĩnh viễn đơn ${order.orderSn || order.id} khỏi phần mềm?` +
+      (hasWaybill ? '\nNếu cần hủy giao hàng, hãy hủy vận đơn với hãng trước khi xóa.' : '') +
+      (isPosOrder(order) ? '\nNếu cần hoàn tồn, hãy điều chỉnh trong kho.' : ''))) return;
+    setActionKey(orderKeyOf(order)); setActionKind('delete');
+    try {
+      await saveExternalOrder(order);
+      onOrderDeleted?.(order);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Không xóa được đơn.');
+    } finally { setActionKey(null); setActionKind(null); }
+  };
 
   const runGhnAction = async (order: Order, kind: 'sync' | 'cancel') => {
     const key = orderKeyOf(order);
@@ -483,6 +593,8 @@ export function ExternalOrdersTable({
                       onPrintInvoice={handlePrintSingleInvoice}
                       onSyncGhn={(o) => void runGhnAction(o, 'sync')}
                       onCancelGhn={(o) => void runGhnAction(o, 'cancel')}
+                      onEditOrder={editOrder}
+                      onDeleteOrder={(o) => void deleteOrder(o)}
                     />
                   </td>
                 </tr>
@@ -527,6 +639,8 @@ export function ExternalOrdersTable({
                   onPrintInvoice={handlePrintSingleInvoice}
                   onSyncGhn={(o) => void runGhnAction(o, 'sync')}
                   onCancelGhn={(o) => void runGhnAction(o, 'cancel')}
+                  onEditOrder={editOrder}
+                  onDeleteOrder={(o) => void deleteOrder(o)}
                 />
               </div>
             </div>
@@ -535,6 +649,7 @@ export function ExternalOrdersTable({
       </div>
       </div>
 
+      {editingOrder && <ExternalOrderContactDialog order={editingOrder} onClose={() => setEditingOrder(null)} onSaved={(order) => { setEditingOrder(null); onOrderEdited?.(order); }} />}
       {singlePrintOrder && typeof document !== 'undefined'
         ? createPortal(
             <div id="print-section" className="pos-invoice-reprint-host" aria-hidden="true">

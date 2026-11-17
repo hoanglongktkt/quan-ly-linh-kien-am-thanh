@@ -147,6 +147,12 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
       if (raw.shopee_order_status || raw.shopId || raw.shop_id) return 'shopee';
       return 'manual';
     })(),
+    source: typeof raw.source === 'string' ? raw.source : undefined,
+    is_quick_order: raw.is_quick_order === true ? true : undefined,
+    walk_in: raw.walk_in === true ? true : undefined,
+    prepaid_amount: raw.prepaid_amount ?? raw.prepaidAmount,
+    estimated_shipping_fee: raw.estimated_shipping_fee ?? (raw.shippingFee == null ? undefined : Number(raw.shippingFee)),
+    order_discount: raw.order_discount == null ? undefined : Number(raw.order_discount),
     shopId: raw.shopId
       ? String(raw.shopId)
       : raw.shop_id
@@ -549,6 +555,7 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
         ? String(raw.handed_over_source)
         : undefined,
     notes: raw.notes ? String(raw.notes) : undefined,
+    note: typeof raw.note === 'string' ? raw.note : undefined,
     // ── WooCommerce / Web customer info (BẮT BUỘC khôi phục) ──
     customerName: (() => {
       const addr = (raw as any).recipient_address;

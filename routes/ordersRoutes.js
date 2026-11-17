@@ -34,6 +34,10 @@ import {
   healHandedOver,
   createManualOrder,
   createPosOrder,
+  getPosOrder,
+  editPosOrder,
+  editExternalOrder,
+  deleteExternalOrder,
   printExternalWaybill,
   streamExternalWaybillFile,
   syncGhnOrderStatus,
@@ -58,6 +62,7 @@ import {
 import { scanBulkUpdate } from "../controllers/scanBulkController.js";
 import { parseOrderAddress } from "../controllers/parseAddressController.js";
 import { asyncHandler } from "../middlewares/errorHandler.js";
+import { listOrderDrafts, saveOrderDraft, deleteOrderDraft, withOrderDraft } from "../controllers/orderDraftsController.js";
 const router = Router();
 const h = asyncHandler;
 
@@ -104,9 +109,18 @@ router.post("/reconcile-handed-over", h(reconcileHandedOver));
 router.post("/hand-over-carrier/bulk", h(handOverCarrierBulk));
 router.post("/hand-over-carrier", h(handOverCarrierByCode));
 router.post("/heal-handed-over", h(healHandedOver));
-router.post("/manual", h(createManualOrder));
-router.post("/pos", h(createPosOrder));
+router.get("/drafts", h(listOrderDrafts));
+router.post("/drafts", h(saveOrderDraft));
+router.put("/drafts/:id", h(saveOrderDraft));
+router.delete("/drafts/:id", h(deleteOrderDraft));
+router.post("/manual", h(withOrderDraft(createManualOrder, "manual")));
+router.post("/pos", h(withOrderDraft(createPosOrder, "pos")));
+router.get("/pos/features", (_req, res) => res.set("Cache-Control", "no-store").json({ edit: true }));
+router.get("/pos/:id", h(getPosOrder));
+router.put("/pos/:id", h(editPosOrder));
 router.post("/external/print-waybill", h(printExternalWaybill));
+router.patch("/external/:id", h(editExternalOrder));
+router.delete("/external/:id", h(deleteExternalOrder));
 router.get("/external/waybill-file/:orderSn", h(streamExternalWaybillFile));
 router.get("/don-hoan-huy", h(listDonHoanHuy));
 router.post("/don-hoan-huy", h(saveScanOrders));

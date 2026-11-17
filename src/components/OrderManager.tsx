@@ -110,6 +110,8 @@ import {
 import { Order, ConnectedShop, SyncLog, Product, SystemFee } from '../types';
 import ManualOrderPage from './ManualOrderPage';
 import QuickPosPage from './QuickPosPage';
+import type { OrderDraft } from '../utils/orderDrafts';
+import OrderDraftsPage from './OrderDraftsPage';
 import { ExternalOrdersTable } from './ExternalOrdersTable';
 import { resolveLabelFetchUrl, parseJsonResponse, readResponseJson } from '../utils/apiClient';
 import { aggregateOrderProducts, type AggregatedOrderProduct } from '../utils/aggregateOrderProducts';
@@ -650,6 +652,7 @@ type OrderTab =
   | 'order_products'
   | 'web_orders'
   | 'external_orders'
+  | 'drafts'
   | 'quick_pos'
   | 'create_external';
 
@@ -671,6 +674,7 @@ const ORDER_TAB_SET = new Set<string>([
   'order_products',
   'web_orders',
   'external_orders',
+  'drafts',
   'quick_pos',
   'create_external',
 ]);
@@ -781,7 +785,7 @@ interface OrderManagerProps {
     hasMore: boolean;
     counters?: { total: number; returned: number; cancelled: number; rts: number };
   };
-  onUpdateOrders: (orders: Order[], opts?: { persist?: boolean }) => void;
+  onUpdateOrders: (orders: Order[], opts?: { persist?: boolean; invalidateList?: boolean }) => void;
   /** Chỉ đọc lại orders từ DB local — dùng sau xác nhận/in đơn để không ghi đè trạng thái */
   onFetchOrders?: (opts?: {
     silent?: boolean;
@@ -868,6 +872,7 @@ const WAKE_QUICK_SYNC_STORAGE_KEY = 'oms:wake-quick-sync-at:v1';
 /** Tab không có list đơn — poll counter vẫn chạy, không gọi /orders/refresh. */
 const ORDER_POLL_LISTLESS_TABS = new Set([
   'order_products',
+  'drafts',
   'quick_pos',
   'create_external',
 ]);
@@ -1004,6 +1009,11 @@ function isOrderCancelledStatus(order: Order): boolean {
 }
 
 /** Lớp lọc cuối — chặn đơn Hủy/Hoàn/RTS lẫn tab khi response cũ về muộn. */
+function orderListTabForQuery(tab: OrderTab, query: string): string {
+  if (tab === 'external_orders') return tab;
+  return query.trim() || tab === 'all' ? '' : tab;
+}
+
 function matchesStrictDisplaySubTab(
   order: Order,
   subTab: OrderTab,
@@ -1266,7 +1276,7 @@ export default function OrderManager({
   searchQueryRef.current = searchQuery;
   const listScopeRef = useRef({ tab: '', kind: undefined as string | undefined, page: 1, q: '' });
   listScopeRef.current = {
-    tab: searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab,
+    tab: orderListTabForQuery(activeSubTab, searchQuery),
     kind: searchQuery.trim()
       ? undefined
       : activeSubTab === 'cancel_returns'
@@ -1483,7 +1493,7 @@ export default function OrderManager({
 
   /** Cập nhật badge lạc quan ngay sau xác nhận — không chờ poll counter / cache BE. */
   const applyOptimisticTabCountDelta = useCallback(
-    (delta: Partial<Record<'unprocessed' | 'processed' | 'pending_confirm', number>>) => {
+    (delta: Partial<Record<'unprocessed' | 'processed' | 'pending_confirm' | 'external_orders', number>>) => {
       setServerOrderCounts((prev) => {
         if (!prev) return prev;
         const next = { ...prev };
@@ -1566,7 +1576,7 @@ export default function OrderManager({
         page,
         limit: ORDERS_PAGE_SIZE,
         merge: opts?.merge === true,
-        tab: searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab,
+        tab: orderListTabForQuery(activeSubTab, searchQuery),
         q: searchQuery.trim() || undefined,
         kind:
           searchQuery.trim()
@@ -2267,7 +2277,7 @@ export default function OrderManager({
 
     onPrepareTabFetchRef.current?.();
 
-    const expectedTab = searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab;
+    const expectedTab = orderListTabForQuery(activeSubTab, searchQuery);
     const expectedKind =
       searchQuery.trim()
         ? undefined
@@ -2283,6 +2293,7 @@ export default function OrderManager({
     const timer = window.setTimeout(() => {
       isListFetchingRef.current = true;
       setCurrentPage((p) => (p === 1 ? p : 1));
+      const hasSavedPosOrders = activeSubTab === 'external_orders' && recentPosOrders.length > 0;
       console.log(`[Orders Tab] activeSubTab=${activeSubTab} kind=${listFetchKind || '(none)'} shops=${shopIdsKey || '(all)'} → fetch page=1`);
       void Promise.resolve(
         onFetchOrdersRef.current?.({
@@ -2294,6 +2305,7 @@ export default function OrderManager({
           q: searchQuery.trim() || undefined,
           kind: expectedKind,
           signal: controller.signal,
+          ...(hasSavedPosOrders ? { force: true, bustCache: true } : {}),
         }),
       )
         .catch((error: unknown) => {
@@ -2308,6 +2320,7 @@ export default function OrderManager({
         })
         .then(async () => {
           if (controller.signal.aborted) return;
+          if (hasSavedPosOrders && counterBootReadyRef.current) await fetchOrderCounts({ force: true, signal: controller.signal });
           // P1: 1 counter sau refresh (kể cả khi refresh lỗi) — không force abort lẫn nhau.
           if (!counterBootReadyRef.current) {
             if (serverOrderCountsRef.current == null) {
@@ -2390,7 +2403,7 @@ export default function OrderManager({
       // Luôn về trang 1 khi bắt đầu / đổi từ khóa tìm kiếm.
       setCurrentPage(1);
       // Có từ khóa → ép UI về "Tất cả đơn hàng" (scope toàn cục), tránh fetch tab 2 lần.
-      if (q && activeSubTab !== 'all') {
+      if (q && activeSubTab !== 'all' && activeSubTab !== 'external_orders') {
         skipNextOrdersTabFetchRef.current = true;
         setActiveSubTab('all');
       }
@@ -2401,7 +2414,7 @@ export default function OrderManager({
           limit: ORDERS_PAGE_SIZE,
           merge: false,
           // Có search → luôn tab rỗng (tất cả đơn); không kẹp activeSubTab.
-          tab: q ? '' : activeSubTab === 'all' ? '' : activeSubTab,
+          tab: orderListTabForQuery(activeSubTab, q),
           q: q || undefined,
           kind:
             !q && activeSubTab === 'cancel_returns'
@@ -7088,6 +7101,29 @@ export default function OrderManager({
   const [showQuickPosPage, setShowQuickPosPage] = useState(
     () => activeSubTab === 'quick_pos',
   );
+  const [editingDraft, setEditingDraft] = useState<OrderDraft | null>(null);
+  const [editingPosOrder, setEditingPosOrder] = useState<Order | null>(null);
+  const [editingPosKey, setEditingPosKey] = useState('');
+  const [editingPosError, setEditingPosError] = useState('');
+  const [recentPosOrders, setRecentPosOrders] = useState<Order[]>([]);
+  useEffect(() => {
+    if (activeSubTab !== 'quick_pos') { setEditingPosKey(''); setEditingPosOrder(null); setEditingPosError(''); }
+  }, [activeSubTab]);
+  useEffect(() => {
+    if (!editingPosKey || activeSubTab !== 'quick_pos') return;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await fetch(`/api/orders/pos/${encodeURIComponent(editingPosKey)}`, { headers: authHeaders(), cache: 'no-store', signal: controller.signal });
+        const data = await response.json();
+        if (!response.ok || !data?.order?.id || !data?.order?.orderSn) throw new Error(data?.error || 'Không tải được đơn tạo nhanh.');
+        if (!controller.signal.aborted) setEditingPosOrder(data.order);
+      } catch (error: unknown) {
+        if (!controller.signal.aborted) setEditingPosError(error instanceof Error ? error.message : 'Không tải được đơn tạo nhanh.');
+      }
+    })();
+    return () => controller.abort();
+  }, [activeSubTab, editingPosKey]);
 
   /**
    * Tab "Đã giao cho ĐVVC": dò API Shopee ngầm (ACK) — khi đơn thật sự SHIPPED
@@ -7326,12 +7362,13 @@ export default function OrderManager({
     // Backend đã trả list chuẩn của tab Hủy/Hoàn — render 100%, không chặn shop/sàn/print.
     if (isBackendCancelReturnTab) return true;
 
-    if (selectedPlatform !== 'all') {
+    if (activeSubTab === 'external_orders' && order.channel !== 'manual') return false;
+    if (activeSubTab !== 'external_orders' && selectedPlatform !== 'all') {
       if (selectedPlatform === 'lazada') return false;
       if (order.channel !== selectedPlatform) return false;
     }
 
-    if (!matchesSelectedShop(order)) return false;
+    if (activeSubTab !== 'external_orders' && !matchesSelectedShop(order)) return false;
 
     if (printStatusFilter === 'printed' && !isOrderPrintedEffective(order)) return false;
     if (printStatusFilter === 'unprinted' && isOrderPrintedEffective(order)) return false;
@@ -7339,11 +7376,24 @@ export default function OrderManager({
     return true;
   };
 
+  const pendingPosOrders = useMemo(() => activeSubTab === 'external_orders' ? recentPosOrders.filter((order) => {
+    const created = orderCreatedAtMs(order);
+    return searchQuery.trim() || (created >= Date.parse(orderDateRange.startDate) && created <= Date.parse(orderDateRange.endDate));
+  }) : [], [activeSubTab, recentPosOrders, searchQuery, orderDateRange]);
+  useEffect(() => {
+    if (activeSubTab !== 'external_orders' || ordersAppliedTab !== 'external_orders' || !recentPosOrders.length) return;
+    const listedIds = new Set(orders.map((order) => order.id));
+    setRecentPosOrders((current) => {
+      const remaining = current.filter((order) => !listedIds.has(order.id));
+      return remaining.length === current.length ? current : remaining;
+    });
+  }, [activeSubTab, ordersAppliedTab, orders, recentPosOrders.length]);
   const ordersPoolBeforeCarrier = useMemo(
-    () => orders.filter(matchesOrdersListBaseFilters),
+    () => [...orders, ...pendingPosOrders.filter((order) => !orders.some((row) => row.id === order.id))].filter(matchesOrdersListBaseFilters),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mirrors live filter inputs below
     [
       orders,
+      pendingPosOrders,
       selectedPlatform,
       selectedShopId,
       searchQuery,
@@ -7353,7 +7403,7 @@ export default function OrderManager({
   );
 
   /** Badge count ĐVVC — cùng logic getShippingCarrierGroup với filter list. */
-  const expectedListTab = searchQuery.trim() ? '' : activeSubTab === 'all' ? '' : activeSubTab;
+  const expectedListTab = orderListTabForQuery(activeSubTab, searchQuery);
   const expectedListKind =
     !searchQuery.trim() && activeSubTab === 'cancel_returns'
       ? cancelReturnKindParam(cancelReturnTab) || ''
@@ -7558,7 +7608,7 @@ export default function OrderManager({
 
   const listMetaTotal = Number(ordersMeta?.total);
   const isRealEmptyList =
-    !ordersLoading && Number.isFinite(listMetaTotal) && listMetaTotal === 0;
+    !ordersLoading && Number.isFinite(listMetaTotal) && listMetaTotal === 0 && (activeSubTab !== 'external_orders' || displayOrders.length === 0);
   const isFilterEmptyList =
     !ordersLoading &&
     Number.isFinite(listMetaTotal) &&
@@ -9034,16 +9084,37 @@ export default function OrderManager({
     );
   }
 
+  if (activeSubTab === 'drafts') {
+    return <OrderDraftsPage
+      authHeaders={authHeaders}
+      onBack={() => selectOrdersSubTab('all')}
+      onEdit={(draft) => { setEditingDraft(draft); selectOrdersSubTab(draft.kind === 'pos' ? 'quick_pos' : 'create_external'); }}
+      onCreate={(kind) => { setEditingDraft(null); selectOrdersSubTab(kind === 'pos' ? 'quick_pos' : 'create_external'); }}
+    />;
+  }
+
   if (showQuickPosPage) {
+    if (editingPosKey && !editingPosOrder) return <div className="p-4 space-y-3"><button type="button" onClick={() => selectOrdersSubTab('external_orders')}>‹ Đơn ngoại sàn</button><p role={editingPosError ? 'alert' : 'status'}>{editingPosError || 'Đang tải đơn tạo nhanh…'}</p></div>;
     return (
       <QuickPosPage
+        key={editingPosOrder?.id || editingDraft?.id || 'new'}
+        initialDraft={editingDraft?.kind === 'pos' ? editingDraft : null}
+        initialOrder={editingPosOrder}
         products={products}
         orders={orders}
         onBack={() => {
-          setShowQuickPosPage(false);
+          setShowQuickPosPage(false); setEditingDraft(null); setEditingPosOrder(null);
           selectOrdersSubTab('external_orders');
         }}
-        onUpdateOrders={onUpdateOrders}
+        onDraftSaved={() => { setEditingDraft(null); setShowQuickPosPage(false); selectOrdersSubTab('drafts'); }}
+        onShowDrafts={() => { setShowQuickPosPage(false); selectOrdersSubTab('drafts'); }}
+        onOrderSaved={(order, created) => {
+          if (created) { setRecentPosOrders((current) => [order, ...current.filter((row) => row.id !== order.id)]); applyOptimisticTabCountDelta({ external_orders: 1 }); }
+          else setRecentPosOrders((current) => current.map((row) => row.id === order.id ? order : row));
+          onUpdateOrders(created ? orders : orders.map((item) => item.id === order.id ? order : item), { persist: false, invalidateList: true });
+        }}
+        onEditSavedOrder={(order) => { setEditingPosOrder(order); }}
+        onShowSavedOrders={() => { setSearchQuery(''); setDatePreset('30d'); resetListLocalFilters(); setSelectedPlatform('manual'); setSelectedShopId('all'); selectOrdersSubTab('external_orders'); }}
         onUpdateProduct={onUpdateProduct}
         onAddLog={onAddLog}
         authHeaders={authHeaders}
@@ -9054,12 +9125,12 @@ export default function OrderManager({
   if (showCreateOrderPage) {
     return (
       <ManualOrderPage
+        initialDraft={editingDraft?.kind === 'manual' ? editingDraft : null}
         products={products}
         orders={orders}
-        onBack={() => {
-          setShowCreateOrderPage(false);
-          selectOrdersSubTab('external_orders');
-        }}
+        onBack={() => { setShowCreateOrderPage(false); setEditingDraft(null); selectOrdersSubTab('external_orders'); }}
+        onDraftSaved={() => { setEditingDraft(null); setShowCreateOrderPage(false); selectOrdersSubTab('drafts'); }}
+        onShowDrafts={() => { setShowCreateOrderPage(false); selectOrdersSubTab('drafts'); }}
         onUpdateOrders={onUpdateOrders}
         onUpdateProduct={onUpdateProduct}
         onAddLog={onAddLog}
@@ -10159,7 +10230,7 @@ export default function OrderManager({
         </div>
       ) : (
       <div className="bg-white rounded-xl md:rounded-3xl border border-gray-100 shadow-xs overflow-hidden">
-        {ordersLoading ? (
+        {ordersLoading && !(pendingPosOrders.length > 0 && displayOrders.length > 0) ? (
           <div className="py-10 md:py-20 text-center text-gray-400 text-xs flex flex-col items-center gap-2 md:gap-3 px-3">
             <RefreshCw className="w-8 h-8 md:w-10 md:h-10 text-slate-300 animate-spin" />
             <span className="font-semibold text-slate-600">Đang tải danh sách đơn hàng...</span>
@@ -10213,6 +10284,17 @@ export default function OrderManager({
               orders={paginatedDisplayOrders}
               printingOrderId={printingOrderId}
               onPrintWaybill={(order) => void handlePrintExternalWaybill(order)}
+              onEditPosOrder={(order) => { setEditingPosOrder(null); setEditingPosError(''); setEditingPosKey(order.id || order.orderSn); selectOrdersSubTab('quick_pos'); }}
+              onOrderEdited={(updated) => {
+                const next = orders.map((o) => o.id === updated.id || o.orderSn === updated.orderSn ? updated : o);
+                onUpdateOrders(next, { persist: false, invalidateList: true });
+              }}
+              onOrderDeleted={(deleted) => {
+                setRecentPosOrders((current) => current.filter((o) => o.id !== deleted.id && o.orderSn !== deleted.orderSn));
+                onUpdateOrders(orders.filter((o) => o.id !== deleted.id && o.orderSn !== deleted.orderSn), { persist: false, invalidateList: true });
+                applyOptimisticTabCountDelta({ external_orders: -1 });
+                void refetchOrdersPageRef.current({ force: true, bustCache: true, page: 1 });
+              }}
               onOrderUpdated={(updated) => {
                 const sn = String(updated.orderSn || '').trim();
                 const id = String(updated.id || '').trim();

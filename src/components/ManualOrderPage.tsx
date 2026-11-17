@@ -4,6 +4,7 @@ import {
   Check,
   CreditCard,
   Loader2,
+  FileText,
   Package,
   Plus,
   Scale,
@@ -23,6 +24,8 @@ import {
 } from '../utils/vietnamAddress';
 import { postAddressBookEntry } from '../utils/addressBook';
 import { normalizeProductSearchText } from '../utils/productSearch';
+import { saveOrderDraft, type OrderDraft } from '../utils/orderDrafts';
+import { loadStoreInfo } from './PosInvoiceTemplate';
 
 export type ManualOrderItem = {
   productId: string;
@@ -36,6 +39,9 @@ export type ManualOrderItem = {
 };
 
 interface ManualOrderPageProps {
+  initialDraft?: OrderDraft | null;
+  onDraftSaved?: () => void;
+  onShowDrafts?: () => void;
   products: Product[];
   orders: Order[];
   onBack: () => void;
@@ -401,6 +407,7 @@ function ProductSearchCombobox({
 }
 
 export default function ManualOrderPage({
+  initialDraft, onDraftSaved, onShowDrafts,
   products,
   orders,
   onBack,
@@ -409,9 +416,14 @@ export default function ManualOrderPage({
   onAddLog,
   authHeaders,
 }: ManualOrderPageProps) {
-  const [shippingAddress, setShippingAddress] = useState<StructuredAddressValue>(emptyStructuredAddress());
+  const [draft, setDraft] = useState<OrderDraft | null>(initialDraft || null);
+  const newDraftId = useRef(crypto.randomUUID());
+  const restored = initialDraft?.payload;
+  const keepRestoredWeight = useRef(Boolean(initialDraft));
+  const [draftError, setDraftError] = useState('');
+  const [shippingAddress, setShippingAddress] = useState<StructuredAddressValue>(() => ({ ...emptyStructuredAddress(), ...initialDraft?.formState?.shippingAddress }));
   const [submitting, setSubmitting] = useState(false);
-  const [orderItems, setOrderItems] = useState<ManualOrderItem[]>([]);
+  const [orderItems, setOrderItems] = useState<ManualOrderItem[]>(restored?.items || []);
   const [extraProducts, setExtraProducts] = useState<Product[]>([]);
 
   const [productMode, setProductMode] = useState<'warehouse' | 'custom'>('warehouse');
@@ -429,19 +441,19 @@ export default function ManualOrderPage({
   const [customQty, setCustomQty] = useState(1);
   const [customWeight, setCustomWeight] = useState(100);
 
-  const [selectedCarrier, setSelectedCarrier] = useState<'self' | 'ghn' | 'spx'>('self');
+  const [selectedCarrier, setSelectedCarrier] = useState<'self' | 'ghn' | 'spx'>(restored?.carrier || 'self');
   const [ghnShopOptions, setGhnShopOptions] = useState<Array<{ id: string; label: string }>>([]);
-  const [selectedGhnShopId, setSelectedGhnShopId] = useState('');
-  const [carrierNotes, setCarrierNotes] = useState('Cho xem hàng không cho thử');
-  const [packageWeight, setPackageWeight] = useState(500);
-  const [packageLength, setPackageLength] = useState(10);
-  const [packageWidth, setPackageWidth] = useState(10);
-  const [packageHeight, setPackageHeight] = useState(10);
-  const [allowInspect, setAllowInspect] = useState(true);
-  const [partialDelivery, setPartialDelivery] = useState(false);
-  const [shippingFee, setShippingFee] = useState(0);
-  const [shippingFeePayer, setShippingFeePayer] = useState<'sender' | 'customer'>('customer');
-  const [orderDiscount, setOrderDiscount] = useState(0);
+  const [selectedGhnShopId, setSelectedGhnShopId] = useState(restored?.ghnShopId || '');
+  const [carrierNotes, setCarrierNotes] = useState(restored?.carrierNotes ?? 'Cho xem hàng không cho thử');
+  const [packageWeight, setPackageWeight] = useState(restored?.packageWeight ?? 500);
+  const [packageLength, setPackageLength] = useState(restored?.packageLength ?? 10);
+  const [packageWidth, setPackageWidth] = useState(restored?.packageWidth ?? 10);
+  const [packageHeight, setPackageHeight] = useState(restored?.packageHeight ?? 10);
+  const [allowInspect, setAllowInspect] = useState(restored?.allowInspect ?? true);
+  const [partialDelivery, setPartialDelivery] = useState(restored?.partialDelivery ?? false);
+  const [shippingFee, setShippingFee] = useState(restored?.shippingFee ?? 0);
+  const [shippingFeePayer, setShippingFeePayer] = useState<'sender' | 'customer'>(restored?.shippingFeePayer || 'customer');
+  const [orderDiscount, setOrderDiscount] = useState(restored?.orderDiscount ?? 0);
 
   const itemsSubtotal = orderItems.reduce((sum, it) => sum + it.price * it.quantity, 0);
   const totalWeightGrams = orderItems.reduce((sum, it) => sum + it.weightGrams * it.quantity, 0);
@@ -454,6 +466,7 @@ export default function ManualOrderPage({
   }, [products, extraProducts]);
 
   useEffect(() => {
+    if (keepRestoredWeight.current) { keepRestoredWeight.current = false; return; }
     if (orderItems.length > 0 && totalWeightGrams > 0) {
       setPackageWeight(totalWeightGrams);
     }
@@ -603,6 +616,36 @@ export default function ManualOrderPage({
     setOrderItems((prev) => prev.filter((it) => it.productId !== prodId));
   };
 
+  const buildPayload = () => ({
+    customerName: shippingAddress.name.trim(), customerPhone: shippingAddress.phone.trim(),
+    save_to_address_book: shippingAddress.saveToAddressBook === true,
+    addressMode: shippingAddress.addressMode,
+    shippingAddress: {
+      name: shippingAddress.name.trim(), phone: shippingAddress.phone.trim(),
+      province: shippingAddress.provinceName, provinceCode: shippingAddress.provinceCode,
+      district: shippingAddress.districtName, districtCode: shippingAddress.districtCode,
+      ward: shippingAddress.wardName, wardCode: shippingAddress.wardCode,
+      street: shippingAddress.street.trim(), addressMode: shippingAddress.addressMode,
+    },
+    items: orderItems, carrier: selectedCarrier,
+    ghnShopId: selectedCarrier === 'ghn' ? String(selectedGhnShopId || '').trim() : undefined,
+    shopId: selectedCarrier === 'ghn' ? String(selectedGhnShopId || '').trim() : undefined,
+    packageWeight: packageWeight || totalWeightGrams || 500,
+    packageLength, packageWidth, packageHeight, shippingFee, shippingFeePayer,
+    orderDiscount, carrierNotes, allowInspect, partialDelivery,
+  });
+
+  const saveDraft = async () => {
+    if (submitting || !orderItems.length) return;
+    setSubmitting(true); setDraftError('');
+    try {
+      const saved = await saveOrderDraft({ kind: 'manual', payload: buildPayload(), formState: { shippingAddress }, storeInfo: draft?.storeInfo || loadStoreInfo() }, draft, newDraftId.current, authHeaders);
+      setDraft(saved); onDraftSaved?.();
+    } catch (error: unknown) {
+      setDraftError(error instanceof Error ? error.message : 'Không lưu được đơn nháp.');
+    } finally { setSubmitting(false); }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isStructuredAddressComplete(shippingAddress)) {
@@ -623,38 +666,7 @@ export default function ManualOrderPage({
       const res = await fetch('/api/orders/manual', {
         method: 'POST',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customerName: shippingAddress.name.trim(),
-          customerPhone: shippingAddress.phone.trim(),
-          save_to_address_book: shippingAddress.saveToAddressBook === true,
-          addressMode: shippingAddress.addressMode,
-          shippingAddress: {
-            name: shippingAddress.name.trim(),
-            phone: shippingAddress.phone.trim(),
-            province: shippingAddress.provinceName,
-            provinceCode: shippingAddress.provinceCode,
-            district: shippingAddress.districtName,
-            districtCode: shippingAddress.districtCode,
-            ward: shippingAddress.wardName,
-            wardCode: shippingAddress.wardCode,
-            street: shippingAddress.street.trim(),
-            addressMode: shippingAddress.addressMode,
-          },
-          items: orderItems,
-          carrier: selectedCarrier,
-          ghnShopId: selectedCarrier === 'ghn' ? String(selectedGhnShopId || '').trim() : undefined,
-          shopId: selectedCarrier === 'ghn' ? String(selectedGhnShopId || '').trim() : undefined,
-          packageWeight: packageWeight || totalWeightGrams || 500,
-          packageLength,
-          packageWidth,
-          packageHeight,
-          shippingFee,
-          shippingFeePayer,
-          orderDiscount,
-          carrierNotes,
-          allowInspect,
-          partialDelivery,
-        }),
+        body: JSON.stringify({ ...buildPayload(), ...(draft ? { draftId: draft.id, draftVersion: draft.version } : {}) }),
       });
 
       const data = await res.json().catch(() => ({}));
@@ -670,7 +682,7 @@ export default function ManualOrderPage({
         return;
       }
 
-      if (onUpdateProduct) {
+      if (onUpdateProduct && !data.draftReplay) {
         orderItems
           .filter((it) => !it.isCustom)
           .forEach((item) => {
@@ -685,7 +697,7 @@ export default function ManualOrderPage({
       }
 
       if (data.orders) onUpdateOrders(data.orders);
-      else onUpdateOrders([newOrder, ...orders]);
+      else onUpdateOrders([newOrder, ...orders.filter((order) => order.id !== newOrder.id)]);
 
       onAddLog({
         id: `log-${Date.now()}`,
@@ -770,6 +782,10 @@ export default function ManualOrderPage({
         </div>
       </div>
 
+      <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+        <span>{draft ? `Đang sửa ${draft.number}. Chọn Xác nhận & Tạo đơn khi khách chốt.` : 'Có thể lưu nháp làm báo giá khi chưa đủ thông tin giao hàng.'}</span>
+        <button type="button" onClick={onShowDrafts} disabled={submitting} className="ml-3 font-extrabold underline">Đơn nháp / Báo giá</button>
+      </div>
       <form onSubmit={handleSubmit} className="flex-1 grid grid-cols-1 xl:grid-cols-12 gap-6">
         <div className="xl:col-span-5 space-y-5">
           <section className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
@@ -1202,7 +1218,9 @@ export default function ManualOrderPage({
             )}
           </section>
 
-          <div className="flex justify-end gap-3 pb-4">
+          {draftError && <div role="alert" className="rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{draftError}</div>}
+          <div className="flex flex-wrap justify-end gap-3 pb-4">
+            <button type="button" disabled={submitting || orderItems.length === 0} onClick={() => void saveDraft()} className="px-6 py-3 bg-amber-50 border border-amber-300 text-amber-900 font-bold text-sm rounded-xl flex items-center gap-2 disabled:opacity-50"><FileText className="w-4 h-4" /> Lưu đơn nháp</button>
             <button
               type="button"
               onClick={onBack}
