@@ -851,6 +851,7 @@ interface OrderManagerProps {
   /** Báo App khi user đổi sub-tab (để giữ hint/menu + URL đồng bộ) */
   onOrdersSubTabChange?: (tab: OrderTab) => void;
   onExternalOrderCountChange?: (count: number) => void;
+  onWebOrderCountChange?: (count: number) => void;
   /** Waterfall F5: báo App sau khi refresh + counter boot xong — mới load products/tab phụ. */
   onOrdersBootReady?: () => void;
 }
@@ -1169,6 +1170,7 @@ export default function OrderManager({
   onDismissPushOrder,
   onOrdersSubTabChange,
   onExternalOrderCountChange,
+  onWebOrderCountChange,
   onOrdersBootReady,
 }: OrderManagerProps) {
   const [currentPage, setCurrentPage] = useState(1);
@@ -1334,6 +1336,9 @@ export default function OrderManager({
       onExternalOrderCountChange?.(externalOrderCount);
     }
   }, [externalOrderCount, onExternalOrderCountChange]);
+  useEffect(() => {
+    onWebOrderCountChange?.(Number(serverOrderCounts?.web_orders) || 0);
+  }, [serverOrderCounts, onWebOrderCountChange]);
   const serverOrderCountsRef = useRef<Record<string, number> | null>(null);
   const [fulfillmentProducts, setFulfillmentProducts] = useState<AggregatedOrderProduct[] | null>(null);
   const [fulfillmentProductsLoading, setFulfillmentProductsLoading] = useState(false);
@@ -2208,6 +2213,10 @@ export default function OrderManager({
       initialOrdersSubTab === 'pending_verification'
         ? 'pending_confirm'
         : normalizeOrderTab(initialOrdersSubTab) || initialOrdersSubTab;
+    if (next === 'web_orders') {
+      setSelectedPlatform('woocommerce');
+      setSelectedShopId('all');
+    }
     if (next === 'quick_pos') {
       setShowQuickPosPage(true);
       setShowCreateOrderPage(false);
@@ -9676,24 +9685,7 @@ export default function OrderManager({
           </span>
         </button>
 
-        <button
-          onClick={() => {
-            selectOrdersSubTab('web_orders');
-            setSelectedPlatform('woocommerce');
-            setSelectedShopId('all');
-          }}
-          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 max-md:w-full max-md:justify-start max-md:text-left text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
-            activeSubTab === 'web_orders'
-              ? 'border-indigo-600 text-indigo-700 font-extrabold bg-indigo-50/40'
-              : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
-          }`}
-        >
-          <span className="w-4 h-4 bg-indigo-600 text-white font-extrabold text-[9px] rounded flex items-center justify-center shrink-0">W</span>
-          <span className="uppercase text-left">Đơn trên web</span>
-          <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200">
-            {getCount('web_orders')}
-          </span>
-        </button>
+
 
       </div>
       )}

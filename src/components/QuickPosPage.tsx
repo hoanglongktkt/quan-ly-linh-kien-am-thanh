@@ -737,6 +737,8 @@ export default function QuickPosPage({
             />
             Mua tại cửa hàng
           </label>
+          {!walkIn && (
+            <>
           <input
             type="text"
             value={customerName}
@@ -812,6 +814,8 @@ export default function QuickPosPage({
             rows={2}
             className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium resize-y"
           />
+            </>
+          )}
         </section>
 
         <section className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-4 space-y-4 shadow-sm">
@@ -819,6 +823,7 @@ export default function QuickPosPage({
             <h2 className="text-sm font-extrabold text-slate-800 mb-2">Sản phẩm</h2>
             <ImportProductSearchSelect
               ref={searchRef}
+              compactAddButton
               onSelect={addProduct}
               placeholder="Gõ tên / SKU để thêm sản phẩm…"
               excludeIds={[]}
@@ -976,7 +981,7 @@ export default function QuickPosPage({
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 rounded-xl bg-slate-50 border border-slate-100 p-3">
             {editing && <label className="text-xs font-bold text-slate-600 space-y-1"><span>Giảm giá đơn</span><input type="number" min={0} value={orderDiscount} onChange={(e) => setOrderDiscount(Math.max(0, Math.round(Number(e.target.value) || 0)))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold" /></label>}
-            <label className="text-xs font-bold text-slate-600 space-y-1">
+            <label className="hidden md:block text-xs font-bold text-slate-600 space-y-1">
               <span>Phí giao hàng ước tính</span>
               <input
                 type="number"
@@ -986,7 +991,7 @@ export default function QuickPosPage({
                 className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold"
               />
             </label>
-            <label className="text-xs font-bold text-slate-600 space-y-1">
+            <label className="hidden md:block text-xs font-bold text-slate-600 space-y-1">
               <span>Đã trả trước</span>
               <input
                 type="number"

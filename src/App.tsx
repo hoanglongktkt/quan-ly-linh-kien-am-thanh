@@ -811,6 +811,7 @@ export default function App() {
     resolveOrdersSubTabFromUrl(),
   );
   const [externalOrderCount, setExternalOrderCount] = useState(0);
+  const [webOrderCount, setWebOrderCount] = useState(0);
   // Mobile: tab 'products' có 2 màn — Kiểm hàng (audit) và Danh sách sản phẩm (list).
   const [mobileProductsView, setMobileProductsView] = useState(readMobileProductsView);
 
@@ -2819,14 +2820,14 @@ export default function App() {
     activeTab === 'orders' && ordersSubTabHint === id;
 
   const ordersChildNavClass = (id: OrdersSubTabId, activeBg: string) =>
-    `w-full flex items-center gap-2.5 pl-8 pr-3 py-2 min-h-9 rounded-lg text-left text-[11px] font-semibold tracking-wide transition-all cursor-pointer ${
+    `w-full flex items-center gap-2.5 pl-8 pr-3 py-2 min-h-9 rounded-lg text-left text-[11px] font-semibold uppercase tracking-wide transition-all cursor-pointer ${
       isOrdersChildNav(id)
         ? `${activeBg} text-white font-bold shadow-sm`
         : 'hover:bg-slate-800 hover:text-slate-200 text-slate-500'
     }`;
 
   const isOrdersChildTab = ordersSubTabHint === 'quick_pos' || ordersSubTabHint === 'create_external' ||
-    ordersSubTabHint === 'external_orders' || ordersSubTabHint === 'drafts';
+    ordersSubTabHint === 'external_orders' || ordersSubTabHint === 'drafts' || ordersSubTabHint === 'web_orders';
   const hideDesktopOrdersHeader = activeTab === 'orders' && ordersSubTabHint !== 'received_cancel_returns';
 
   const goOrdersTab = (ordersSubTab?: OrdersSubTabId | null) => {
@@ -2856,6 +2857,13 @@ export default function App() {
 
   const ordersChildNavigation = (
     <div role="group" aria-label="Các mục trong Quản lý đơn hàng" className="space-y-1">
+      <button type="button" onClick={() => goOrdersTab('web_orders')}
+        className={ordersChildNavClass('web_orders', 'bg-indigo-600')}
+        aria-current={isOrdersChildNav('web_orders') ? 'page' : undefined}>
+        <span className="w-3.5 h-3.5 bg-indigo-600 text-white font-extrabold text-[9px] rounded flex items-center justify-center shrink-0">W</span>
+        <span className="flex-1">ĐƠN TRÊN WEB</span>
+        <span className="rounded-full bg-indigo-100 px-1.5 text-[10px] font-bold text-indigo-800 tabular-nums">{webOrderCount}</span>
+      </button>
       <button type="button" onClick={() => goOrdersTab('quick_pos')} className={ordersChildNavClass('quick_pos', 'bg-sky-600')}>
         <Zap className="w-3.5 h-3.5 shrink-0" /> Tạo đơn nhanh
       </button>
@@ -3357,6 +3365,7 @@ export default function App() {
                 writeSessionTab('omni_orders_subtab', tab);
               }}
               onExternalOrderCountChange={setExternalOrderCount}
+              onWebOrderCountChange={setWebOrderCount}
               onOpenPickingOrder={(order) => navigateTab('picking', { pickingOrder: order })}
               onOrdersBootReady={() => {
                 setOrdersNetworkBootReady((prev) => (prev ? prev : true));

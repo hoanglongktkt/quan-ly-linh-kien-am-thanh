@@ -24,6 +24,7 @@ interface ImportProductSearchSelectProps {
   placeholder?: string;
   excludeIds?: string[];
   onProductCreated?: (product: Product) => void;
+  compactAddButton?: boolean;
 }
 
 const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, ImportProductSearchSelectProps>(
@@ -33,6 +34,7 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
       placeholder = 'F3 — Gõ SKU hoặc tên sản phẩm, Enter để thêm vào bảng...',
       excludeIds = [],
       onProductCreated,
+      compactAddButton = false,
     },
     ref,
   ) {
@@ -256,11 +258,13 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
             <button
               type="button"
               onClick={openQuickAdd}
-              className="shrink-0 h-12 px-3 sm:px-4 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs sm:text-sm rounded-xl border border-emerald-200 inline-flex items-center gap-1.5 whitespace-nowrap transition-colors"
+              aria-label="Thêm sản phẩm mới"
+              title="Thêm sản phẩm mới"
+              className={`shrink-0 h-12 ${compactAddButton ? 'w-12 justify-center px-0' : 'px-3 sm:px-4'} bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs sm:text-sm rounded-xl border border-emerald-200 inline-flex items-center gap-1.5 whitespace-nowrap transition-colors`}
             >
-              <Plus className="w-4 h-4" />
-              <span className="hidden sm:inline">Thêm sản phẩm mới</span>
-              <span className="sm:hidden">Thêm mới</span>
+              <Plus className={compactAddButton ? "w-7 h-7" : "w-4 h-4"} aria-hidden="true" />
+              {!compactAddButton && <><span className="hidden sm:inline">Thêm sản phẩm mới</span>
+              <span className="sm:hidden">Thêm mới</span></>}
             </button>
           </div>
 
