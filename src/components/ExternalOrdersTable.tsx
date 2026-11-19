@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Loader2, Printer, RefreshCw, Ban, Receipt, Pencil, Trash2, Eye, X } from 'lucide-react';
+import { Loader2, Printer, RefreshCw, Ban, Pencil, Trash2, Eye, X } from 'lucide-react';
 import type { Order } from '../types';
 import type { MobileOrderCardControls } from './OrderListRows';
 import { orderCreatedAtMs, parseOrderTimeMs } from '../utils/sanitizeOrder';
@@ -365,7 +365,7 @@ function GhnActionButtons({
 
   const iconClass = 'inline-flex size-10 shrink-0 items-center justify-center rounded-lg transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40 disabled:cursor-not-allowed';
   return (
-    <div className="inline-flex max-w-[11rem] flex-wrap items-center justify-center gap-1">
+    <div className="inline-grid grid-cols-4 items-center justify-items-center gap-1">
       <button type="button" onClick={() => onViewOrder(order)} title="Xem đơn" aria-label="Xem đơn" className={`${iconClass} text-sky-700 hover:bg-sky-50`}>
         <Eye className="size-4" aria-hidden="true" />
       </button>
@@ -386,7 +386,7 @@ function GhnActionButtons({
         {invoiceBusy ? (
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
         ) : (
-          <Receipt className="w-3.5 h-3.5" />
+          <Printer className="size-4" aria-hidden="true" />
         )}
       </button>
       {!pos && <>
@@ -588,7 +588,7 @@ export function ExternalOrdersTable({
               <th className="p-4">Địa chỉ</th>
               <th className="p-4 text-right w-32">Tiền thu hộ (COD)</th>
               <th className="p-4 text-center w-40">Trạng thái</th>
-              <th className="p-4 text-center w-40">Thao tác</th>
+              <th className="p-4 text-center w-52 min-w-52">Thao tác</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
