@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Loader2, Printer, RefreshCw, Ban, Receipt, Pencil, Trash2 } from 'lucide-react';
+import { Loader2, Printer, RefreshCw, Ban, Receipt, Pencil, Trash2, Eye, X } from 'lucide-react';
 import type { Order } from '../types';
 import type { MobileOrderCardControls } from './OrderListRows';
 import { orderCreatedAtMs, parseOrderTimeMs } from '../utils/sanitizeOrder';
@@ -274,6 +274,60 @@ function ExternalOrderContactDialog({ order, onClose, onSaved }: {
   );
 }
 
+function ExternalOrderDetailsDialog({ order, onClose }: { order: Order; onClose: () => void }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const invoice = buildPosInvoiceFromOrder(order);
+  const status = STATUS_META[resolveExternalStatus(order)];
+  useEffect(() => { dialogRef.current?.showModal(); }, []);
+  const money = (value: number) => value.toLocaleString('vi-VN') + ' đ';
+  return createPortal(
+    <dialog ref={dialogRef} aria-labelledby="external-order-details-title"
+      onCancel={(event) => { event.preventDefault(); onClose(); }}
+      className="om-no-print m-auto max-h-[90dvh] w-[94vw] max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 text-slate-800 shadow-xl backdrop:bg-slate-950/50">
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 id="external-order-details-title" className="break-words text-lg font-bold">Chi tiết đơn {order.orderSn || order.id}</h2>
+          <span className={`mt-2 inline-block rounded-full border px-2.5 py-1 text-xs font-semibold ${status.className}`}>{status.label}</span>
+        </div>
+        <button type="button" onClick={onClose} title="Đóng" aria-label="Đóng chi tiết đơn" className="inline-flex size-10 shrink-0 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2">
+          <X className="size-5" aria-hidden="true" />
+        </button>
+      </div>
+      <div className="space-y-2 break-words text-sm">
+        <OrderTimeCell order={order} status={resolveExternalStatus(order)} />
+        <p><strong>Khách hàng:</strong> {invoice.customerName}</p>
+        <p><strong>Điện thoại:</strong> {invoice.customerPhone}</p>
+        <p><strong>Địa chỉ:</strong> {invoice.customerAddress}</p>
+        <p><strong>Mã vận đơn:</strong> {trackingOf(order) || 'Chưa có mã hãng'}</p>
+      </div>
+      <div className="my-4 overflow-x-auto">
+        <table className="w-full min-w-[420px] text-left text-xs">
+          <caption className="mb-2 text-left text-sm font-bold">Sản phẩm trong đơn</caption>
+          <thead className="bg-slate-50"><tr>
+            <th className="p-2">Sản phẩm</th><th className="p-2 text-right">SL</th>
+            <th className="p-2 text-right">Đơn giá</th><th className="p-2 text-right">Thành tiền</th>
+          </tr></thead>
+          <tbody>{invoice.lines.length ? invoice.lines.map((line, index) => (
+            <tr key={index} className="border-b border-slate-100">
+              <td className="p-2">{line.productTitle}</td><td className="p-2 text-right">{line.quantity}</td>
+              <td className="whitespace-nowrap p-2 text-right">{money(line.sellingPrice)}</td>
+              <td className="whitespace-nowrap p-2 text-right font-semibold">{money(line.lineTotal)}</td>
+            </tr>
+          )) : <tr><td colSpan={4} className="p-3 text-center text-slate-500">Chưa có dòng hàng</td></tr>}</tbody>
+        </table>
+      </div>
+      <dl className="ml-auto max-w-sm space-y-2 text-sm">
+        <div className="flex justify-between gap-3"><dt>Tạm tính</dt><dd>{money(invoice.subtotal)}</dd></div>
+        <div className="flex justify-between gap-3"><dt>Phí giao hàng</dt><dd>{money(invoice.shippingFee)}</dd></div>
+        <div className="flex justify-between gap-3"><dt>Giảm giá</dt><dd>{money(invoice.discount)}</dd></div>
+        <div className="flex justify-between gap-3"><dt>Đã trả trước</dt><dd>{money(invoice.prepaid)}</dd></div>
+        <div className="flex justify-between gap-3 border-t pt-2 font-bold"><dt>Tiền thu hộ (COD)</dt><dd>{money(codOf(order))}</dd></div>
+      </dl>
+      {invoice.note && <p className="mt-4 whitespace-pre-wrap break-words text-sm"><strong>Ghi chú:</strong> {invoice.note}</p>}
+    </dialog>, document.body,
+  );
+}
+
 type ExternalAction = 'print' | 'invoice' | 'sync' | 'cancel' | 'delete';
 
 function GhnActionButtons({
@@ -285,6 +339,7 @@ function GhnActionButtons({
   onCancelGhn,
   onEditOrder,
   onDeleteOrder,
+  onViewOrder,
 }: {
   order: Order;
   busyKind: 'print' | 'invoice' | 'sync' | 'cancel' | 'delete' | null;
@@ -292,6 +347,7 @@ function GhnActionButtons({
   onPrintInvoice: (order: Order) => void;
   onSyncGhn: (order: Order) => void;
   onCancelGhn: (order: Order) => void;
+  onViewOrder: (order: Order) => void;
   onEditOrder?: (order: Order) => void;
   onDeleteOrder?: (order: Order) => void;
 }) {
@@ -307,19 +363,24 @@ function GhnActionButtons({
   const canCancel = canGhn && st !== 'cancelled' && st !== 'delivered';
   const pos = isPosOrder(order);
 
+  const iconClass = 'inline-flex size-10 shrink-0 items-center justify-center rounded-lg transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40 disabled:cursor-not-allowed';
   return (
-    <div className="inline-flex flex-col items-stretch gap-1 min-w-[8.5rem]">
-      {(!pos || (st !== 'cancelled' && st !== 'rts')) && <button type="button" disabled={anyBusy} onClick={() => onEditOrder?.(order)} className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-lg disabled:opacity-50">
-        <Pencil className="w-3.5 h-3.5" /> Sửa đơn
+    <div className="inline-flex max-w-[11rem] flex-wrap items-center justify-center gap-1">
+      <button type="button" onClick={() => onViewOrder(order)} title="Xem đơn" aria-label="Xem đơn" className={`${iconClass} text-sky-700 hover:bg-sky-50`}>
+        <Eye className="size-4" aria-hidden="true" />
+      </button>
+      {(!pos || (st !== 'cancelled' && st !== 'rts')) && <button type="button" disabled={anyBusy} onClick={() => onEditOrder?.(order)} title="Sửa đơn" aria-label="Sửa đơn" className={`${iconClass} text-slate-600 hover:bg-slate-100`}>
+        <Pencil className="size-4" aria-hidden="true" />
       </button>}
-      <button type="button" disabled={anyBusy} onClick={() => onDeleteOrder?.(order)} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-50">
-        {busyKind === 'delete' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />} Xóa đơn
+      <button type="button" disabled={anyBusy} onClick={() => onDeleteOrder?.(order)} title="Xóa đơn" aria-label="Xóa đơn" className={`${iconClass} text-rose-600 hover:bg-rose-50`}>
+        {busyKind === 'delete' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
       </button>
       <button
         type="button"
         disabled={anyBusy}
         onClick={() => onPrintInvoice(order)}
-        className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold text-[10px] rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+        aria-label="In hóa đơn"
+        className={`${iconClass} text-amber-600 hover:bg-amber-50`}
         title="In lại hóa đơn bán lẻ (POS) cho khách"
       >
         {invoiceBusy ? (
@@ -327,14 +388,14 @@ function GhnActionButtons({
         ) : (
           <Receipt className="w-3.5 h-3.5" />
         )}
-        In hóa đơn
       </button>
       {!pos && <>
       <button
         type="button"
         disabled={anyBusy || provider === 'self' || !tn}
         onClick={() => onPrintWaybill(order)}
-        className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+        aria-label="In vận đơn"
+        className={`${iconClass} text-blue-600 hover:bg-blue-50`}
         title={
           provider === 'self'
             ? 'Đơn tự giao không có phiếu bưu cục'
@@ -348,13 +409,13 @@ function GhnActionButtons({
         ) : (
           <Printer className="w-3.5 h-3.5" />
         )}
-        In vận đơn
       </button>
       <button
         type="button"
         disabled={anyBusy || !canGhn}
         onClick={() => onSyncGhn(order)}
-        className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+        aria-label="Đồng bộ GHN"
+        className={`${iconClass} text-emerald-600 hover:bg-emerald-50`}
         title={!canGhn ? 'Chỉ đồng bộ đơn GHN đã có mã vận đơn' : 'Lấy trạng thái mới nhất từ GHN'}
       >
         {syncBusy ? (
@@ -362,13 +423,13 @@ function GhnActionButtons({
         ) : (
           <RefreshCw className="w-3.5 h-3.5" />
         )}
-        Đồng bộ GHN
       </button>
       <button
         type="button"
         disabled={anyBusy || !canCancel}
         onClick={() => onCancelGhn(order)}
-        className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-[10px] rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+        aria-label="Hủy vận chuyển"
+        className={`${iconClass} text-rose-600 hover:bg-rose-50`}
         title={
           !canGhn
             ? 'Chỉ hủy vận đơn GHN'
@@ -378,7 +439,6 @@ function GhnActionButtons({
         }
       >
         {cancelBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ban className="w-3.5 h-3.5" />}
-        Hủy vận chuyển
       </button>
       </>}
     </div>
@@ -406,6 +466,7 @@ export function ExternalOrdersTable({
 }) {
   const [actionKey, setActionKey] = useState<string | null>(null);
   const [actionKind, setActionKind] = useState<ExternalAction | null>(null);
+  const [viewingOrder, setViewingOrder] = useState<Order | null>(null);
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [singlePrintOrder, setSinglePrintOrder] = useState<Order | null>(null);
 
@@ -596,6 +657,7 @@ export function ExternalOrdersTable({
                       onPrintInvoice={handlePrintSingleInvoice}
                       onSyncGhn={(o) => void runGhnAction(o, 'sync')}
                       onCancelGhn={(o) => void runGhnAction(o, 'cancel')}
+                      onViewOrder={setViewingOrder}
                       onEditOrder={editOrder}
                       onDeleteOrder={(o) => void deleteOrder(o)}
                     />
@@ -628,10 +690,11 @@ export function ExternalOrdersTable({
                 type="button"
                 disabled={Boolean(busyKind)}
                 onClick={() => canPrintWaybill ? onPrintWaybill(order) : handlePrintSingleInvoice(order)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-2.5 text-[11px] font-bold text-blue-700 active:bg-blue-50 disabled:opacity-60"
+                title={canPrintWaybill ? 'In vận đơn' : 'In hóa đơn'}
+                aria-label={canPrintWaybill ? 'In vận đơn' : 'In hóa đơn'}
+                className="inline-flex size-10 items-center justify-center rounded-lg text-blue-700 active:bg-blue-50 disabled:opacity-60"
               >
                 {busyKind === 'print' || busyKind === 'invoice' ? <Loader2 className="size-4 animate-spin" /> : <Printer className="size-4" />}
-                {canPrintWaybill ? 'In phiếu' : 'In hóa đơn'}
               </button>
             ),
             details: (
@@ -649,7 +712,8 @@ export function ExternalOrdersTable({
                   onPrintInvoice={handlePrintSingleInvoice}
                   onSyncGhn={(o) => void runGhnAction(o, 'sync')}
                   onCancelGhn={(o) => void runGhnAction(o, 'cancel')}
-                  onEditOrder={editOrder}
+                  onViewOrder={setViewingOrder}
+                      onEditOrder={editOrder}
                   onDeleteOrder={(order) => void deleteOrder(order)}
                 />
               </div>
@@ -659,6 +723,7 @@ export function ExternalOrdersTable({
       </div>}
       </div>
 
+      {viewingOrder && <ExternalOrderDetailsDialog order={viewingOrder} onClose={() => setViewingOrder(null)} />}
       {editingOrder && <ExternalOrderContactDialog order={editingOrder} onClose={() => setEditingOrder(null)} onSaved={(order) => { setEditingOrder(null); onOrderEdited?.(order); }} />}
       {singlePrintOrder && typeof document !== 'undefined'
         ? createPortal(
@@ -674,3 +739,4 @@ export function ExternalOrdersTable({
     </>
   );
 }
+
