@@ -1,3 +1,4 @@
+import { orderCustomerMatchesSearch } from "../utils/orderCustomerSearch";
 import { OrderProductImage } from './OrderProductImage';
 import OrderPushDetails from './OrderPushDetails';
 import { getOrderListFinance } from '../utils/orderListFinance';
@@ -1073,14 +1074,13 @@ function orderMatchesSearchKeyword(order: Order, rawKeyword: string): boolean {
     const cust = resolveWooCustomerInfo(order);
     if (
       cust &&
-      [cust.name, cust.phone, cust.email, cust.address].some((v) => hay(v).includes(q))
+      orderCustomerMatchesSearch([cust.name, cust.phone, cust.email, cust.address], rawKeyword)
     ) {
       return true;
     }
   }
 
-  if (hay(order.customerName).includes(q)) return true;
-  if (hay(order.customerPhone).includes(q)) return true;
+  if (orderCustomerMatchesSearch([order.customerName, order.customerPhone], rawKeyword)) return true;
   if (hay(order.customerEmail).includes(q)) return true;
   if (hay((order as { buyer_username?: string }).buyer_username).includes(q)) return true;
 
@@ -9761,7 +9761,7 @@ export default function OrderManager({
             <Search className="absolute left-3.5 top-3.5 text-gray-400 w-4 h-4" />
             <input 
               type="text" 
-              placeholder="Tìm kiếm theo mã đơn hàng, tên khách hàng, sản phẩm hoặc mã bưu cục..."
+              placeholder="Tìm theo tên khách, số điện thoại, mã đơn hoặc mã vận đơn..."
               value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.target.value);

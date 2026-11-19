@@ -1,0 +1,31 @@
+name: Build cPanel update
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/utils/orderCustomerSearch.ts"
+      - "src/db/mongoStore.ts"
+      - "src/components/OrderManager.tsx"
+      - ".github/workflows/build-cpanel-update.yml"
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsx --test scripts/test-order-customer-search.mjs
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cpanel-customer-search
+          path: |
+            dist/
+            server.cjs
+            server.cjs.map
+          retention-days: 14

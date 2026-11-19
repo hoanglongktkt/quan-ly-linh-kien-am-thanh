@@ -1,3 +1,4 @@
+import { buildOrderCustomerSearchClauses } from "../utils/orderCustomerSearch";
 import { coerceShopeeWatermarkDate, isValidTrackingNo } from "../../modules/orders/repositoryValues.ts";
 export { isValidTrackingNo } from "../../modules/orders/repositoryValues.ts";
 import { normalizeScannedCode, stripScannedSeparators } from "../../modules/orders/scanCode.ts";
@@ -10141,12 +10142,12 @@ export async function countOrdersByTabsFromStore(opts?: {
 }
 
 /**
- * Tìm đơn bằng exact/prefix trên các trường đã có index.
- * Không dùng $text hoặc regex contains vì có thể quét toàn collection và tăng CPU.
+ * Tìm mã đơn theo exact/prefix, đồng thời tìm tên và điện thoại khách hàng.
+ * Query luôn giữ scope đơn ngoại sàn, phân trang và maxTimeMS của danh sách.
  */
 function buildOrdersListSearchFilter(search: string): Record<string, unknown> | null {
   const q = String(search || "").trim();
-  if (q.length < 2) return null;
+  if (!q) return null;
   const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   // Regex có dấu ^ cho phép MongoDB dùng index B-tree với mã phân biệt hoa/thường.
   const startsWith = { $regex: `^${escaped}` };
@@ -10171,6 +10172,7 @@ function buildOrdersListSearchFilter(search: string): Record<string, unknown> | 
       { returnTrackingNumber: startsWith },
     );
   }
+  $or.push(...buildOrderCustomerSearchClauses(q));
   return { $or };
 }
 
