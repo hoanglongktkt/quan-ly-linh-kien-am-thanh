@@ -1343,6 +1343,12 @@ export default function OrderManager({
   const [fulfillmentProducts, setFulfillmentProducts] = useState<AggregatedOrderProduct[] | null>(null);
   const [fulfillmentProductsLoading, setFulfillmentProductsLoading] = useState(false);
   const fulfillmentAbortRef = useRef<AbortController | null>(null);
+  // Ghi nhớ phạm vi dữ liệu để poll nền không xóa danh sách đang xem.
+  const fulfillmentLoadedScopeRef = useRef('');
+  const fulfillmentInFlightRef = useRef<{
+    key: string;
+    promise: Promise<AggregatedOrderProduct[]>;
+  } | null>(null);
   const [hasNewOrders, setHasNewOrders] = useState(false);
   const [audioEnabled, setAudioEnabled] = useState(() => isAudioUnlockedState());
   const syncPollTimerRef = useRef<number | null>(null);
@@ -1523,50 +1529,68 @@ export default function OrderManager({
     serverOrderCountsRef.current = serverOrderCounts;
   }, [serverOrderCounts]);
 
-  const fetchFulfillmentProducts = useCallback(async (): Promise<AggregatedOrderProduct[]> => {
+  const fetchFulfillmentProducts = useCallback((): Promise<AggregatedOrderProduct[]> => {
     const token = localStorage.getItem('admin_token') || '';
-    if (!token) return [];
-    fulfillmentAbortRef.current?.abort();
+    if (!token) return Promise.resolve([]);
+    const shopIds = shopScopeRef.current.shopIds;
+    const range = getLiveDateRange();
+    const scopeKey = `${shopIds.join(',')}|${range.startDate || ''}|${range.endDate || ''}`;
+
+    // Poll counter có thể gọi refresh liên tiếp; dùng chung request cùng phạm vi.
+    const inFlight = fulfillmentInFlightRef.current;
+    if (inFlight?.key === scopeKey) return inFlight.promise;
+    if (inFlight) fulfillmentAbortRef.current?.abort();
+
     const controller = new AbortController();
     fulfillmentAbortRef.current = controller;
-    setFulfillmentProductsLoading(true);
-    try {
-      const shopIds = shopScopeRef.current.shopIds;
-      const range = getLiveDateRange();
-      const params = new URLSearchParams();
-      params.set('t', String(Date.now()));
-      if (shopIds.length === 1) params.set('shop_id', shopIds[0]);
-      else if (shopIds.length > 1) params.set('shop_ids', shopIds.join(','));
-      if (range.startDate) params.set('startDate', range.startDate);
-      if (range.endDate) params.set('endDate', range.endDate);
-      const res = await fetch(`/api/orders/products-summary?${params.toString()}`, {
-        cache: 'no-store',
-        signal: controller.signal,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          Pragma: 'no-cache',
-        },
-      });
-      const json = await res.json().catch(() => ({} as Record<string, unknown>));
-      const rows = Array.isArray(json?.data) ? (json.data as AggregatedOrderProduct[]) : [];
-      if (!controller.signal.aborted) setFulfillmentProducts(rows);
-      return rows;
-    } catch (err) {
-      const aborted =
-        (err instanceof DOMException && err.name === 'AbortError') ||
-        (typeof err === 'object' && err !== null && (err as { name?: string }).name === 'AbortError');
-      if (!aborted) {
-        console.warn('[OrderProducts] fetch products-summary failed:', err);
-        if (!controller.signal.aborted) setFulfillmentProducts([]);
-      }
-      return [];
-    } finally {
-      if (fulfillmentAbortRef.current === controller) {
-        fulfillmentAbortRef.current = null;
-        setFulfillmentProductsLoading(false);
-      }
+    if (fulfillmentLoadedScopeRef.current !== scopeKey) {
+      // Chỉ hiện trạng thái tải khi đổi phạm vi, không nhấp nháy khi poll nền.
+      fulfillmentLoadedScopeRef.current = '';
+      setFulfillmentProducts(null);
+      setFulfillmentProductsLoading(true);
     }
+    const request = (async (): Promise<AggregatedOrderProduct[]> => {
+      try {
+        const params = new URLSearchParams();
+        params.set('t', String(Date.now()));
+        if (shopIds.length === 1) params.set('shop_id', shopIds[0]);
+        else if (shopIds.length > 1) params.set('shop_ids', shopIds.join(','));
+        if (range.startDate) params.set('startDate', range.startDate);
+        if (range.endDate) params.set('endDate', range.endDate);
+        const res = await fetch(`/api/orders/products-summary?${params.toString()}`, {
+          cache: 'no-store',
+          signal: controller.signal,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            Pragma: 'no-cache',
+          },
+        });
+        const json = await res.json().catch(() => ({} as Record<string, unknown>));
+        const rows = Array.isArray(json?.data) ? (json.data as AggregatedOrderProduct[]) : [];
+        if (!controller.signal.aborted) {
+          setFulfillmentProducts(rows);
+          fulfillmentLoadedScopeRef.current = scopeKey;
+        }
+        return rows;
+      } catch (err) {
+        const aborted =
+          (err instanceof DOMException && err.name === 'AbortError') ||
+          (typeof err === 'object' && err !== null && (err as { name?: string }).name === 'AbortError');
+        if (!aborted) {
+          console.warn('[OrderProducts] fetch products-summary failed:', err);
+        }
+        return [];
+      } finally {
+        if (fulfillmentAbortRef.current === controller) {
+          fulfillmentAbortRef.current = null;
+          fulfillmentInFlightRef.current = null;
+          setFulfillmentProductsLoading(false);
+        }
+      }
+    })();
+    fulfillmentInFlightRef.current = { key: scopeKey, promise: request };
+    return request;
   }, []);
 
   const refetchOrdersPage = useCallback(
