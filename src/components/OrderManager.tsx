@@ -880,8 +880,8 @@ function buildClientPageNumbers(current: number, totalPages: number): (number | 
 const SCAN_BG_STATUS_POLL_MS = 30_000;
 /** Không pending / unnotified — nới chu kỳ để giảm spam Network. */
 const SCAN_BG_STATUS_IDLE_POLL_MS = 60_000;
-/** Tab đang mở: poll 3s để đơn stub hiện gần real-time. Tab ẩn: 10s (tick tự bỏ qua). */
-const ORDERS_POLL_VISIBLE_MS = 3_000;
+/** Tab đang mở: poll 15s để giảm tải Mongo. Tab ẩn: 10s (tick tự bỏ qua). */
+const ORDERS_POLL_VISIBLE_MS = 15_000;
 const ORDERS_POLL_HIDDEN_MS = 10_000;
 /** Quay lại sau ngủ dài: chỉ cho một tab kích Quick Sync trong mỗi 15 phút. */
 const WAKE_QUICK_SYNC_COOLDOWN_MS = 15 * 60_000;
@@ -1027,9 +1027,9 @@ function isOrderCancelledStatus(order: Order): boolean {
 }
 
 /** Lớp lọc cuối — chặn đơn Hủy/Hoàn/RTS lẫn tab khi response cũ về muộn. */
-function orderListTabForQuery(tab: OrderTab, query: string): string {
-  if (tab === 'external_orders') return tab;
-  return query.trim() || tab === 'all' ? '' : tab;
+function orderListTabForQuery(tab: OrderTab, _query: string): string {
+  // Tìm kiếm vẫn giữ phạm vi tab hiện tại; chỉ tab Tất cả mới bỏ tham số tab.
+  return tab === 'all' ? '' : tab;
 }
 
 function matchesStrictDisplaySubTab(
@@ -1796,6 +1796,8 @@ export default function OrderManager({
     const tick = async () => {
       if (cancelled || inFlight) return;
       if (document.visibilityState === 'hidden') return;
+      // Không tranh chấp Mongo với request tìm kiếm hoặc tải danh sách.
+      if (searchQueryRef.current.trim() || isListFetchingRef.current) return;
       // Sync burst đang chạy → startSyncPolling đã tự poll counter, bỏ tick tránh /counter chồng.
       if (syncPollTimerRef.current != null) return;
       inFlight = true;
