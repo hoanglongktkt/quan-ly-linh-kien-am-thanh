@@ -2441,18 +2441,13 @@ export default function OrderManager({
     const handle = window.setTimeout(() => {
       // Luôn về trang 1 khi bắt đầu / đổi từ khóa tìm kiếm.
       setCurrentPage(1);
-      // Có từ khóa → ép UI về "Tất cả đơn hàng" (scope toàn cục), tránh fetch tab 2 lần.
-      if (q && activeSubTab !== 'all' && activeSubTab !== 'external_orders') {
-        skipNextOrdersTabFetchRef.current = true;
-        setActiveSubTab('all');
-      }
+      // Giữ nguyên tab hiện tại khi tìm kiếm; backend sẽ tìm trong đúng phạm vi tab.
       void Promise.resolve(
         onFetchOrdersRef.current?.({
           silent: false,
           page: 1,
           limit: ORDERS_PAGE_SIZE,
           merge: false,
-          // Có search → luôn tab rỗng (tất cả đơn); không kẹp activeSubTab.
           tab: orderListTabForQuery(activeSubTab, q),
           q: q || undefined,
           kind:
