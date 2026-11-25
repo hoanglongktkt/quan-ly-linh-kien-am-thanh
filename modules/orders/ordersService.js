@@ -94,17 +94,27 @@ export function mirrorTrackingFieldsForRead(order) {
 }
 
 /** Legacy mirror only: never block a Mongo-backed API response on orders.json. */
+async function writeOrdersJsonMirrorFile(orders) {
+  const sanitized = (Array.isArray(orders) ? orders : []).map(deps.repairMisassignedTracking);
+  await fs.promises.mkdir(path.dirname(ORDERS_DB_PATH), { recursive: true });
+  const tempPath = `${ORDERS_DB_PATH}.tmp`;
+  await fs.promises.writeFile(tempPath, JSON.stringify(sanitized), "utf-8");
+  await fs.promises.rename(tempPath, ORDERS_DB_PATH);
+  getOrderLookupIndex(sanitized);
+}
+
 export function queueOrdersJsonMirror(orders) {
   ordersJsonMirrorSnapshot = Array.isArray(orders) ? orders : [];
   if (ordersJsonMirrorQueued) return;
   ordersJsonMirrorQueued = true;
-  setImmediate(() => {
+  setImmediate(async () => {
     const snapshot = ordersJsonMirrorSnapshot;
     ordersJsonMirrorSnapshot = null;
     ordersJsonMirrorQueued = false;
     if (!snapshot) return;
     try {
-      saveOrders(snapshot);
+      await writeOrdersJsonMirrorFile(snapshot);
+      console.log(`[Orders JSON Mirror] WRITE OK — count=${snapshot.length}`);
     } catch (err) {
       console.warn("[Orders JSON Mirror] skipped:", err?.message || err);
     }

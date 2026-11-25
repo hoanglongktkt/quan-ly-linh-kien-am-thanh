@@ -22,6 +22,7 @@ import {
   X,
 } from 'lucide-react';
 import { Order, SyncLog } from '../types';
+import { createTimeoutSignal, isAbortError, readResponseJson } from '../utils/apiClient';
 
 interface OrderPickingProps {
   orders: Order[];
@@ -79,9 +80,32 @@ export default function OrderPicking({ orders, initialOrder, initialOrderCode, o
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const liveScannerRef = useRef<LiveQrScannerHandle | null>(null);
+  const mountedRef = useRef(true);
+  const lookupAbortRef = useRef<AbortController | null>(null);
+  const lookupSeqRef = useRef(0);
+  const submittingRef = useRef(false);
+  const packingAbortRef = useRef<AbortController | null>(null);
+  const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeOrderRef = useRef(activeOrder);
+  activeOrderRef.current = activeOrder;
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      lookupSeqRef.current += 1;
+      lookupAbortRef.current?.abort();
+      packingAbortRef.current?.abort();
+      if (focusTimerRef.current !== null) clearTimeout(focusTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
-    if (!initialOrderCode || initialOrder) return;
+    if (!initialOrderCode || initialOrder) {
+      setLoadingInitialOrder(false);
+      if (initialOrder) setActiveOrder(initialOrder);
+      return;
+    }
+    setLoadingInitialOrder(true);
     const controller = new AbortController();
     void lookupPickingOrder(initialOrderCode, safeGetItem('admin_token'), controller.signal)
       .then((order) => {
@@ -125,7 +149,14 @@ export default function OrderPicking({ orders, initialOrder, initialOrderCode, o
     setScanError('');
     setCameraOpen(false);
     setCameraError('');
-    setTimeout(() => inputRef.current?.focus(), 100);
+    lookupSeqRef.current += 1;
+    lookupAbortRef.current?.abort();
+    activeOrderRef.current = null;
+    if (focusTimerRef.current !== null) clearTimeout(focusTimerRef.current);
+    focusTimerRef.current = setTimeout(() => {
+      focusTimerRef.current = null;
+      if (mountedRef.current) inputRef.current?.focus();
+    }, 100);
   }, []);
 
   const rejectWrongStatus = useCallback((order: Order) => {
@@ -143,6 +174,12 @@ export default function OrderPicking({ orders, initialOrder, initialOrderCode, o
         return;
       }
 
+      if (submittingRef.current || activeOrderRef.current || !mountedRef.current) return;
+      lookupAbortRef.current?.abort();
+      const controller = new AbortController();
+      lookupAbortRef.current = controller;
+      const seq = ++lookupSeqRef.current;
+      const stale = () => !mountedRef.current || controller.signal.aborted || seq !== lookupSeqRef.current;
       const token = localStorage.getItem('admin_token');
       // Chỉ pool Chờ lấy hàng (Đã xử lý) — khớp tab Đơn hàng.
       const pickablePool = orders.filter(isPickableOrder);
@@ -153,13 +190,16 @@ export default function OrderPicking({ orders, initialOrder, initialOrderCode, o
           // lean=false: cần full items để nhặt hàng (lean=scanner cố ý bỏ items).
           const remote = await lookupOrderByScanCode(trimmed, [], token, undefined, {
             lean: false,
+            signal: controller.signal,
           });
+          if (stale()) return;
           if (remote && isPickableOrder(remote)) found = remote;
           else if (remote) {
             rejectWrongStatus(remote);
             return;
           }
         } catch (err) {
+          if (stale()) return;
           console.warn('[Nhặt hàng] lookup fail:', err);
           scanFeedback('error');
           setScanError('Lỗi kết nối máy chủ khi tìm mã. Thử lại.');
@@ -191,6 +231,7 @@ export default function OrderPicking({ orders, initialOrder, initialOrderCode, o
       scanFeedback('success');
       setScanError('');
       setScanInput('');
+      activeOrderRef.current = found;
       setActiveOrder(found);
       setPickedKeys(new Set());
       setCameraOpen(false);
@@ -220,23 +261,31 @@ export default function OrderPicking({ orders, initialOrder, initialOrderCode, o
   };
 
   const handleMoveToPacking = async () => {
-    if (!activeOrder || !canPick || submitting) return;
+    if (!activeOrder || !canPick || submitting || submittingRef.current) return;
     if (!allPicked) {
       alert(`Chưa nhặt đủ sản phẩm! (${pickedCount}/${totalLines})`);
       return;
     }
 
+    submittingRef.current = true;
+    const controller = new AbortController();
+    packingAbortRef.current = controller;
+    const scope = createTimeoutSignal(20_000, controller.signal);
+    const orderKey = activeOrder.id || activeOrder.orderSn;
+    const stale = () => !mountedRef.current || controller.signal.aborted ||
+      (activeOrderRef.current?.id || activeOrderRef.current?.orderSn) !== orderKey;
     setSubmitting(true);
     setScanError('');
     try {
       const token = safeGetItem('admin_token');
-      const orderKey = activeOrder.id || activeOrder.orderSn;
       const response = await fetch(`/api/orders/${encodeURIComponent(orderKey)}`, {
         method: 'PATCH',
+        signal: scope.signal,
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ status: 'shipping', isPrepared: true }),
       });
-      const saved = await response.json();
+      const saved = await readResponseJson<Order & { message?: string }>(response);
+      if (stale()) return;
       if (!response.ok || saved?.status !== 'shipping' || saved?.isPrepared !== true) {
         setScanError(saved?.message || 'Không thể chuyển đơn sang đóng gói. Thử lại.');
         return;
@@ -252,10 +301,17 @@ export default function OrderPicking({ orders, initialOrder, initialOrderCode, o
       });
       vibratePick();
       resetSession();
-    } catch {
-      setScanError('Không thể chuyển đơn sang đóng gói. Thử lại.');
+    } catch (error) {
+      if (!stale()) {
+        setScanError(scope.signal.aborted || isAbortError(error)
+          ? 'Chưa xác nhận được kết quả chuyển đóng gói. Hãy tải lại đơn để kiểm tra trước khi thử lại.'
+          : 'Không thể chuyển đơn sang đóng gói. Thử lại.');
+      }
     } finally {
-      setSubmitting(false);
+      scope.cleanup();
+      submittingRef.current = false;
+      if (packingAbortRef.current === controller) packingAbortRef.current = null;
+      if (mountedRef.current) setSubmitting(false);
     }
   };
 
@@ -273,7 +329,7 @@ export default function OrderPicking({ orders, initialOrder, initialOrderCode, o
       const onScan = (decodedText: string) => {
         if (!decodedText?.trim()) return;
         setScanInput(decodedText.trim());
-        void lookupOrderRef.current(decodedText);
+        return lookupOrderRef.current(decodedText);
       };
 
       void startLiveQrScanner({
@@ -282,6 +338,7 @@ export default function OrderPicking({ orders, initialOrder, initialOrderCode, o
         preferredZoom: 2,
         onSuccess: onScan,
         onCapabilities: (info) => {
+          if (!isMounted) return;
           setScannerZoomCaps(info.zoom);
           setScannerCameraCount(info.cameraCount);
           setScannerCameraLabel(info.cameraLabel || '');
@@ -303,6 +360,7 @@ export default function OrderPicking({ orders, initialOrder, initialOrderCode, o
           liveScannerRef.current = handle;
         })
         .catch((err: unknown) => {
+          if (!isMounted) return;
           const msg = err instanceof Error ? err.message : 'Không thể mở camera.';
           setCameraError(
             msg === HTTPS_CAMERA_MESSAGE

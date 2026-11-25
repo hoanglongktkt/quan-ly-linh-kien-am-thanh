@@ -40,9 +40,9 @@ import {
   loadOrderEvents,
   getSyncJob,
   deleteOrdersFromStore,
+  deleteReceivedCancelReturnOrdersFromStore,
   purgeMongoTempCollections,
   ensureRetentionTtlIndexes,
-  mergeDonHoanHuyIntoOrders,
   loadDonHoanHuyAsOrders,
   markOrderHandedOverInStore,
   markOrderLocalStatusInStore,
@@ -553,38 +553,19 @@ export async function refreshOrders(req, res) {
         };
       }
 
-      if (
-        !searchQ &&
-        (tabLc === "received_cancel_returns" ||
-          tabLc === "received-cancel-returns" ||
-          tabLc === "da_nhan_huy_hoan")
-      ) {
-        const allReceived = await deps.withLocalDbTimeout(
-          readOrdersForRefresh(5000, {
-            tab,
-            shopId,
-            shopIds,
-            printStatus,
-          }),
-          10000,
-          "orders_refresh_received",
-        );
-        // Nhả event loop trước khi slice/filter mảng lớn.
-        await new Promise((resolve) => setTimeout(resolve, 20));
-        total = allReceived.length;
-        const start = (page - 1) * limit;
-        mergedOrders = allReceived.slice(start, start + limit);
-        hasMore = page * limit < total;
-      } else {
+      {
         const pageResult = await deps.withLocalDbTimeout(
           queryOrdersPageFromStore({
             page,
             pageSize: limit,
-            tab: searchQ && tabLc !== "external_orders" ? "" : tab,
-            kind: searchQ ? "" : kind,
+            tab: tabLc === "external_orders" || tabLc === "received_cancel_returns" || tabLc === "received-cancel-returns" || tabLc === "da_nhan_huy_hoan"
+              ? tab
+              : (searchQ ? "" : tab),
+            kind: searchQ && !tabLc.includes("received_cancel") ? "" : kind,
             shopId,
             shopIds: shopIds.length ? shopIds : undefined,
             query: searchQ,
+            carrier: String(req.query.carrier || '').trim(),
             printStatus,
             skipCounts: true,
             groupPicking,
@@ -600,16 +581,6 @@ export async function refreshOrders(req, res) {
         total = pageResult.total || mergedOrders.length;
         hasMore = Boolean(pageResult.hasMore);
         if (pageResult.counters) counters = pageResult.counters;
-        if (!tab) {
-          try {
-            mergedOrders = await mergeDonHoanHuyIntoOrders(mergedOrders);
-          } catch (mergeErr) {
-            console.warn(
-              "[GET /api/orders/refresh] mergeDonHoanHuy skipped:",
-              mergeErr?.message || mergeErr,
-            );
-          }
-        }
       }
       if (req.aborted || req.destroyed) {
         return {
@@ -1318,6 +1289,14 @@ export async function recalculateOrderCounts(req, res) {
 /** POST /api/orders/batch-delete — xóa thủ công đơn đã chọn (cả orders + don_hoan_huy) */
 export async function batchDeleteOrders(req, res) {
   try {
+    const requestedTab = String(req.body?.tab || '').trim().toLowerCase();
+    if (requestedTab && !['received_cancel_returns', 'received-cancel-returns', 'da_nhan_huy_hoan'].includes(requestedTab)) {
+      return res.status(403).json({
+        success: false,
+        error: 'batch_delete_forbidden_tab',
+        message: 'Chỉ cho phép xóa hàng loạt trong mục Đã nhận đơn hủy, đơn hoàn.',
+      });
+    }
     const idsOrSns = req.body?.ids ?? req.body?.orderSns ?? req.body?.order_sns ?? [];
     const normalized = [...new Set(
       (Array.isArray(idsOrSns) ? idsOrSns : [])
@@ -1327,50 +1306,51 @@ export async function batchDeleteOrders(req, res) {
     if (normalized.length === 0) {
       return res.status(400).json({ success: false, error: "Thiếu danh sách id/orderSn." });
     }
+    if (normalized.length > 200) {
+      return res.status(413).json({
+        success: false,
+        error: "batch_delete_limit_exceeded",
+        message: "Mỗi lần chỉ được xóa tối đa 200 đơn.",
+      });
+    }
     let mongoDeleted = 0;
     let donHoanHuyDeleted = 0;
     let jsonRemoved = 0;
+    let deletedOrderSns = [];
+    let rejectedOrderSns = [];
     if (isMongoReady()) {
-      try {
-        mongoDeleted = await deleteOrdersFromStore(normalized);
-      } catch (err) {
-        console.warn("[Orders batch-delete] orders Mongo:", err?.message || err);
-      }
-      try {
-        const DonHoanHuy = (await import("../models/DonHoanHuy.js")).default;
-        const dhhResult = await DonHoanHuy.deleteMany({ orderSn: { $in: normalized } });
-        donHoanHuyDeleted = Number(dhhResult.deletedCount || 0);
-        if (donHoanHuyDeleted > 0) {
-          console.log(`[Orders batch-delete] don_hoan_huy deleted=${donHoanHuyDeleted}`);
-        }
-      } catch (err) {
-        console.warn("[Orders batch-delete] don_hoan_huy Mongo:", err?.message || err);
-      }
-    }
-    try {
-      const orders = loadOrders();
-      const snSet = new Set(normalized);
-      const before = orders.length;
-      const kept = orders.filter((o) => {
-        const sn = String(o?.orderSn || o?.id || "").replace(/^shopee-/i, "").trim();
-        return !snSet.has(sn);
+      const result = await deleteReceivedCancelReturnOrdersFromStore(normalized);
+      mongoDeleted = result.mongoDeleted;
+      donHoanHuyDeleted = result.donHoanHuyDeleted;
+      deletedOrderSns = result.deletedOrderSns;
+      rejectedOrderSns = result.rejectedOrderSns;
+      invalidateOrdersRefreshCache();
+      invalidateTabCountCache();
+      orderCounterMemCache.clear();
+    } else {
+      // Không xóa fallback JSON khi Mongo chưa sẵn sàng: tránh lệch nguồn dữ liệu SSOT.
+      return res.status(503).json({
+        success: false,
+        error: "mongodb_not_ready",
+        message: "MongoDB chưa sẵn sàng; dữ liệu chưa bị xóa.",
       });
-      jsonRemoved = before - kept.length;
-      if (jsonRemoved > 0) saveOrders(kept);
-    } catch (err) {
-      console.warn("[Orders batch-delete] JSON:", err?.message || err);
     }
     if (mongoDeleted === 0 && jsonRemoved === 0 && donHoanHuyDeleted === 0) {
-      return res.status(404).json({ success: false, error: "Không tìm thấy đơn để xóa." });
+      return res.status(404).json({
+        success: false,
+        error: "Không tìm thấy đơn đã nhận hủy/hoàn để xóa.",
+        rejectedOrderSns,
+      });
     }
-    console.log(`[Orders batch-delete] ids=${normalized.length} orders=${mongoDeleted} don_hoan_huy=${donHoanHuyDeleted} json=${jsonRemoved}`);
+    console.log(`[Orders batch-delete] ids=${normalized.length} orders=${mongoDeleted} don_hoan_huy=${donHoanHuyDeleted}`);
     return res.json({
       success: true,
       deleted: mongoDeleted + donHoanHuyDeleted + jsonRemoved,
       mongoDeleted,
       donHoanHuyDeleted,
       jsonRemoved,
-      orderSns: normalized.slice(0, 100),
+      orderSns: (deletedOrderSns.length ? deletedOrderSns : normalized).slice(0, 100),
+      rejectedOrderSns: rejectedOrderSns.slice(0, 100),
     });
   } catch (error) {
     console.error("[Orders batch-delete] error:", error);
@@ -1633,7 +1613,11 @@ export async function lookupOrder(req, res) {
     let foundRaw = null;
     try {
       foundRaw = await findOrderByScanCodeInStore(code, { lean: leanScanner });
-      if (foundRaw && !deps.isValidOrder(foundRaw)) foundRaw = null;
+      // A scanner projection deliberately omits items/amounts. Validate its
+      // persisted identity, not the full-order/catalog validation contract.
+      if (foundRaw && (leanScanner
+        ? !String(foundRaw.orderSn || "").trim() || !foundRaw.id
+        : !deps.isValidOrder(foundRaw))) foundRaw = null;
       if (foundRaw) foundRaw = mirrorTrackingFieldsForRead(foundRaw);
     } catch (err) {
       console.warn("[Orders Lookup] mongo failed:", err?.message || err);
@@ -1650,6 +1634,8 @@ export async function lookupOrder(req, res) {
 
     const ms = Date.now() - t0;
     if (leanScanner) {
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Server-Timing", `scannerLookup;dur=${ms}`);
       if (ms > 300) {
         console.warn(`[Orders Lookup] lean scanner slow: ${ms}ms code=${code}`);
       }
@@ -3858,7 +3844,6 @@ export async function createPosOrder(req, res) {
         stockErr?.message || stockErr,
       );
     }
-
     await markPosOrderReadyForEdit(orderId, stockResult).catch((error) => {
       console.error("[POS] Stock flags:", error?.message || error);
     });

@@ -22,6 +22,19 @@ export function normalizePrintOrderSn(value: unknown): string {
     .trim();
 }
 
+/** Lọc kết quả xác nhận theo snapshot lúc chọn in, không theo thứ tự API hoàn thành. */
+export function getConfirmedPrintOrderSns(
+  requestedOrders: Array<{ id?: unknown; orderSn?: unknown }>,
+  successfulOrderIds: unknown[],
+): string[] {
+  const successKeys = new Set(successfulOrderIds.map(normalizePrintOrderSn).filter(Boolean));
+  return uniquePreserveOrder(requestedOrders
+    .filter((order) => successKeys.has(normalizePrintOrderSn(order.orderSn)) ||
+      successKeys.has(normalizePrintOrderSn(order.id)))
+    .map((order) => normalizePrintOrderSn(order.orderSn || order.id))
+    .filter(Boolean));
+}
+
 function orderLines(order: any): any[] {
   const data = order?.data && typeof order.data === "object" ? order.data : null;
   const items = order?.items || data?.items;

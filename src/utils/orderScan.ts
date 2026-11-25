@@ -311,7 +311,7 @@ export async function lookupOrderByScanCode(
   localOrders: Order[],
   token?: string | null,
   scanIndex?: OrderScanIndex,
-  opts?: { lean?: boolean; signal?: AbortSignal },
+  opts?: { lean?: boolean; signal?: AbortSignal; timeoutMs?: number },
 ): Promise<Order | null> {
   const trimmed = raw.trim();
   if (!trimmed) return null;
@@ -328,7 +328,7 @@ export async function lookupOrderByScanCode(
   else opts?.signal?.addEventListener('abort', cancel, { once: true });
   const timer =
     controller && typeof window !== 'undefined'
-      ? window.setTimeout(() => controller.abort(), SCAN_LOOKUP_TIMEOUT_MS)
+      ? window.setTimeout(() => controller.abort(), opts?.timeoutMs ?? (opts?.lean === false ? 8_000 : SCAN_LOOKUP_TIMEOUT_MS))
       : undefined;
   try {
     const res = await fetch(
@@ -373,12 +373,11 @@ export async function lookupPickingOrder(raw: string, token: string | null, sign
 }
 
 /**
- * Read current DB state. Existing cPanel versions validate lean responses using
- * omitted channel/items fields and incorrectly return 404 for valid new orders.
- * Use their supported full lookup until the backend projection is upgraded.
+ * Always read current DB state, using the scanner projection (no product catalog).
+ * Deploy the matching backend before this frontend; never accept cached status.
  */
 export function lookupCurrentScannerOrder(raw: string, token?: string | null): Promise<Order | null> {
-  return lookupOrderByScanCode(raw, [], token, undefined, { lean: false });
+  return lookupOrderByScanCode(raw, [], token, undefined, { lean: true });
 }
 
 /** Update the display map only; scan acceptance still requires a current DB lookup. */

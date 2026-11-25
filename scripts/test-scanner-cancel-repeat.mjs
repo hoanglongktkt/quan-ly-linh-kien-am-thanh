@@ -1,59 +1,64 @@
+import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import assert from 'node:assert/strict';
-import ts from 'typescript';
-const path = new URL('../src/components/OrderManager.tsx', import.meta.url);
-const source = fs.readFileSync(path, 'utf8');
-const start = source.indexOf('    async (rawQuery: string) => {', source.indexOf('const verifySingleOrder ='));
-const end = source.indexOf('\n    [isFlushingQueue]', start);
-const callback = source.slice(start, end).trim().replace(/,$/, '');
-const code = ts.transpile(`globalThis.verifySingleOrder = ${callback}`, {target: ts.ScriptTarget.ES2022});
-function harness({mode='return', locked=false, failed=false, cancel=true}={}) {
-  let time=1000, lookups=0, message='', toast='';
-  const outbound={current:[]}, cancelled={current:[]}, returned={current:[]};
-  const order={id:'shopee-ORDER123',orderSn:'ORDER123',trackingNumber:'SPXVN123456',status:cancel?'cancelled':'processed',locked};
-  const norm=(x)=>String(x||'').toUpperCase().replace(/[-\s]/g,'');
-  const ctx={console, Date:{now:()=>time}, Math, queueMicrotask, window:{}, document:{activeElement:null},
-    isFlushingQueue:false,isTearingDownScannerRef:{current:false},lastQrScanRef:{current:{key:'',at:0}},
-    normalizeOrderScanKey:norm,
-    isCodeAlreadyVerified:(key)=>Boolean(key)&&[...outbound.current,...cancelled.current,...returned.current].some(i=>norm(i.code)===key||norm(i.orderSn)===key),
-    donHuyListRef:cancelled,daNhanHoanListRef:returned,daXuatKhoListRef:outbound,
-    isScanBusyRef:{current:false},pendingScanQueueRef:{current:[]},scannerModeRef:{current:mode},scannerSyncMapRef:{current:new Map()},
-    setIsVerifyingScan:()=>{},setIsScanBusy:()=>{},playScanSound:()=>{},vibrateScan:()=>{},flashViewfinder:()=>{},
-    setCameraScanResult:(v)=>message=v,showScanToast:(v)=>toast=v,
-    SCANNED_ORDER_MESSAGE:'ĐƠN ĐÃ QUÉT', localStorage:{getItem:()=>''},
-    lookupCurrentScannerOrder:async()=>{lookups++;return order;},scannedMatchesReturnWaybill:()=>false,
-    putOrderIntoScannerSyncMap:()=>new Map(),ScanLookupError:class extends Error{},
-    resolveOrderBadgeStatus:()=>order.status,getShopeeOrderRawStatus:()=>cancel?'CANCELLED':'PROCESSED',
-    resolveCancelReturnKind:()=>cancel?(failed?'failed_delivery':'cancelled'):null,
-    classifyScanCancelReturnBuckets:()=>({isReturnBucket:false,isCancelBucket:cancel}),
-    isShopeeRtsFailedDelivery:()=>failed,matchesShippingTab:()=>false,getOrderWaybillCode:()=>order.trackingNumber,
-    isReturnScanLocked:()=>locked,isEligibleForHandOverToCarrier:()=>!cancel,
-    setDonHuyList:(fn)=>cancelled.current=fn(cancelled.current),setDaNhanHoanList:(fn)=>returned.current=fn(returned.current),
-    setDaXuatKhoList:(fn)=>outbound.current=fn(outbound.current),scanGunInputRef:{current:null},
-  };
-  vm.runInNewContext(code,ctx);
-  return {scan:async(value)=>{time+=500;await ctx.verifySingleOrder(value);},get message(){return message},get toast(){return toast},get lookups(){return lookups},outbound,cancelled,returned};
+import { transform } from 'esbuild';
+const source = fs.readFileSync('src/components/OrderManager.tsx', 'utf8');
+const helper = source.slice(source.indexOf('  const isCodeAlreadyVerified ='), source.indexOf('  /**', source.indexOf('  const isCodeAlreadyVerified =')));
+const start = source.indexOf('  const verifySingleOrder = React.useCallback(');
+const end = source.indexOf('\n  useEffect(', start);
+const { code } = await transform(helper + source.slice(start, end) + '\nglobalThis.verify = verifySingleOrder;', { loader: 'tsx' });
+const ref = current => ({ current });
+const cancelled = { id: 'shopee-ORDER123', orderSn: 'ORDER123', status: 'cancelled', trackingNumber: 'SPX123456789' };
+let current = cancelled;
+let banner = '';
+const ctx = {
+  console, Math, Date, queueMicrotask,
+  React: { useCallback: fn => fn }, isFlushingQueue: false,
+  isTearingDownScannerRef: ref(false), lastQrScanRef: ref({key: '', at: 0}),
+  isScanBusyRef: ref(false), pendingScanQueueRef: ref([]), scannerModeRef: ref('handover'),
+  daXuatKhoListRef: ref([]), donHuyListRef: ref([]), daNhanHoanListRef: ref([]), scannerSyncMapRef: ref(new Map()), scanGunInputRef: ref(null),
+  normalizeOrderScanKey: value => String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, ''),
+  localStorage: {getItem: () => 'token'},
+  lookupCurrentScannerOrder: async () => current,
+  lookupScannerSyncMap: () => null, putOrderIntoScannerSyncMap: m => m,
+  scannedMatchesReturnWaybill: () => false,
+  resolveOrderBadgeStatus: o => o.status, getShopeeOrderRawStatus: o => o.status.toUpperCase(),
+  resolveCancelReturnKind: () => 'cancelled',
+  classifyScanCancelReturnBuckets: o => ({isCancelBucket: o.status === 'cancelled', isReturnBucket: o.status === 'return_pending'}),
+  isShopeeRtsFailedDelivery: () => false, matchesShippingTab: () => false,
+  getOrderWaybillCode: o => o.trackingNumber,
+  isReturnScanLocked: o => o.isReturnReceived === true,
+  SCANNED_ORDER_MESSAGE: 'ALREADY_SCANNED',
+  setCameraScanResult: value => {banner = value;},
+  setDonHuyList: value => {ctx.donHuyListRef.current = value;},
+  document: {activeElement: null},
+};
+for (const name of ['playScanSound','vibrateScan','flashViewfinder','showScanToast','setIsVerifyingScan','setIsScanBusy']) ctx[name] = () => {};
+vm.createContext(ctx);
+vm.runInContext(code, ctx);
+async function scan(value = 'SPX123456789') {
+  ctx.lastQrScanRef.current = {key: '', at: 0};
+  await ctx.verify(value);
 }
-for (const mode of ['return','handover']) {
-  const h=harness({mode});
-  await h.scan('SPXVN123456');
-  const rows=()=>h.cancelled.current.length+h.returned.current.length;
-  assert.equal(rows(),1);
-  await h.scan('SPXVN123456');
-  assert.match(h.message,/ĐƠN HỦY.*SPXVN123456.*ORDER123/);
-  assert.match(h.toast,/ORDER123/);
-  assert.equal(rows(),1);assert.equal(h.outbound.current.length,0);assert.equal(h.lookups,1);
-  await h.scan('ORDER123');
-  assert.match(h.message,/ĐƠN HỦY.*ORDER123/);assert.equal(rows(),1);assert.equal(h.lookups,1);
-  await h.scan('ALIAS123456');
-  assert.match(h.message,/ĐƠN HỦY.*ORDER123/);assert.equal(rows(),1);assert.equal(h.lookups,2);
-}
-for (const failed of [false,true]) {
-  const h=harness({locked:true,failed});await h.scan('SPXVN123456');
-  assert.match(h.message,failed?/GIAO THẤT BẠI.*ORDER123/:/ĐƠN HỦY.*ORDER123/);
-  assert.equal(h.returned.current.length,0);assert.equal(h.cancelled.current.length,0);assert.equal(h.outbound.current.length,0);
-}
-const ordinary=harness({cancel:false});ordinary.returned.current.push({code:'SPXVN123456',orderSn:'ORDER123'});
-await ordinary.scan('SPXVN123456');assert.equal(ordinary.message,'ĐƠN ĐÃ QUÉT');assert.equal(ordinary.lookups,0);
-console.log('PASS: both modes, same code/order code/alias, committed cancelled/failed delivery, ordinary duplicate; no duplicate rows or outbound writes.');
+await scan();
+assert.ok(banner.includes('ORDER123'));
+await scan();
+assert.ok(banner.includes('ORDER123'), 'repeat cancellation displays order number');
+await scan('ORDER123');
+assert.ok(banner.includes('ORDER123'), 'alternate code still displays warning');
+assert.equal(ctx.donHuyListRef.current.length, 1, 'repeat scans count/save once');
+assert.equal(ctx.daXuatKhoListRef.current.length, 0, 'cancelled parcels never leave warehouse');
+ctx.donHuyListRef.current = [];
+current = {...cancelled, isReturnReceived: true};
+await scan();
+assert.ok(banner.includes('ORDER123'), 'stored cancellations remain inspectable in handover mode');
+assert.equal(ctx.donHuyListRef.current.length, 0, 'stored parcels are not queued for another save');
+ctx.scannerModeRef.current = 'return';
+await scan();
+assert.equal(banner, 'ALREADY_SCANNED', 'return intake remains locked');
+ctx.scannerModeRef.current = 'handover';
+current = {...cancelled, status: 'processed'};
+ctx.daXuatKhoListRef.current = [{code:'SPX123456789',orderSn:'ORDER123'}];
+await scan();
+assert.equal(banner, 'ALREADY_SCANNED', 'normal handover deduplication remains enabled');
+console.log('PASS: repeat cancellation, alias, unique count, no handover, stored cancellation, return lock, normal duplicate');

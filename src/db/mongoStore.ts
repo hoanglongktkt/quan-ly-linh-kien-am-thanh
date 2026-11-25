@@ -1,4 +1,5 @@
 import { buildOrderCustomerSearchClauses } from "../utils/orderCustomerSearch";
+import { reconcileShipmentReview } from '../../modules/orders/shipmentReview.ts';
 import { coerceShopeeWatermarkDate, isValidTrackingNo } from "../../modules/orders/repositoryValues.ts";
 export { isValidTrackingNo } from "../../modules/orders/repositoryValues.ts";
 import { normalizeScannedCode, stripScannedSeparators } from "../../modules/orders/scanCode.ts";
@@ -596,16 +597,19 @@ function docsToListings(docs: Array<{ data?: any }>): any[] {
   return out;
 }
 
-function enqueueWrite(task: () => Promise<void>): Promise<void> {
+function enqueueWrite(
+  task: () => Promise<void>,
+  options?: { priority?: number; waitTimeoutMs?: number; executionTimeoutMs?: number },
+): Promise<void> {
   assertSyncActive();
   const urgent = Boolean(webhookObservation.getStore());
   return serialWrites.enqueue(async () => {
     assertSyncActive();
     await task();
   }, {
-    priority: urgent ? 10 : 0,
-    waitTimeoutMs: hasShortOrderDeadline() ? 15000 : 0,
-    executionTimeoutMs: 60000,
+    priority: options?.priority ?? (urgent ? 10 : 0),
+    waitTimeoutMs: options?.waitTimeoutMs ?? (hasShortOrderDeadline() ? 15000 : 0),
+    executionTimeoutMs: options?.executionTimeoutMs ?? 60000,
   }).catch((err) => {
     console.error("[MongoDB] Write queue error:", err?.code || err?.name || "write_failed");
     throw err;
@@ -4447,10 +4451,16 @@ export async function bulkUpdateShippedOrdersBySn(
     hasPdf?: boolean;
     shopeeSyncPending?: boolean;
     shopeeSyncError?: string | null;
+    is_pending_shopee_check?: boolean;
     labelUrl?: string;
     pdfFilename?: string;
   }>,
-  options?: { requireAllMatched?: boolean },
+  options?: {
+    requireAllMatched?: boolean;
+    matchByOrderIdentityOnly?: boolean;
+    priority?: number;
+    timeoutMs?: number;
+  },
 ): Promise<number> {
   if (!isMongoReady()) {
     if (options?.requireAllMatched) throw new Error("mongodb_not_ready");
@@ -4527,6 +4537,10 @@ export async function bulkUpdateShippedOrdersBySn(
       $set.isPrepared = Boolean(p.isPrepared);
       $set["data.isPrepared"] = Boolean(p.isPrepared);
     }
+    if (p.is_pending_shopee_check != null) {
+      $set.is_pending_shopee_check = Boolean(p.is_pending_shopee_check);
+      $set["data.is_pending_shopee_check"] = Boolean(p.is_pending_shopee_check);
+    }
     // Cờ in chỉ do markOrdersPrintedInStore đổi. Ship/tracking không được $set isPrinted.
     if (p.hasPdf != null) {
       const ready = Boolean(p.hasPdf);
@@ -4556,7 +4570,9 @@ export async function bulkUpdateShippedOrdersBySn(
     }
     return {
       updateOne: {
-        filter: buildOrderCompoundFilter(sn, _id, shopIdStr || null),
+        filter: options?.matchByOrderIdentityOnly
+          ? { $or: [{ orderSn: sn }, { _id }, { "data.orderSn": sn }, { "data.order_sn": sn }] }
+          : buildOrderCompoundFilter(sn, _id, shopIdStr || null),
         update: { $set },
         upsert: false,
       },
@@ -4575,8 +4591,13 @@ export async function bulkUpdateShippedOrdersBySn(
       console.log(
         `[Ship Persist] bulkWrite ONE shot — ops=${ops.length} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0}`,
       );
+    }, {
+      priority: options?.priority ?? (options?.requireAllMatched ? 10 : 0),
+      waitTimeoutMs: options?.timeoutMs ?? (options?.requireAllMatched ? 25_000 : 15_000),
+      executionTimeoutMs: Math.max(60_000, (options?.timeoutMs ?? 25_000) + 35_000),
     }),
     "ship_persist",
+    options?.timeoutMs ?? (options?.requireAllMatched ? 25_000 : 10_000),
   );
   invalidateTabCountCache();
   return ops.length;
@@ -4602,7 +4623,7 @@ function buildOrderCompoundFilter(
   _id: string,
   shopId?: string | null,
 ): Record<string, unknown> {
-  const identity = { $or: [{ orderSn: sn }, { _id }, { "data.orderSn": sn }] };
+  const identity = { $or: [{ orderSn: sn }, { _id }, { "data.orderSn": sn }, { "data.order_sn": sn }] };
   const shopIdStr = shopId != null ? String(shopId).trim() : "";
   if (!shopIdStr) return identity;
   const shopVariants: Record<string, unknown>[] = [
@@ -5300,6 +5321,7 @@ export async function updateOrderPendingShopeeCheckInStore(
   console.log(
     `[MongoDB] findOneAndUpdate is_pending_shopee_check=${isPending} order_sn=${sn} shopId=${shopIdStr || "-"} ok=${Boolean(result)}`,
   );
+  invalidateTabCountCache();
   return Boolean(result);
 }
 
@@ -5485,6 +5507,25 @@ export async function updateOrderTrackingInStore(
     { $set, $setOnInsert },
     { new: true, upsert: true },
   );
+  // A rejected order may receive its waybill via a tracking-only webhook.
+  // Reset old preparation flags atomically, without touching terminal/handover rows.
+  if (hasOutboundTn && (result?.is_pending_shopee_check === true || result?.data?.is_pending_shopee_check === true)) {
+    const recovered = hydrateOrderFromMongoDoc(result);
+    if (recovered?.status === 'unprocessed' && recovered.is_pending_shopee_check === false) {
+      await OrderModel.updateOne({ $and: [identity,
+        { $or: [{ is_pending_shopee_check: true }, { 'data.is_pending_shopee_check': true }] },
+        { shopee_order_status: { $nin: [...TERMINAL_SHOPEE_RAW] } },
+        { status: { $nin: ['shipping', 'completed', 'cancelled', 'return_pending', 'return_received'] } },
+        { is_handed_over: { $ne: true } }, { is_return: { $ne: true } },
+      ] }, { $set: {
+        ...LAGGING_PENDING_PROMOTE_SET,
+        isPrepared: false, 'data.isPrepared': false,
+        isPrinted: false, 'data.isPrinted': false,
+        shopee_order_status: recovered.shopee_order_status,
+        'data.shopee_order_status': recovered.shopee_order_status,
+      } });
+    }
+  }
   // Extra có thể thiếu raw — đối soát DB: UNPAID/pending_confirm + tracking → Đơn chưa xử lý.
   if (hasOutboundTn && result) {
     try {
@@ -6037,6 +6078,71 @@ export async function updateOrderPackageNumberInStore(
     `[MongoDB] findOneAndUpdate packageNumber=${pkg} order_sn=${sn} shopId=${shopIdStr || "-"} ok=${Boolean(result)}`,
   );
   return Boolean(result);
+}
+
+/** Xóa đơn theo id / orderSn khỏi collection orders (Mongo). */
+export async function deleteReceivedCancelReturnOrdersFromStore(
+  idsOrSns: string[],
+): Promise<{ mongoDeleted: number; donHoanHuyDeleted: number; deletedOrderSns: string[]; rejectedOrderSns: string[] }> {
+  if (!isMongoReady()) {
+    return { mongoDeleted: 0, donHoanHuyDeleted: 0, deletedOrderSns: [], rejectedOrderSns: [] };
+  }
+  requireMongo();
+  const keys = [...new Set((idsOrSns || []).map((k) => String(k || '').trim()).filter(Boolean))];
+  const snList = keys.map((k) => k.replace(/^shopee-/i, '')).filter(Boolean);
+  if (snList.length === 0) {
+    return { mongoDeleted: 0, donHoanHuyDeleted: 0, deletedOrderSns: [], rejectedOrderSns: [] };
+  }
+  const dhhDocs = await DonHoanHuyModel.find({ orderSn: { $in: snList } })
+    .select({ orderSn: 1 })
+    .maxTimeMS(5000)
+    .lean();
+  const allowed = new Set(
+    (dhhDocs || []).map((doc: any) => String(doc?.orderSn || '').trim()).filter(Boolean),
+  );
+  const receivedFilter = {
+    $or: [
+      { local_status: { $in: ['CANCELLED_STORED', 'RETURN_RECEIVED'] } },
+      { 'data.local_status': { $in: ['CANCELLED_STORED', 'RETURN_RECEIVED'] } },
+      { 'data.localStatus': { $in: ['CANCELLED_STORED', 'RETURN_RECEIVED'] } },
+      { status: 'return_received' },
+      { 'data.status': 'return_received' },
+    ],
+  };
+  const orderDocs = await OrderModel.find({
+    $and: [
+      { $or: [{ orderSn: { $in: snList } }, { 'data.orderSn': { $in: snList } }] },
+      receivedFilter,
+    ],
+  })
+    .select({ orderSn: 1, 'data.orderSn': 1 })
+    .maxTimeMS(5000)
+    .lean();
+  for (const doc of orderDocs || []) {
+    const sn = String((doc as any)?.orderSn || (doc as any)?.data?.orderSn || '').trim();
+    if (sn) allowed.add(sn.replace(/^shopee-/i, ''));
+  }
+  const allowedSns = snList.filter((sn) => allowed.has(sn));
+  const rejectedOrderSns = snList.filter((sn) => !allowed.has(sn));
+  if (allowedSns.length === 0) {
+    return { mongoDeleted: 0, donHoanHuyDeleted: 0, deletedOrderSns: [], rejectedOrderSns };
+  }
+  const orderResult = await OrderModel.deleteMany({
+    $and: [
+      { $or: [{ orderSn: { $in: allowedSns } }, { 'data.orderSn': { $in: allowedSns } }] },
+      receivedFilter,
+    ],
+  }).maxTimeMS(8000);
+  const dhhResult = await DonHoanHuyModel.deleteMany({ orderSn: { $in: allowedSns } }).maxTimeMS(8000);
+  invalidateTabCountCache();
+  dhhCountCache.key = '';
+  dhhCountCache.n = 0;
+  return {
+    mongoDeleted: Number(orderResult.deletedCount || 0),
+    donHoanHuyDeleted: Number(dhhResult.deletedCount || 0),
+    deletedOrderSns: allowedSns,
+    rejectedOrderSns,
+  };
 }
 
 /** Xóa đơn theo id / orderSn khỏi collection orders (Mongo). */
@@ -6943,7 +7049,17 @@ const SCAN_LOOKUP_LEAN_MAX_MS = 800;
 
 /** Projection tối thiểu — lookup phân loại scanner (không items). */
 const SCANNER_LOOKUP_SELECT = {
+  is_pending_shopee_check: 1,
+  "data.is_pending_shopee_check": 1,
   _id: 1,
+  channel: 1,
+  isPrinted: 1,
+  hasPdf: 1,
+  readyToPrint: 1,
+  waybill_url: 1,
+  labelUrl: 1,
+  pdfUrl: 1,
+  pdfFilename: 1,
   orderSn: 1,
   shopId: 1,
   status: 1,
@@ -6966,6 +7082,31 @@ const SCANNER_LOOKUP_SELECT = {
   local_status: 1,
   "data.orderSn": 1,
   "data.order_sn": 1,
+  "data.id": 1,
+  "data.channel": 1,
+  "data.shop_id": 1,
+  "data.isPrepared": 1,
+  "data.isPrinted": 1,
+  "data.hasPdf": 1,
+  "data.readyToPrint": 1,
+  "data.waybill_url": 1,
+  "data.labelUrl": 1,
+  "data.pdfUrl": 1,
+  "data.pdfFilename": 1,
+  "data.order_status": 1,
+  "data.return_status": 1,
+  "data.cancel_reason": 1,
+  "data.buyer_cancel_reason": 1,
+  "data.cancel_by": 1,
+  "data.return_refund_request_type": 1,
+  "data.is_local_return_archived": 1,
+  "data.don_hoan_huy": 1,
+  "data.is_handed_over_to_carrier": 1,
+  "data.is_handed_over_to_courier": 1,
+  "data.shopee_tracking_number": 1,
+  "data.package_list.tracking_number": 1,
+  "data.package_list.tracking_no": 1,
+  "data.package_list.trackingNumber": 1,
   "data.status": 1,
   "data.shopee_order_status": 1,
   "data.tracking_no": 1,
@@ -7406,6 +7547,7 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
     hydrated.isPrepared = true;
     hydrated.is_pending_shopee_check = false;
   }
+  reconcileShipmentReview(hydrated);
   return hydrated;
 }
 
@@ -8237,6 +8379,11 @@ export async function loadMissingReturnTrackingBackfillFromStore(opts?: {
   });
 }
 
+export function isReceivedCancelReturnsTab(tab?: string | null): boolean {
+  const key = String(tab || '').trim().toLowerCase();
+  return key === 'received_cancel_returns' || key === 'received-cancel-returns' || key === 'da_nhan_huy_hoan';
+}
+
 export type OrdersPageQuery = {
   page?: number;
   pageSize?: number;
@@ -8472,9 +8619,17 @@ const ORDER_TAB_CLOSED_LOCAL = [
  * Đơn chưa xử lý: shop còn phải thao tác.
  * READY_TO_SHIP / RETRY_SHIP / PROCESSED nhưng chưa in và chưa chuẩn bị.
  */
+const ORDER_TAB_AWAITING_SHOPEE_REVIEW = {
+  $and: [
+    { $or: [{ is_pending_shopee_check: true }, { "data.is_pending_shopee_check": true }] },
+    { $nor: ORDER_TAB_TRACKING_PATHS.map((path) => orderTabTrackingOn(path)) },
+  ],
+};
+
 function orderTabUnprocessedMatch(): Record<string, unknown> {
   return {
     $and: [
+      { $nor: [ORDER_TAB_AWAITING_SHOPEE_REVIEW] },
       // Khớp giao diện: chỉ còn ở đây khi shop chưa in và chưa chuẩn bị.
       { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
       ORDER_TAB_SHOP_NOT_PACKED,
@@ -8495,6 +8650,7 @@ function orderTabUnprocessedMatch(): Record<string, unknown> {
 function orderTabProcessedMatch(): Record<string, unknown> {
   return {
     $and: [
+      { $nor: [ORDER_TAB_AWAITING_SHOPEE_REVIEW] },
       { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
       ORDER_TAB_SHOP_PACKED,
       { is_handed_over: { $ne: true } },
@@ -8514,7 +8670,12 @@ function orderTabProcessedMatch(): Record<string, unknown> {
 function orderTabPendingConfirmMatch(): Record<string, unknown> {
   return {
     $and: [
-      { shopee_order_status: { $in: [...ORDER_TAB_PENDING_RAW] } },
+      { $or: [
+        { shopee_order_status: { $in: [...ORDER_TAB_PENDING_RAW] } },
+        { $and: [ORDER_TAB_AWAITING_SHOPEE_REVIEW,
+          { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
+          { is_handed_over: { $ne: true } }], },
+      ] },
       { status: { $nin: [...ORDER_TAB_CLOSED_LOCAL] } },
       { is_return: { $ne: true } },
       {
@@ -8795,7 +8956,6 @@ export function parseCancelReturnKindParam(raw?: string | null): string {
 const TAB_COUNT_CACHE_MS = 8_000;
 let tabCountCache: { key: string; expiresAt: number; value: Record<string, number> } | null =
   null;
-
 let tabCountVersion = 0;
 
 /** Xóa cache badge ngay khi có đơn mới — tránh detector đọc số cũ 15s. */
@@ -8864,40 +9024,18 @@ const FACET_SHIPPED = ["SHIPPED", "TO_CONFIRM_RECEIVE"];
 const FACET_PENDING = ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"];
 const FACET_CANCEL = ["CANCELLED", "IN_CANCEL", "TO_RETURN", "RETURN"];
 
-/**
- * 3 tab kho gộp cho "Những sản phẩm có trong đơn":
- * Chờ xác nhận + Đơn chưa xử lý + Chờ lấy hàng (Đã xử lý).
- * $in trên status / shopee_order_status (đã index) — CẤM $or data.*.
- */
-const FULFILLMENT_LOCAL_STATUSES = [
-  "pending_confirm",
-  "pending_verification",
-  "unprocessed",
-  "processed",
-] as const;
-const FULFILLMENT_SHOPEE_STATUSES = [...FACET_PENDING, ...FACET_TO_SHIP] as const;
-const FULFILLMENT_EXCLUDE_LOCAL = [
-  "cancelled",
-  "return_pending",
-  "return_received",
-  "shipping",
-  "completed",
-] as const;
-const FULFILLMENT_EXCLUDE_SHOPEE = [...FACET_SHIPPED, ...FACET_CANCEL, "COMPLETED"] as const;
-
 /** $match gộp 3 tab kho — loại Hủy/Hoàn/Đang giao/Đã giao/Đã bàn giao ĐVVC. */
 export function fulfillmentProductsMatch(): Record<string, unknown> {
   return {
     $and: [
       {
         $or: [
-          { status: { $in: [...FULFILLMENT_LOCAL_STATUSES] } },
-          { shopee_order_status: { $in: [...FULFILLMENT_SHOPEE_STATUSES] } },
+          orderTabFilter("pending_confirm"),
+          orderTabFilter("unprocessed"),
+          orderTabFilter("processed"),
         ],
       },
-      { status: { $nin: [...FULFILLMENT_EXCLUDE_LOCAL] } },
-      { shopee_order_status: { $nin: [...FULFILLMENT_EXCLUDE_SHOPEE] } },
-      { is_handed_over: { $ne: true } },
+      { $nor: [ORDER_TAB_IS_HANDED_OVER] },
       { is_rts: { $ne: true } },
     ],
   };
@@ -9003,16 +9141,7 @@ function tabIndexFilter(tab?: string, kind?: string): Record<string, unknown> {
     case "don-huy-hoan":
     case "cancelled_returned":
     case "huy-hoan":
-      if (k === "refund_return" || k === "returned") {
-        return { shopee_cancel_return_kind: "refund_return" };
-      }
-      if (k === "cancelled" || k === "cancel") {
-        return { shopee_cancel_return_kind: "cancelled" };
-      }
-      if (k === "failed_delivery" || k === "rts") {
-        return { shopee_cancel_return_kind: "failed_delivery" };
-      }
-      return { shopee_order_status: { $in: [...FACET_CANCEL] } };
+      return orderCancelReturnKindFilter(k);
     default:
       return {};
   }
@@ -9040,6 +9169,35 @@ const ORDER_LIST_UI_PROJECTION: Record<string, 1> = {
   packageNumber: 1,
   package_number: 1,
   internalTrackingCode: 1,
+  local_status: 1,
+  isReturnReceived: 1,
+  returnReceivedAt: 1,
+  "internal_flags.isReturnReceived": 1,
+  "internal_flags.returnReceivedAt": 1,
+  logistics_status: 1,
+  is_pending_shopee_check: 1,
+  "data.local_status": 1,
+  "data.localStatus": 1,
+  "data.internal_status": 1,
+  "data.scanFlag": 1,
+  "data.isReturnReceived": 1,
+  "data.returnReceivedAt": 1,
+  "data.internal_flags.isReturnReceived": 1,
+  "data.internal_flags.returnReceivedAt": 1,
+  "data.logistics_status": 1,
+  "data.cancel_reason": 1,
+  "data.return_status": 1,
+  "data.refund_amount": 1,
+  "data.text_reason": 1,
+  "data.return_reason": 1,
+  "data.is_pending_shopee_check": 1,
+  "data.shopee_fees": 1,
+  "data.finance_source": 1,
+  "data.escrow_synced": 1,
+  "data.item_amount": 1,
+  "data.seller_voucher": 1,
+  "data.custom_costs": 1,
+  "data.custom_cost_items": 1,
   is_handed_over: 1,
   isPrinted: 1,
   printedAt: 1,
@@ -10082,12 +10240,17 @@ export async function countOrdersByTabsFromStore(opts?: {
         const extMatch: Record<string, unknown> = { channel: "manual" };
         if (dateRange) Object.assign(extMatch, buildExternalOrderDateFilter(dateRange));
         return Number(await OrderModel.countDocuments(extMatch).maxTimeMS(3000)) || 0;
-      } catch (extErr: unknown) {
-        console.warn("[MongoDB] external_orders count:", extErr instanceof Error ? extErr.message : extErr);
+      } catch (extErr: any) {
+        console.warn("[MongoDB] external_orders count:", extErr?.message || extErr);
         return null;
       }
     })();
-    const [aggRows, opCounts, extN] = await Promise.all([aggTask, opTask, extTask]);
+    const [aggRows, opCounts, extN, dhhN, cancelCounts] = await Promise.all([
+      aggTask, opTask, extTask,
+      DonHoanHuyModel.countDocuments(buildDonHoanHuyPageFilter(opts)).maxTimeMS(3000),
+      Promise.all(['', 'refund_return', 'cancelled', 'failed_delivery'].map((kind) =>
+        OrderModel.countDocuments(mergeOrdersListFilters(match, orderCancelReturnKindFilter(kind))).maxTimeMS(4000))),
+    ]);
     const row = (aggRows?.[0] || {}) as Record<string, unknown>;
     const counts: Record<string, number> = { ...empty };
     counts.all = facetN(row, "all");
@@ -10100,15 +10263,14 @@ export async function countOrdersByTabsFromStore(opts?: {
     counts.return_pending = facetN(row, "return_pending");
     counts.return_requests = facetN(row, "return_requests");
     counts.web_orders = facetN(row, "web_orders");
-    counts.cancel_returns = facetN(row, "cancel_returns");
-    counts.cancel_returns_returned = facetN(row, "cancel_returns_returned");
-    counts.cancel_returns_cancelled = facetN(row, "cancel_returns_cancelled");
-    counts.cancel_returns_rts = facetN(row, "cancel_returns_rts");
+    counts.cancel_returns = Number(cancelCounts[0]) || 0;
+    counts.cancel_returns_returned = Number(cancelCounts[1]) || 0;
+    counts.cancel_returns_cancelled = Number(cancelCounts[2]) || 0;
+    counts.cancel_returns_rts = Number(cancelCounts[3]) || 0;
     counts.refund_return = counts.cancel_returns_returned;
     counts.cancelled = counts.cancel_returns_cancelled;
     counts.failed_delivery = counts.cancel_returns_rts;
-    counts.received_cancel_returns =
-      dhhCountCache.key === cacheKey ? dhhCountCache.n : dhhCountCache.n;
+    counts.received_cancel_returns = Number(dhhN) || 0;
     if (opCounts) {
       Object.assign(counts, opCounts);
     } else {
@@ -10123,14 +10285,6 @@ export async function countOrdersByTabsFromStore(opts?: {
     if (countVersion === tabCountVersion) {
       tabCountCache = { key: cacheKey, expiresAt: now + TAB_COUNT_CACHE_MS, value: counts };
     }
-    const dhhShop = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds) || {};
-    void DonHoanHuyModel.countDocuments(dhhShop)
-      .maxTimeMS(2000)
-      .then((n: number) => {
-        dhhCountCache.key = cacheKey;
-        dhhCountCache.n = Number(n) || 0;
-      })
-      .catch(() => {});
     return counts;
   } catch (err: any) {
     console.error(
@@ -10141,39 +10295,34 @@ export async function countOrdersByTabsFromStore(opts?: {
   }
 }
 
-/**
- * Tìm mã đơn theo exact/prefix, đồng thời tìm tên và điện thoại khách hàng.
- * Query luôn giữ scope đơn ngoại sàn, phân trang và maxTimeMS của danh sách.
- */
+/** Search a literal fragment of an order code or SKU, ignoring letter case. */
 function buildOrdersListSearchFilter(search: string): Record<string, unknown> | null {
   const q = String(search || "").trim();
   if (!q) return null;
   const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  // Regex có dấu ^ cho phép MongoDB dùng index B-tree với mã phân biệt hoa/thường.
-  const startsWith = { $regex: `^${escaped}` };
-  const $or: Record<string, unknown>[] = [
-    { orderSn: q },
-    { "data.orderSn": q },
-    { tracking_no: q },
-    { trackingNumber: q },
-    { packageNumber: q },
-    { return_tracking_no: q },
-    { returnTrackingNumber: q },
+  const contains = { $regex: escaped, $options: "i" };
+  const codeFields = [
+    "orderSn",
+    "tracking_no",
+    "trackingNumber",
+    "packageNumber",
+    "return_tracking_no",
+    "returnTrackingNumber",
+    "return_sn",
+    "internalTrackingCode",
+    "items.modelSku",
+    "items.sku",
+    "items.model_sku",
+    "items.item_sku",
+    "item_list.model_sku",
+    "item_list.item_sku",
   ];
-  // Chỉ tìm prefix khi đủ dài để tránh trả quá nhiều kết quả và làm CPU tăng.
-  if (q.length >= 4) {
-    $or.push(
-      { orderSn: startsWith },
-      { "data.orderSn": startsWith },
-      { tracking_no: startsWith },
-      { trackingNumber: startsWith },
-      { packageNumber: startsWith },
-      { return_tracking_no: startsWith },
-      { returnTrackingNumber: startsWith },
-    );
-  }
-  $or.push(...buildOrderCustomerSearchClauses(q));
-  return { $or };
+  return {
+    $or: [...codeFields.flatMap((field) => [
+      { [field]: contains },
+      { [`data.${field}`]: contains },
+    ]), ...buildOrderCustomerSearchClauses(q)],
+  };
 }
 
 /**
@@ -10319,6 +10468,9 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
       Math.min(5000, Math.floor(Number(opts?.pageSize) || 50)),
     );
     const skipCounts = Boolean(opts?.skipCounts);
+    if (isReceivedCancelReturnsTab(requestedTab)) {
+      return await queryDonHoanHuyPageFromStore({ ...opts, page, pageSize });
+    }
     const search = String(opts?.query || "").trim();
     const kind = parseCancelReturnKindParam(opts?.kind);
     const isCancelReturnsTab =
@@ -10450,7 +10602,7 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
       return { ...empty, page, pageSize };
     }
 
-    const cachedTotal = isExternalOrdersTab && search ? 0 : peekCachedTabTotal(
+    const cachedTotal = search || carrierFilter || printFilter ? 0 : peekCachedTabTotal(
       {
         shopId: opts?.shopId,
         shopIds: opts?.shopIds,
@@ -10970,6 +11122,96 @@ export async function purgeStaleDonHoanHuyFromStore(opts?: {
   const res = await DonHoanHuyModel.deleteMany({ _id: { $in: ids } }).maxTimeMS(8000);
   await new Promise((r) => setTimeout(r, 200));
   return { deleted: res.deletedCount || 0, matched: ids.length, dryRun: false };
+}
+
+function buildDonHoanHuyPageFilter(opts?: OrdersPageQuery): Record<string, unknown> {
+  const parts: Record<string, unknown>[] = [];
+  const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
+  if (shopFilter) parts.push(shopFilter);
+  parts.push({
+    $or: [
+      { orderSn: { $type: 'string', $nin: [''], $not: /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i } },
+      { 'data.orderSn': { $type: 'string', $nin: [''], $not: /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i } },
+      { 'data.order_sn': { $type: 'string', $nin: [''], $not: /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i } },
+    ],
+  });
+  const startDate = parseDateBound(opts?.startDate, false);
+  const endDate = parseDateBound(opts?.endDate, true);
+  if (startDate || endDate) {
+    parts.push({ scannedAt: { ...(startDate ? { $gte: startDate } : {}), ...(endDate ? { $lte: endDate } : {}) } });
+  }
+  const carrier = String(opts?.carrier || '').trim();
+  if (carrier && carrier !== 'all') {
+    const carrierRe = { $regex: carrier.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&'), $options: 'i' };
+    parts.push({ $or: [{ shipping_carrier: carrierRe }, { carrier: carrierRe }, { 'data.shipping_carrier': carrierRe }, { 'data.carrier': carrierRe }] });
+  }
+  const query = String(opts?.query || '').trim();
+  if (query) {
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = { $regex: escaped, $options: 'i' };
+    parts.push({
+      $or: [
+        { orderSn: re },
+        { tracking_no: re },
+        { return_tracking_no: re },
+        { scan_code: re },
+        { 'data.orderSn': re },
+        { 'data.order_sn': re },
+        { 'data.packageNumber': re },
+        { 'data.items.sku': re },
+        { 'data.items.modelSku': re },
+        { 'data.items.model_sku': re },
+      ],
+    });
+  }
+  const printStatus = String(opts?.printStatus || '').trim().toLowerCase();
+  if (printStatus === 'printed' || printStatus === 'da-in' || printStatus === 'true') {
+    parts.push({ $or: [{ isPrinted: { $in: [true, 1, 'true', '1', 'yes'] } }, { 'data.isPrinted': { $in: [true, 1, 'true', '1', 'yes'] } }] });
+  } else if (printStatus === 'unprinted' || printStatus === 'chua-in' || printStatus === 'false' || printStatus === 'not_printed') {
+    parts.push({
+      $and: [
+        { isPrinted: { $nin: [true, 1, 'true', '1', 'yes'] } },
+        { 'data.isPrinted': { $nin: [true, 1, 'true', '1', 'yes'] } },
+      ],
+    });
+  }
+  const kind = String(opts?.kind || '').trim().toLowerCase();
+  if (kind === 'refund_return' || kind === 'returned' || kind === 'return') {
+    parts.push({ $or: [{ local_status: 'RETURN_RECEIVED' }, { status: 'return_received' }, { type: 'return' }] });
+  } else if (kind === 'cancelled' || kind === 'cancel') {
+    parts.push({ $nor: [{ local_status: 'RETURN_RECEIVED' }, { status: 'return_received' }, { type: 'return' }] });
+  }
+  return parts.length === 1 ? parts[0] : { $and: parts };
+}
+
+export async function queryDonHoanHuyPageFromStore(opts?: OrdersPageQuery): Promise<{
+  rows: any[]; total: number; page: number; pageSize: number; totalPages: number; hasMore: boolean;
+  counts: Record<string, number>; counters: CancelReturnCounters;
+}> {
+  const page = Math.max(1, Math.floor(Number(opts?.page) || 1));
+  const pageSize = Math.max(1, Math.min(200, Math.floor(Number(opts?.pageSize) || 50)));
+  const empty = { rows: [], total: 0, page, pageSize, totalPages: 1, hasMore: false, counts: {}, counters: { ...EMPTY_CANCEL_RETURN_COUNTERS } };
+  if (!isMongoReady()) return empty;
+  requireMongo();
+  const filter = buildDonHoanHuyPageFilter(opts);
+  const skip = (page - 1) * pageSize;
+  try {
+    const total = await DonHoanHuyModel.countDocuments(filter).maxTimeMS(3000);
+    const n = Number(total) || 0;
+    const totalPages = Math.max(1, Math.ceil(n / pageSize) || 1);
+    const effectivePage = Math.min(page, totalPages);
+    const docs = await DonHoanHuyModel.find(filter)
+      .sort({ scannedAt: -1, _id: -1 })
+      .skip((effectivePage - 1) * pageSize)
+      .limit(pageSize)
+      .maxTimeMS(5000)
+      .lean();
+    const rows = (docs || []).map(donHoanHuyDocToOrder).filter((o) => Boolean(o?.orderSn || o?.id));
+    return { rows, total: n, page: effectivePage, pageSize, totalPages, hasMore: effectivePage < totalPages, counts: {}, counters: { ...EMPTY_CANCEL_RETURN_COUNTERS, total: n } };
+  } catch (error) {
+    console.warn('[MongoDB] queryDonHoanHuyPageFromStore failed:', (error as any)?.message || error);
+    return empty;
+  }
 }
 
 /** Đọc tab Đã nhận hủy/hoàn — luôn sort + limit (không find({}) trần). */

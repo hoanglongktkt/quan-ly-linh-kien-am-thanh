@@ -103,8 +103,11 @@ export function saveAddressBookEntry(entry: Omit<AddressBookEntry, 'id' | 'saved
 
 export async function fetchAddressBook(
   authHeaders: () => Record<string, string>,
+  parentSignal?: AbortSignal,
 ): Promise<AddressBookEntry[]> {
   const controller = new AbortController();
+  const onParentAbort = () => controller.abort();
+  parentSignal?.addEventListener('abort', onParentAbort, { once: true });
   const timer = window.setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
     const res = await fetch('/api/address-book', {
@@ -124,6 +127,7 @@ export async function fetchAddressBook(
     return loadAddressBook();
   } finally {
     window.clearTimeout(timer);
+    parentSignal?.removeEventListener('abort', onParentAbort);
   }
 }
 
@@ -165,9 +169,12 @@ export async function fetchAddressBookRanking(
 export async function postAddressBookEntry(
   entry: Omit<AddressBookEntry, 'id' | 'savedAt'>,
   authHeaders: () => Record<string, string>,
+  parentSignal?: AbortSignal,
 ): Promise<AddressBookEntry | null> {
   saveAddressBookEntry(entry);
   const controller = new AbortController();
+  const onParentAbort = () => controller.abort();
+  parentSignal?.addEventListener('abort', onParentAbort, { once: true });
   const timer = window.setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
     const res = await fetch('/api/address-book', {
@@ -199,5 +206,6 @@ export async function postAddressBookEntry(
     return null;
   } finally {
     window.clearTimeout(timer);
+    parentSignal?.removeEventListener('abort', onParentAbort);
   }
 }

@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Loader2, Printer, RefreshCw, Ban, Pencil, Trash2, Eye, X } from 'lucide-react';
+import { Loader2, Printer, RefreshCw, Ban, Receipt, Pencil, Trash2 } from 'lucide-react';
 import type { Order } from '../types';
+import { createTimeoutSignal, isAbortError, readResponseJson } from '../utils/apiClient';
 import type { MobileOrderCardControls } from './OrderListRows';
 import { orderCreatedAtMs, parseOrderTimeMs } from '../utils/sanitizeOrder';
 import {
@@ -191,36 +192,49 @@ function OrderTimeCell({ order, status }: { order: Order; status: ExternalStatus
   );
 }
 
-async function postGhnOrderAction(path: string, order: Order): Promise<Record<string, unknown>> {
+async function postGhnOrderAction(path: string, order: Order, signal?: AbortSignal): Promise<Record<string, unknown>> {
   const token = localStorage.getItem('admin_token') || '';
   const id = encodeURIComponent(String(order.id || order.orderSn || '').trim());
-  const res = await fetch(`/api/orders/${id}/${path}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: token ? `Bearer ${token}` : '',
-    },
-    body: JSON.stringify({ orderSn: order.orderSn }),
-  });
-  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!res.ok || data?.success === false) {
-    throw new Error(String(data?.message || data?.error || 'Thao tác GHN thất bại'));
+  const scope = createTimeoutSignal(30_000, signal);
+  try {
+    const res = await fetch(`/api/orders/${id}/${path}`, {
+      method: 'POST', signal: scope.signal,
+      headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+      body: JSON.stringify({ orderSn: order.orderSn }),
+    });
+    const data = await readResponseJson(res);
+    if (!res.ok || data.success === false) throw new Error(String(data.message || data.error || 'Thao tác GHN thất bại'));
+    return data;
+  } catch (error) {
+    if (!signal?.aborted && (scope.signal.aborted || isAbortError(error))) {
+      throw new Error('Chưa xác nhận được kết quả từ GHN. Hãy đồng bộ kiểm tra trạng thái trước khi thử lại.');
+    }
+    throw error;
+  } finally {
+    scope.cleanup();
   }
-  return data;
 }
 
-async function saveExternalOrder(order: Order, contact?: FormData) {
+async function saveExternalOrder(order: Order, contact?: FormData, signal?: AbortSignal) {
   const token = localStorage.getItem('admin_token') || '';
-  const response = await fetch(`/api/orders/external/${encodeURIComponent(orderKeyOf(order))}`, {
-    method: contact ? 'PATCH' : 'DELETE',
-    headers: { Authorization: `Bearer ${token}`, ...(contact ? { 'Content-Type': 'application/json' } : {}) },
-    body: contact ? JSON.stringify(Object.fromEntries(contact)) : undefined,
-  });
-  const data = await response.json().catch(() => null);
-  if (!response.ok || data?.success !== true) {
-    throw new Error(data?.message || data?.error || (contact ? 'Không lưu được đơn.' : 'Không xóa được đơn.'));
+  const scope = createTimeoutSignal(20_000, signal);
+  try {
+    const response = await fetch(`/api/orders/external/${encodeURIComponent(orderKeyOf(order))}`, {
+      method: contact ? 'PATCH' : 'DELETE', signal: scope.signal,
+      headers: { Authorization: `Bearer ${token}`, ...(contact ? { 'Content-Type': 'application/json' } : {}) },
+      body: contact ? JSON.stringify(Object.fromEntries(contact)) : undefined,
+    });
+    const data = await readResponseJson<{ success?: boolean; message?: string; error?: string; order: Order }>(response);
+    if (!response.ok || data.success !== true) throw new Error(data.message || data.error || 'Không cập nhật được đơn.');
+    return data;
+  } catch (error) {
+    if (!signal?.aborted && (scope.signal.aborted || isAbortError(error))) {
+      throw new Error('Chưa xác nhận được kết quả cập nhật. Hãy tải lại danh sách trước khi thử lại.');
+    }
+    throw error;
+  } finally {
+    scope.cleanup();
   }
-  return data;
 }
 
 function ExternalOrderContactDialog({ order, onClose, onSaved }: {
@@ -231,27 +245,45 @@ function ExternalOrderContactDialog({ order, onClose, onSaved }: {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  useEffect(() => { dialogRef.current?.showModal(); }, []);
+  const savingRef = useRef(false);
+  const lifetimeRef = useRef(new AbortController());
+  useEffect(() => {
+    const controller = new AbortController();
+    lifetimeRef.current = controller;
+    dialogRef.current?.showModal();
+    return () => controller.abort();
+  }, []);
   const inputClass = 'block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm mt-1';
   return createPortal(
-    <dialog ref={dialogRef} aria-labelledby="external-order-contact-title"
+    <dialog
+      ref={dialogRef}
+      aria-labelledby="external-order-contact-title"
       onCancel={(event) => { event.preventDefault(); if (!saving) onClose(); }}
-      className="m-auto w-[92vw] max-w-lg rounded-2xl bg-white p-5 text-slate-800 shadow-xl backdrop:bg-slate-950/50">
+      className="m-auto w-[92vw] max-w-lg rounded-2xl bg-white p-5 text-slate-800 shadow-xl backdrop:bg-slate-950/50"
+    >
       <form className="space-y-3" onSubmit={async (event) => {
         event.preventDefault();
-        if (saving) return;
+        if (savingRef.current) return;
+        const signal = lifetimeRef.current.signal;
+        if (signal.aborted) return;
+        savingRef.current = true;
         const contact = new FormData(event.currentTarget);
-        setSaving(true); setError('');
+        setSaving(true);
+        setError('');
         try {
-          const result = await saveExternalOrder(order, contact);
-          onSaved(result.order);
+          const result = await saveExternalOrder(order, contact, signal);
+          if (!signal.aborted) onSaved(result.order);
         } catch (error) {
-          setError(error instanceof Error ? error.message : 'Không lưu được đơn.');
-          setSaving(false);
+          if (!signal.aborted) setError(error instanceof Error ? error.message : 'Không lưu được đơn.');
+        } finally {
+          savingRef.current = false;
+          if (!signal.aborted) setSaving(false);
         }
       }}>
         <h2 id="external-order-contact-title" className="font-bold">Chỉnh sửa đơn {order.orderSn}</h2>
-        {trackingOf(order) && providerOf(order) !== 'self' && <p className="text-xs text-slate-600">Thông tin chỉnh sửa chỉ áp dụng cho đơn trên phần mềm.</p>}
+        {trackingOf(order) && providerOf(order) !== 'self' && (
+          <p className="text-xs text-slate-600">Thông tin chỉnh sửa chỉ áp dụng cho đơn trên phần mềm.</p>
+        )}
         <label className="block text-xs font-semibold">Tên khách
           <input name="customerName" defaultValue={order.customerName} required maxLength={1000} className={inputClass} />
         </label>
@@ -270,67 +302,14 @@ function ExternalOrderContactDialog({ order, onClose, onSaved }: {
           <button type="submit" disabled={saving} className="rounded-lg bg-emerald-700 px-3 py-2 text-sm font-bold text-white disabled:opacity-50">{saving ? 'Đang lưu…' : 'Lưu thay đổi'}</button>
         </div>
       </form>
-    </dialog>, document.body,
-  );
-}
-
-function ExternalOrderDetailsDialog({ order, onClose }: { order: Order; onClose: () => void }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  const invoice = buildPosInvoiceFromOrder(order);
-  const status = STATUS_META[resolveExternalStatus(order)];
-  useEffect(() => { dialogRef.current?.showModal(); }, []);
-  const money = (value: number) => value.toLocaleString('vi-VN') + ' đ';
-  return createPortal(
-    <dialog ref={dialogRef} aria-labelledby="external-order-details-title"
-      onCancel={(event) => { event.preventDefault(); onClose(); }}
-      className="om-no-print m-auto max-h-[90dvh] w-[94vw] max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 text-slate-800 shadow-xl backdrop:bg-slate-950/50">
-      <div className="mb-4 flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h2 id="external-order-details-title" className="break-words text-lg font-bold">Chi tiết đơn {order.orderSn || order.id}</h2>
-          <span className={`mt-2 inline-block rounded-full border px-2.5 py-1 text-xs font-semibold ${status.className}`}>{status.label}</span>
-        </div>
-        <button type="button" onClick={onClose} title="Đóng" aria-label="Đóng chi tiết đơn" className="inline-flex size-10 shrink-0 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2">
-          <X className="size-5" aria-hidden="true" />
-        </button>
-      </div>
-      <div className="space-y-2 break-words text-sm">
-        <OrderTimeCell order={order} status={resolveExternalStatus(order)} />
-        <p><strong>Khách hàng:</strong> {invoice.customerName}</p>
-        <p><strong>Điện thoại:</strong> {invoice.customerPhone}</p>
-        <p><strong>Địa chỉ:</strong> {invoice.customerAddress}</p>
-        <p><strong>Mã vận đơn:</strong> {trackingOf(order) || 'Chưa có mã hãng'}</p>
-      </div>
-      <div className="my-4 overflow-x-auto">
-        <table className="w-full min-w-[420px] text-left text-xs">
-          <caption className="mb-2 text-left text-sm font-bold">Sản phẩm trong đơn</caption>
-          <thead className="bg-slate-50"><tr>
-            <th className="p-2">Sản phẩm</th><th className="p-2 text-right">SL</th>
-            <th className="p-2 text-right">Đơn giá</th><th className="p-2 text-right">Thành tiền</th>
-          </tr></thead>
-          <tbody>{invoice.lines.length ? invoice.lines.map((line, index) => (
-            <tr key={index} className="border-b border-slate-100">
-              <td className="p-2">{line.productTitle}</td><td className="p-2 text-right">{line.quantity}</td>
-              <td className="whitespace-nowrap p-2 text-right">{money(line.sellingPrice)}</td>
-              <td className="whitespace-nowrap p-2 text-right font-semibold">{money(line.lineTotal)}</td>
-            </tr>
-          )) : <tr><td colSpan={4} className="p-3 text-center text-slate-500">Chưa có dòng hàng</td></tr>}</tbody>
-        </table>
-      </div>
-      <dl className="ml-auto max-w-sm space-y-2 text-sm">
-        <div className="flex justify-between gap-3"><dt>Tạm tính</dt><dd>{money(invoice.subtotal)}</dd></div>
-        <div className="flex justify-between gap-3"><dt>Phí giao hàng</dt><dd>{money(invoice.shippingFee)}</dd></div>
-        <div className="flex justify-between gap-3"><dt>Giảm giá</dt><dd>{money(invoice.discount)}</dd></div>
-        <div className="flex justify-between gap-3"><dt>Đã trả trước</dt><dd>{money(invoice.prepaid)}</dd></div>
-        <div className="flex justify-between gap-3 border-t pt-2 font-bold"><dt>Tiền thu hộ (COD)</dt><dd>{money(codOf(order))}</dd></div>
-      </dl>
-      {invoice.note && <p className="mt-4 whitespace-pre-wrap break-words text-sm"><strong>Ghi chú:</strong> {invoice.note}</p>}
-    </dialog>, document.body,
+    </dialog>,
+    document.body,
   );
 }
 
 type ExternalAction = 'print' | 'invoice' | 'sync' | 'cancel' | 'delete';
 
-function GhnActionButtons({
+function ExternalOrderActions({
   order,
   busyKind,
   onPrintWaybill,
@@ -339,17 +318,15 @@ function GhnActionButtons({
   onCancelGhn,
   onEditOrder,
   onDeleteOrder,
-  onViewOrder,
 }: {
   order: Order;
-  busyKind: 'print' | 'invoice' | 'sync' | 'cancel' | 'delete' | null;
+  busyKind: ExternalAction | null;
   onPrintWaybill: (order: Order) => void;
   onPrintInvoice: (order: Order) => void;
   onSyncGhn: (order: Order) => void;
   onCancelGhn: (order: Order) => void;
-  onViewOrder: (order: Order) => void;
-  onEditOrder?: (order: Order) => void;
-  onDeleteOrder?: (order: Order) => void;
+  onEditOrder: (order: Order) => void;
+  onDeleteOrder: (order: Order) => void;
 }) {
   const provider = providerOf(order);
   const tn = trackingOf(order);
@@ -363,39 +340,47 @@ function GhnActionButtons({
   const canCancel = canGhn && st !== 'cancelled' && st !== 'delivered';
   const pos = isPosOrder(order);
 
-  const iconClass = 'inline-flex size-10 shrink-0 items-center justify-center rounded-lg transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40 disabled:cursor-not-allowed';
   return (
-    <div className="inline-grid grid-cols-4 items-center justify-items-center gap-1">
-      <button type="button" onClick={() => onViewOrder(order)} title="Xem đơn" aria-label="Xem đơn" className={`${iconClass} text-sky-700 hover:bg-sky-50`}>
-        <Eye className="size-4" aria-hidden="true" />
-      </button>
-      {(!pos || (st !== 'cancelled' && st !== 'rts')) && <button type="button" disabled={anyBusy} onClick={() => onEditOrder?.(order)} title="Sửa đơn" aria-label="Sửa đơn" className={`${iconClass} text-slate-600 hover:bg-slate-100`}>
-        <Pencil className="size-4" aria-hidden="true" />
-      </button>}
-      <button type="button" disabled={anyBusy} onClick={() => onDeleteOrder?.(order)} title="Xóa đơn" aria-label="Xóa đơn" className={`${iconClass} text-rose-600 hover:bg-rose-50`}>
+    <div className="inline-flex flex-col items-stretch gap-1 min-w-[8.5rem]">
+      {(!pos || (st !== 'cancelled' && st !== 'rts')) && (
+        <button
+          type="button"
+          disabled={anyBusy}
+          onClick={() => onEditOrder(order)}
+          className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-lg disabled:opacity-50"
+        >
+          <Pencil className="w-3.5 h-3.5" /> Sửa đơn
+        </button>
+      )}
+      <button
+        type="button"
+        disabled={anyBusy}
+        onClick={() => onDeleteOrder(order)}
+        className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-50"
+      >
         {busyKind === 'delete' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+        Xóa đơn
       </button>
       <button
         type="button"
         disabled={anyBusy}
         onClick={() => onPrintInvoice(order)}
-        aria-label="In hóa đơn"
-        className={`${iconClass} text-amber-600 hover:bg-amber-50`}
+        className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold text-[10px] rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
         title="In lại hóa đơn bán lẻ (POS) cho khách"
       >
         {invoiceBusy ? (
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
         ) : (
-          <Printer className="size-4" aria-hidden="true" />
+          <Receipt className="w-3.5 h-3.5" />
         )}
+        In hóa đơn
       </button>
       {!pos && <>
       <button
         type="button"
         disabled={anyBusy || provider === 'self' || !tn}
         onClick={() => onPrintWaybill(order)}
-        aria-label="In vận đơn"
-        className={`${iconClass} text-blue-600 hover:bg-blue-50`}
+        className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
         title={
           provider === 'self'
             ? 'Đơn tự giao không có phiếu bưu cục'
@@ -409,13 +394,13 @@ function GhnActionButtons({
         ) : (
           <Printer className="w-3.5 h-3.5" />
         )}
+        In vận đơn
       </button>
       <button
         type="button"
         disabled={anyBusy || !canGhn}
         onClick={() => onSyncGhn(order)}
-        aria-label="Đồng bộ GHN"
-        className={`${iconClass} text-emerald-600 hover:bg-emerald-50`}
+        className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
         title={!canGhn ? 'Chỉ đồng bộ đơn GHN đã có mã vận đơn' : 'Lấy trạng thái mới nhất từ GHN'}
       >
         {syncBusy ? (
@@ -423,13 +408,13 @@ function GhnActionButtons({
         ) : (
           <RefreshCw className="w-3.5 h-3.5" />
         )}
+        Đồng bộ GHN
       </button>
       <button
         type="button"
         disabled={anyBusy || !canCancel}
         onClick={() => onCancelGhn(order)}
-        aria-label="Hủy vận chuyển"
-        className={`${iconClass} text-rose-600 hover:bg-rose-50`}
+        className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-[10px] rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
         title={
           !canGhn
             ? 'Chỉ hủy vận đơn GHN'
@@ -439,6 +424,7 @@ function GhnActionButtons({
         }
       >
         {cancelBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ban className="w-3.5 h-3.5" />}
+        Hủy vận chuyển
       </button>
       </>}
     </div>
@@ -452,23 +438,29 @@ export function ExternalOrdersTable({
   onOrderUpdated,
   onEditPosOrder,
   onOrderEdited,
-  renderMobileOrder,
   onOrderDeleted,
+  renderMobileOrder,
 }: {
   orders: Order[];
   printingOrderId: string | null;
   onPrintWaybill: (order: Order) => void;
   onOrderUpdated?: (order: Order) => void;
-  onEditPosOrder?: (order: Order) => void;
-  onOrderEdited?: (order: Order) => void;
+  onEditPosOrder: (order: Order) => void;
+  onOrderEdited: (order: Order) => void;
+  onOrderDeleted: (order: Order) => void;
   renderMobileOrder?: (order: Order, controls: MobileOrderCardControls) => React.ReactNode;
-  onOrderDeleted?: (order: Order) => void;
 }) {
   const [actionKey, setActionKey] = useState<string | null>(null);
   const [actionKind, setActionKind] = useState<ExternalAction | null>(null);
-  const [viewingOrder, setViewingOrder] = useState<Order | null>(null);
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [singlePrintOrder, setSinglePrintOrder] = useState<Order | null>(null);
+  const actionLockRef = useRef(false);
+  const lifetimeRef = useRef(new AbortController());
+  useEffect(() => {
+    const controller = new AbortController();
+    lifetimeRef.current = controller;
+    return () => controller.abort();
+  }, []);
 
   const handlePrintSingleInvoice = (order: Order) => {
     if (actionKey || printingOrderId) return;
@@ -519,51 +511,71 @@ export function ExternalOrdersTable({
     };
   }, [singlePrintOrder]);
 
-  const editOrder = (order: Order) => {
-    if (actionKey || printingOrderId) return;
-    if (isPosOrder(order)) onEditPosOrder?.(order);
-    else setEditingOrder(order);
-  };
-
-  const deleteOrder = async (order: Order) => {
-    if (actionKey || printingOrderId) return;
-    const hasWaybill = Boolean(trackingOf(order)) && providerOf(order) !== 'self';
-    if (!window.confirm(`Xóa vĩnh viễn đơn ${order.orderSn || order.id} khỏi phần mềm?` +
-      (hasWaybill ? '\nNếu cần hủy giao hàng, hãy hủy vận đơn với hãng trước khi xóa.' : '') +
-      (isPosOrder(order) ? '\nNếu cần hoàn tồn, hãy điều chỉnh trong kho.' : ''))) return;
-    setActionKey(orderKeyOf(order)); setActionKind('delete');
-    try {
-      await saveExternalOrder(order);
-      onOrderDeleted?.(order);
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : 'Không xóa được đơn.');
-    } finally { setActionKey(null); setActionKind(null); }
-  };
-
   const runGhnAction = async (order: Order, kind: 'sync' | 'cancel') => {
     const key = orderKeyOf(order);
-    if (!key || actionKey) return;
+    if (!key || actionKey || actionLockRef.current) return;
+    const signal = lifetimeRef.current.signal;
+    if (signal.aborted) return;
     if (kind === 'cancel') {
       const ok = window.confirm(
         'Hủy đơn vận chuyển trên GHN và đổi trạng thái Đã hủy trên phần mềm?',
       );
       if (!ok) return;
     }
+    actionLockRef.current = true;
     setActionKey(key);
     setActionKind(kind);
     try {
       const path = kind === 'sync' ? 'sync-ghn' : 'cancel-ghn';
-      const data = await postGhnOrderAction(path, order);
+      const data = await postGhnOrderAction(path, order, signal);
+      if (signal.aborted) return;
       const updated = (data.order || null) as Order | null;
       if (updated && onOrderUpdated) onOrderUpdated(updated);
       const msg = String(data.message || (kind === 'sync' ? 'Đã đồng bộ GHN' : 'Đã hủy đơn GHN'));
       window.alert(msg);
     } catch (err: unknown) {
+      if (signal.aborted) return;
       const msg = err instanceof Error ? err.message : 'Thao tác GHN thất bại';
       window.alert(msg);
     } finally {
-      setActionKey(null);
-      setActionKind(null);
+      actionLockRef.current = false;
+      if (!signal.aborted) {
+        setActionKey(null);
+        setActionKind(null);
+      }
+    }
+  };
+
+  const editOrder = (order: Order) => {
+    if (actionKey || printingOrderId) return;
+    if (isPosOrder(order)) onEditPosOrder(order);
+    else setEditingOrder(order);
+  };
+
+  const deleteOrder = async (order: Order) => {
+    if (actionKey || printingOrderId || actionLockRef.current) return;
+    const signal = lifetimeRef.current.signal;
+    if (signal.aborted) return;
+    const hasWaybill = Boolean(trackingOf(order)) && providerOf(order) !== 'self';
+    if (!window.confirm(
+      `Xóa vĩnh viễn đơn ${order.orderSn || order.id} khỏi phần mềm?` +
+      (hasWaybill ? '\nNếu cần hủy giao hàng, hãy hủy vận đơn với hãng trước khi xóa.' : '') +
+      (isPosOrder(order) ? '\nNếu cần hoàn tồn, hãy điều chỉnh trong kho.' : ''),
+    )) return;
+    actionLockRef.current = true;
+    setActionKey(orderKeyOf(order));
+    setActionKind('delete');
+    try {
+      await saveExternalOrder(order, undefined, signal);
+      if (!signal.aborted) onOrderDeleted(order);
+    } catch (error) {
+      if (!signal.aborted) window.alert(error instanceof Error ? error.message : 'Không xóa được đơn.');
+    } finally {
+      actionLockRef.current = false;
+      if (!signal.aborted) {
+        setActionKey(null);
+        setActionKind(null);
+      }
     }
   };
 
@@ -583,18 +595,19 @@ export function ExternalOrdersTable({
           <thead>
             <tr className="bg-slate-50 border-b border-gray-100 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
               <th className="p-4 w-40">Thời gian</th>
-              <th className="p-4 w-48">Mã vận đơn</th>
+              <th className="p-4 w-48">Mã đơn / vận đơn</th>
               <th className="p-4 w-44">Khách hàng</th>
               <th className="p-4">Địa chỉ</th>
               <th className="p-4 text-right w-32">Tiền thu hộ (COD)</th>
               <th className="p-4 text-center w-40">Trạng thái</th>
-              <th className="p-4 text-center w-52 min-w-52">Thao tác</th>
+              <th className="p-4 text-center w-40">Thao tác</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
             {orders.map((order) => {
               const provider = providerOf(order);
               const tn = trackingOf(order);
+              const pos = isPosOrder(order);
               const st = resolveExternalStatus(order);
               const meta = STATUS_META[st];
               const key = orderKeyOf(order);
@@ -612,10 +625,10 @@ export function ExternalOrdersTable({
                   </td>
                   <td className="p-4">
                     <div className="flex items-center gap-1.5">
-                      <ProviderBadge provider={provider} />
-                      {tn ? (
+                      {pos ? <span className="px-1.5 py-0.5 rounded bg-blue-600 text-white text-[9px] font-bold">POS</span> : <ProviderBadge provider={provider} />}
+                      {pos || tn ? (
                         <span className="font-mono font-extrabold text-gray-900 text-sm tracking-tight truncate max-w-[10rem]">
-                          {tn}
+                          {pos ? order.orderSn : tn}
                         </span>
                       ) : (
                         <span className="text-[11px] text-amber-700 italic font-semibold">
@@ -650,16 +663,15 @@ export function ExternalOrdersTable({
                     </span>
                   </td>
                   <td className="p-4 text-center">
-                    <GhnActionButtons
+                    <ExternalOrderActions
                       order={order}
                       busyKind={busyKind}
                       onPrintWaybill={onPrintWaybill}
                       onPrintInvoice={handlePrintSingleInvoice}
                       onSyncGhn={(o) => void runGhnAction(o, 'sync')}
                       onCancelGhn={(o) => void runGhnAction(o, 'cancel')}
-                      onViewOrder={setViewingOrder}
                       onEditOrder={editOrder}
-                      onDeleteOrder={(o) => void deleteOrder(o)}
+                      onDeleteOrder={(order) => void deleteOrder(order)}
                     />
                   </td>
                 </tr>
@@ -690,11 +702,10 @@ export function ExternalOrdersTable({
                 type="button"
                 disabled={Boolean(busyKind)}
                 onClick={() => canPrintWaybill ? onPrintWaybill(order) : handlePrintSingleInvoice(order)}
-                title={canPrintWaybill ? 'In vận đơn' : 'In hóa đơn'}
-                aria-label={canPrintWaybill ? 'In vận đơn' : 'In hóa đơn'}
-                className="inline-flex size-10 items-center justify-center rounded-lg text-blue-700 active:bg-blue-50 disabled:opacity-60"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-2.5 text-[11px] font-bold text-blue-700 active:bg-blue-50 disabled:opacity-60"
               >
                 {busyKind === 'print' || busyKind === 'invoice' ? <Loader2 className="size-4 animate-spin" /> : <Printer className="size-4" />}
+                {canPrintWaybill ? 'In phiếu' : 'In hóa đơn'}
               </button>
             ),
             details: (
@@ -705,15 +716,14 @@ export function ExternalOrdersTable({
                   <p>{formatAddress(order)}</p>
                   <p>Thu hộ: {codOf(order).toLocaleString('vi-VN')} đ</p>
                 </div>
-                <GhnActionButtons
+                <ExternalOrderActions
                   order={order}
                   busyKind={busyKind}
                   onPrintWaybill={onPrintWaybill}
                   onPrintInvoice={handlePrintSingleInvoice}
                   onSyncGhn={(o) => void runGhnAction(o, 'sync')}
                   onCancelGhn={(o) => void runGhnAction(o, 'cancel')}
-                  onViewOrder={setViewingOrder}
-                      onEditOrder={editOrder}
+                  onEditOrder={editOrder}
                   onDeleteOrder={(order) => void deleteOrder(order)}
                 />
               </div>
@@ -723,8 +733,12 @@ export function ExternalOrdersTable({
       </div>}
       </div>
 
-      {viewingOrder && <ExternalOrderDetailsDialog order={viewingOrder} onClose={() => setViewingOrder(null)} />}
-      {editingOrder && <ExternalOrderContactDialog order={editingOrder} onClose={() => setEditingOrder(null)} onSaved={(order) => { setEditingOrder(null); onOrderEdited?.(order); }} />}
+      {editingOrder && <ExternalOrderContactDialog
+        order={editingOrder}
+        onClose={() => setEditingOrder(null)}
+        onSaved={(order) => { setEditingOrder(null); onOrderEdited(order); }}
+      />}
+
       {singlePrintOrder && typeof document !== 'undefined'
         ? createPortal(
             <div id="print-section" className="pos-invoice-reprint-host" aria-hidden="true">
@@ -739,4 +753,3 @@ export function ExternalOrdersTable({
     </>
   );
 }
-

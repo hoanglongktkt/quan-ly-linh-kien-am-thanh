@@ -58,7 +58,7 @@ let lookups = 0;
 let current = { id: 'shopee-ORDER123', orderSn: 'ORDER123', status: 'processed', is_handed_over: true };
 globalThis.fetch = async (url, options) => {
   lookups++;
-  assert.equal(url, '/api/orders/lookup?code=SPX123456789');
+  assert.equal(url, '/api/orders/lookup?code=SPX123456789&lean=scanner');
   assert.equal(options.cache, 'no-store');
   return { ok: true, json: async () => current };
 };
@@ -68,15 +68,14 @@ current = { ...current, isReturnReceived: true, local_status: 'CANCELLED_STORED'
 assert.equal((await scan.lookupCurrentScannerOrder('SPX123456789')).isReturnReceived, true);
 assert.equal(lookups, 2, 'a second session must check DB again even with a fresh pool');
 globalThis.fetch = async (url) => {
-  // Reproduce the installed backend rejecting its projection without channel/items.
-  if (url.includes('lean=scanner')) return { ok: false, status: 404 };
+  assert.ok(url.includes('lean=scanner'), 'current scans request the small status projection');
   return { ok: true, json: async () => ({
     id: 'shopee-NEWORDER123', orderSn: 'NEWORDER123', channel: 'shopee',
-    status: 'processed', is_handed_over: false, items: [{ quantity: 1 }],
+    status: 'processed', is_handed_over: false,
   }) };
 };
 const newOrder = await scan.lookupCurrentScannerOrder('SPXNEW123456');
-assert.equal(newOrder.orderSn, 'NEWORDER123', 'new orders are found on the existing cPanel backend');
+assert.equal(newOrder.orderSn, 'NEWORDER123', 'new orders are found without product items in the scanner contract');
 assert.equal(newOrder.is_handed_over, false);
 globalThis.fetch = async () => ({ ok: false, status: 404 });
 assert.equal(await scan.lookupCurrentScannerOrder('SPX123456789'), null, 'missing DB rows must not fall back to cached orders');

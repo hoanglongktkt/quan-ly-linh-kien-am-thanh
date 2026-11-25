@@ -1,4 +1,5 @@
 import { orderCustomerMatchesSearch } from "../utils/orderCustomerSearch";
+import { isPendingShipmentReview, markShipmentReview } from '../../modules/orders/shipmentReview.ts';
 import { OrderProductImage } from './OrderProductImage';
 import OrderPushDetails from './OrderPushDetails';
 import { getOrderListFinance } from '../utils/orderListFinance';
@@ -23,6 +24,7 @@ import {
   normalizeOrderScanKey,
   buildScanLookupKeys,
   lookupCurrentScannerOrder,
+  lookupScannerSyncMap,
   SCANNED_ORDER_MESSAGE,
   missingScannerOrderMessage,
   rememberCommittedScans,
@@ -111,11 +113,11 @@ import {
 import { Order, ConnectedShop, SyncLog, Product, SystemFee } from '../types';
 import ManualOrderPage from './ManualOrderPage';
 import QuickPosPage from './QuickPosPage';
-import type { OrderDraft } from '../utils/orderDrafts';
 import OrderDraftsPage from './OrderDraftsPage';
+import type { OrderDraft } from '../utils/orderDrafts';
 import { ExternalOrdersTable } from './ExternalOrdersTable';
-import { resolveLabelFetchUrl, parseJsonResponse, readResponseJson } from '../utils/apiClient';
-import { aggregateOrderProducts, type AggregatedOrderProduct } from '../utils/aggregateOrderProducts';
+import { createTimeoutSignal, resolveLabelFetchUrl, parseJsonResponse, readResponseJson } from '../utils/apiClient';
+import type { AggregatedOrderProduct } from '../utils/aggregateOrderProducts';
 import { getCarrierWaybillDisplay } from '../utils/orderTracking';
 import {
   getOrderCarrierText,
@@ -127,6 +129,7 @@ import { resolveOrderShopDisplayName } from '../utils/resolveOrderShopName';
 import { orderCreatedAtMs } from '../utils/sanitizeOrder';
 import {
   compareGroupPickingOrders,
+  getConfirmedPrintOrderSns,
   uniquePreserveOrder,
 } from '../utils/groupPickingSort';
 import { onTabWake, type WakeInfo } from '../utils/tabWakeGate';
@@ -261,6 +264,7 @@ const PRINT_FE_STATUS_POLL_MS = 1000;
 
 /** Chỉ UNPAID / kiểm duyệt sàn. READY_TO_SHIP thuộc Đơn chưa xử lý, kể cả khi chưa có mã. */
 function isPendingConfirmOrder(order: Order): boolean {
+  if (isPendingShipmentReview(order)) return true;
   const raw = String(order.shopee_order_status || '').toUpperCase();
   if (raw === 'READY_TO_SHIP' || raw === 'RETRY_SHIP') return false;
   if (
@@ -810,6 +814,7 @@ interface OrderManagerProps {
     page?: number;
     /** `printed` | `unprinted` — lọc theo isPrinted từ Mongo (không gọi Shopee). */
     print_status?: 'printed' | 'unprinted' | 'all' | '';
+    carrier?: string;
     /** Tab SSOT — cùng filter với /api/orders/counter. */
     tab?: string;
     /** Search toàn collection MongoDB — không kẹp tab. */
@@ -880,7 +885,7 @@ function buildClientPageNumbers(current: number, totalPages: number): (number | 
 const SCAN_BG_STATUS_POLL_MS = 30_000;
 /** Không pending / unnotified — nới chu kỳ để giảm spam Network. */
 const SCAN_BG_STATUS_IDLE_POLL_MS = 60_000;
-/** Tab đang mở: poll 15s để giảm tải Mongo. Tab ẩn: 10s (tick tự bỏ qua). */
+/** Tab đang mở: poll 3s để đơn stub hiện gần real-time. Tab ẩn: 10s (tick tự bỏ qua). */
 const ORDERS_POLL_VISIBLE_MS = 15_000;
 const ORDERS_POLL_HIDDEN_MS = 10_000;
 /** Quay lại sau ngủ dài: chỉ cho một tab kích Quick Sync trong mỗi 15 phút. */
@@ -889,7 +894,6 @@ const WAKE_QUICK_SYNC_STORAGE_KEY = 'oms:wake-quick-sync-at:v1';
 
 /** Tab không có list đơn — poll counter vẫn chạy, không gọi /orders/refresh. */
 const ORDER_POLL_LISTLESS_TABS = new Set([
-  'order_products',
   'drafts',
   'quick_pos',
   'create_external',
@@ -917,6 +921,10 @@ function readActiveTabBadge(
   cancelKind: string,
 ): number | null {
   if (ORDER_POLL_LISTLESS_TABS.has(tab)) return null;
+  if (tab === 'order_products') {
+    return (Number(counts.pending_confirm) || 0) +
+      (Number(counts.unprocessed) || 0) + (Number(counts.processed) || 0);
+  }
   if (tab === 'cancel_returns') {
     if (cancelKind === 'refund_return') {
       return Number(counts.cancel_returns_returned ?? counts.refund_return) || 0;
@@ -1027,9 +1035,9 @@ function isOrderCancelledStatus(order: Order): boolean {
 }
 
 /** Lớp lọc cuối — chặn đơn Hủy/Hoàn/RTS lẫn tab khi response cũ về muộn. */
-function orderListTabForQuery(tab: OrderTab, _query: string): string {
-  // Tìm kiếm vẫn giữ phạm vi tab hiện tại; chỉ tab Tất cả mới bỏ tham số tab.
-  return tab === 'all' ? '' : tab;
+function orderListTabForQuery(tab: OrderTab, query: string): string {
+  if (tab === 'all') return '';
+  return tab;
 }
 
 function matchesStrictDisplaySubTab(
@@ -1066,7 +1074,12 @@ function orderMatchesSearchKeyword(order: Order, rawKeyword: string): boolean {
   if (hay(getOrderWaybillCode(order)).includes(q)) return true;
   if (hay((order as { packageNumber?: string }).packageNumber).includes(q)) return true;
 
-  if ((order.items || []).some((it) => hay(it.productTitle || it.name || it.modelName || it.modelSku).includes(q))) {
+  if ((order.items || []).some((item) => {
+    if (!item) return false;
+    const legacy = item as { sku?: string; model_sku?: string; item_sku?: string };
+    return [item.productTitle, item.name, item.modelName, item.modelSku, legacy.sku, legacy.model_sku, legacy.item_sku]
+      .some((value) => hay(value).includes(q));
+  })) {
     return true;
   }
 
@@ -1278,6 +1291,10 @@ export default function OrderManager({
       return onFetchOrdersPropRef.current?.({
         ...opts,
         ...(shopIds.length > 0 ? { shopIds } : {}),
+        print_status:
+          opts?.print_status ??
+          (printStatusFilterRef.current !== 'all' ? printStatusFilterRef.current : undefined),
+        carrier: opts?.carrier ?? (selectedShippingCarrierRef.current !== 'all' ? selectedShippingCarrierRef.current : undefined),
         startDate: opts?.startDate || range.startDate,
         endDate: opts?.endDate || range.endDate,
         groupPicking,
@@ -1290,6 +1307,7 @@ export default function OrderManager({
   const cancelReturnTabRef = useRef(cancelReturnTab);
   const currentPageRef = useRef(currentPage);
   const searchQueryRef = useRef(searchQuery);
+  const printStatusFilterRef = useRef<'all' | 'printed' | 'unprinted'>('all');
   activeSubTabRef.current = activeSubTab;
   cancelReturnTabRef.current = cancelReturnTab;
   currentPageRef.current = currentPage;
@@ -1340,7 +1358,7 @@ export default function OrderManager({
     onWebOrderCountChange?.(Number(serverOrderCounts?.web_orders) || 0);
   }, [serverOrderCounts, onWebOrderCountChange]);
   const serverOrderCountsRef = useRef<Record<string, number> | null>(null);
-  const [fulfillmentProducts, setFulfillmentProducts] = useState<AggregatedOrderProduct[] | null>(null);
+  const [aggregatedOrderProducts, setFulfillmentProducts] = useState<AggregatedOrderProduct[]>([]);
   const [fulfillmentProductsLoading, setFulfillmentProductsLoading] = useState(false);
   const fulfillmentAbortRef = useRef<AbortController | null>(null);
   // Ghi nhớ phạm vi dữ liệu để poll nền không xóa danh sách đang xem.
@@ -1364,6 +1382,7 @@ export default function OrderManager({
   const prevCounterScopeRef = useRef('');
   /** Badge tab đang mở ở lần poll trước — chỉ refresh list khi số này đổi. */
   const prevTabBadgeRef = useRef<{ key: string; count: number } | null>(null);
+  const lastWooListRefreshAtRef = useRef(0);
   const isSyncingRef = useRef(false);
   /** Pull-to-refresh (mobile): vuốt từ trên xuống để fetch lại đơn. */
   const [pullDistance, setPullDistance] = useState(0);
@@ -1406,6 +1425,7 @@ export default function OrderManager({
     }
     lastCounterCallAtRef.current = now;
     const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 10_000);
     const onCallerAbort = () => controller.abort();
     if (opts?.signal) {
       if (opts.signal.aborted) {
@@ -1492,6 +1512,7 @@ export default function OrderManager({
           (typeof err === 'object' && err !== null && (err as { name?: string }).name === 'AbortError');
         if (!aborted) console.warn('[OrderCounts] fetch failed:', err);
       } finally {
+        window.clearTimeout(timeoutId);
         if (opts?.signal) {
           opts.signal.removeEventListener('abort', onCallerAbort);
         }
@@ -1542,11 +1563,12 @@ export default function OrderManager({
     if (inFlight) fulfillmentAbortRef.current?.abort();
 
     const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
     fulfillmentAbortRef.current = controller;
     if (fulfillmentLoadedScopeRef.current !== scopeKey) {
       // Chỉ hiện trạng thái tải khi đổi phạm vi, không nhấp nháy khi poll nền.
       fulfillmentLoadedScopeRef.current = '';
-      setFulfillmentProducts(null);
+      setFulfillmentProducts([]);
       setFulfillmentProductsLoading(true);
     }
     const request = (async (): Promise<AggregatedOrderProduct[]> => {
@@ -1582,6 +1604,7 @@ export default function OrderManager({
         }
         return [];
       } finally {
+        window.clearTimeout(timeoutId);
         if (fulfillmentAbortRef.current === controller) {
           fulfillmentAbortRef.current = null;
           fulfillmentInFlightRef.current = null;
@@ -1651,6 +1674,9 @@ export default function OrderManager({
     }
     setShowQuickPosPage(false);
     setShowCreateOrderPage(false);
+    if (nextTab !== 'web_orders' && nextTab !== 'external_orders') {
+      setSelectedPlatform('all');
+    }
     setActiveSubTab(nextTab);
     if (nextTab === 'cancel_returns') {
       setCancelReturnTab(cancelReturn ?? 'all');
@@ -1721,7 +1747,22 @@ export default function OrderManager({
 
   /** Client-side pagination — chỉ đổi trang UI, không gọi lại API. */
   const goToOrdersPage = useCallback((page: number) => {
-    setCurrentPage(Math.max(1, Math.floor(page) || 1));
+    const nextPage = Math.max(1, Math.floor(page) || 1);
+    setSelectedOrderIds([]);
+    setExpandedOrderId(null);
+    setCurrentPage(nextPage);
+    void onFetchOrdersRef.current?.({
+      silent: false,
+      page: nextPage,
+      limit: ORDERS_PAGE_SIZE,
+      merge: false,
+      tab: orderListTabForQuery(activeSubTabRef.current, searchQueryRef.current),
+      q: searchQueryRef.current.trim() || undefined,
+      kind:
+        !searchQueryRef.current.trim() && activeSubTabRef.current === 'cancel_returns'
+          ? cancelReturnKindParam(cancelReturnTabRef.current)
+          : undefined,
+    });
   }, []);
 
   /** Sau sync nền: chỉ poll counter nhẹ — không kéo 150–400 đơn + merge. */
@@ -1796,7 +1837,8 @@ export default function OrderManager({
     const tick = async () => {
       if (cancelled || inFlight) return;
       if (document.visibilityState === 'hidden') return;
-      // Không tranh chấp Mongo với request tìm kiếm hoặc tải danh sách.
+      // Khi người dùng đang tìm hoặc danh sách còn đang tải, ưu tiên request danh sách;
+      // không phát thêm /counter làm tranh chấp Mongo và kéo dài thời gian tìm kiếm.
       if (searchQueryRef.current.trim() || isListFetchingRef.current) return;
       // Sync burst đang chạy → startSyncPolling đã tự poll counter, bỏ tick tránh /counter chồng.
       if (syncPollTimerRef.current != null) return;
@@ -1820,7 +1862,9 @@ export default function OrderManager({
           prevTabBadgeRef.current = { key: badgeKey, count: nextBadge };
           return;
         }
-        if (prev.count === nextBadge) return;
+        // WooCommerce status/customer edits do not necessarily change its total order count.
+        const wooRefreshDue = tab === 'web_orders' && Date.now() - lastWooListRefreshAtRef.current >= 60_000;
+        if (prev.count === nextBadge && !wooRefreshDue) return;
         // Timeout lag countDocuments → 0: giữ list, không refresh giả.
         if (
           nextBadge === 0 &&
@@ -1833,10 +1877,15 @@ export default function OrderManager({
         prevTabBadgeRef.current = { key: badgeKey, count: nextBadge };
         // Tăng badge đã được scheduleNewOrderListRefresh xử lý — không gọi refresh lần 2.
         if (notified) return;
+        if (tab === 'order_products') {
+          void fetchFulfillmentProducts();
+          return;
+        }
         if (searchQueryRef.current.trim() || isListFetchingRef.current) {
           prevTabBadgeRef.current = prev;
           return;
         }
+        if (tab === 'web_orders') lastWooListRefreshAtRef.current = Date.now();
         void fetchOrdersWithShop({
           silent: true,
           page: currentPageRef.current,
@@ -1881,7 +1930,7 @@ export default function OrderManager({
       }
       counterAbortRef.current?.abort();
     };
-  }, [counterBootReady, fetchOrderCounts, fetchOrdersWithShop, maybeNotifyNewOrdersFromCounts]);
+  }, [counterBootReady, fetchFulfillmentProducts, fetchOrderCounts, fetchOrdersWithShop, maybeNotifyNewOrdersFromCounts]);
 
   /**
    * Wake-up sau ngủ đông (mobile) / quay lại tab: force catch-up list + counter ngay,
@@ -2314,8 +2363,6 @@ export default function OrderManager({
       return;
     }
 
-    onPrepareTabFetchRef.current?.();
-
     const expectedTab = orderListTabForQuery(activeSubTab, searchQuery);
     const expectedKind =
       searchQuery.trim()
@@ -2330,6 +2377,7 @@ export default function OrderManager({
     // Chỉ clearTimeout khi đổi deps — KHÔNG abort HTTP refresh (abort storm → CPU 100% cPanel).
     // AbortSignal chỉ chặn bước counter/apply sau nếu user đổi tab quá nhanh.
     const timer = window.setTimeout(() => {
+      onPrepareTabFetchRef.current?.();
       isListFetchingRef.current = true;
       setCurrentPage((p) => (p === 1 ? p : 1));
       const hasSavedPosOrders = activeSubTab === 'external_orders' && recentPosOrders.length > 0;
@@ -2359,7 +2407,9 @@ export default function OrderManager({
         })
         .then(async () => {
           if (controller.signal.aborted) return;
-          if (hasSavedPosOrders && counterBootReadyRef.current) await fetchOrderCounts({ force: true, signal: controller.signal });
+          if (hasSavedPosOrders && counterBootReadyRef.current) {
+            await fetchOrderCounts({ force: true, signal: controller.signal });
+          }
           // P1: 1 counter sau refresh (kể cả khi refresh lỗi) — không force abort lẫn nhau.
           if (!counterBootReadyRef.current) {
             if (serverOrderCountsRef.current == null) {
@@ -2435,19 +2485,20 @@ export default function OrderManager({
       searchBootRef.current = false;
       return;
     }
+    const q = searchQuery.trim();
     if (activeSubTab === 'order_products') return;
     onPrepareTabFetchRef.current?.();
-    const q = searchQuery.trim();
     const handle = window.setTimeout(() => {
       // Luôn về trang 1 khi bắt đầu / đổi từ khóa tìm kiếm.
       setCurrentPage(1);
-      // Giữ nguyên tab hiện tại khi tìm kiếm; backend sẽ tìm trong đúng phạm vi tab.
+      // Giữ nguyên tab hiện tại khi tìm kiếm để backend chỉ quét đúng phạm vi tab.
       void Promise.resolve(
         onFetchOrdersRef.current?.({
           silent: false,
           page: 1,
           limit: ORDERS_PAGE_SIZE,
           merge: false,
+          carrier: selectedShippingCarrier,
           tab: orderListTabForQuery(activeSubTab, q),
           q: q || undefined,
           kind:
@@ -2495,7 +2546,6 @@ export default function OrderManager({
     orderId?: string;
     orderSn?: string;
     trackingNumber?: string;
-    repeatWarning?: string;
     at: number;
   };
   type ScanStatModalKey = 'daXuatKho' | 'donHuy' | 'daNhanHoan';
@@ -2513,6 +2563,7 @@ export default function OrderManager({
   const [isFlushingQueue, setIsFlushingQueue] = useState(false);
   const [flushingDbCount, setFlushingDbCount] = useState(0);
   const [isVerifyingScan, setIsVerifyingScan] = useState(false);
+  const [isCameraScanCovered, setIsCameraScanCovered] = useState(false);
   /** Chế độ quét: null = màn chọn mode, handover | return = đang quét. */
   const [scannerMode, setScannerMode] = useState<ScannerMode | null>(null);
   const [scannerSyncLoading, setScannerSyncLoading] = useState(false);
@@ -2539,7 +2590,7 @@ export default function OrderManager({
   /** Cùng một batch chỉ được gửi mark-printed một lần khi request trước còn chạy. */
   const printStatusInflightRef = React.useRef<Set<string>>(new Set());
   const applyScanRef = React.useRef<(query: string) => void>(() => {});
-  const verifyScanRef = React.useRef<(query: string) => void>(() => {});
+  const verifyScanRef = React.useRef<(query: string) => Promise<void>>(async () => {});
   const isScanBusyRef = React.useRef(false);
   const scanGunInputRef = React.useRef<HTMLInputElement | null>(null);
   /** Hàng đợi mã quét khi đang verify — không bỏ mã khi quét liên tục. */
@@ -2687,6 +2738,7 @@ export default function OrderManager({
     setDonHuyList([]);
     setDaNhanHoanList([]);
     setScanStatModal(null);
+    setIsCameraScanCovered(false);
     pendingScanQueueRef.current = [];
     isScanBusyRef.current = false;
     lastQrScanRef.current = { key: '', at: 0 };
@@ -2752,6 +2804,7 @@ export default function OrderManager({
 
   /** `all` | `printed` | `unprinted` — lọc theo isPrinted từ DB. */
   const [printStatusFilter, setPrintStatusFilter] = useState<'all' | 'printed' | 'unprinted'>('all');
+  printStatusFilterRef.current = printStatusFilter;
   const [resettingPrintIds, setResettingPrintIds] = useState<string[]>([]);
 
   const matchesSelectedShop = (order: Order): boolean => {
@@ -2807,6 +2860,7 @@ export default function OrderManager({
           merge: false,
           tab: activeSubTab === 'all' ? '' : activeSubTab,
           kind: listKind,
+          print_status: next,
         }),
       ).catch((error: unknown) => {
         if (error instanceof Error && error.name === 'AbortError') return;
@@ -3164,6 +3218,9 @@ export default function OrderManager({
 
       // 2) API nền — fire-and-forget, tuyệt đối không block UI quét.
       const orderKey = order.id || order.orderSn;
+      const handoverKey = String(orderKey || '').trim().toLowerCase();
+      if (!handoverKey || handoverInFlightKeysRef.current.has(handoverKey)) return false;
+      handoverInFlightKeysRef.current.add(handoverKey);
       const waybill =
         getOrderWaybillCode(order) ||
         getOrderTrackingNo(order) ||
@@ -3215,6 +3272,7 @@ export default function OrderManager({
           rollbackHandoverOnLocalOrders(order);
           showScanToast(`Lưu ĐVVC nền thất bại #${order.orderSn}: ${msg}`, 'error');
         } finally {
+          handoverInFlightKeysRef.current.delete(handoverKey);
           setHandingOverOrderId((cur) => (cur === order.id ? null : cur));
         }
       })();
@@ -3237,7 +3295,10 @@ export default function OrderManager({
         let order: Order | null = null;
 
         if (!order) {
-          setCameraScanResult(`Đang tra cứu mã: ${trimmed}...`);
+          const preview = lookupScannerSyncMap(scannerSyncMapRef.current, trimmed);
+          setCameraScanResult(preview
+            ? `Đang xác minh đơn #${preview.order_id}...`
+            : `Đang tra cứu mã: ${trimmed}...`);
           const token = localStorage.getItem('admin_token') || '';
           try {
             order = await lookupCurrentScannerOrder(trimmed, token);
@@ -3268,7 +3329,11 @@ export default function OrderManager({
         if (order) {
           const idx = ordersRef.current.findIndex((o) => o.id === order!.id || o.orderSn === order!.orderSn);
           if (idx >= 0) {
-            const merged = ordersRef.current.map((o, i) => (i === idx ? { ...o, ...order! } : o));
+            // Scanner responses omit product details; keep the loaded order intact.
+            const scanFields = Object.fromEntries(
+              Object.entries(order).filter(([key, value]) => key !== 'items' && value !== undefined),
+            );
+            const merged = ordersRef.current.map((o, i) => (i === idx ? { ...o, ...scanFields } : o));
             ordersRef.current = merged;
             onUpdateOrders(merged, { persist: false });
           } else {
@@ -3437,12 +3502,12 @@ export default function OrderManager({
     }
   };
 
-  const isCodeAlreadyVerified = (key: string) => {
+  const isCodeAlreadyVerified = (key: string, includeCancelled = true) => {
     const inList = (list: ScanVerifiedItem[]) =>
       list.some((item) => normalizeOrderScanKey(item.code) === key || normalizeOrderScanKey(item.orderSn || '') === key);
     return (
       inList(daXuatKhoListRef.current) ||
-      inList(donHuyListRef.current) ||
+      (includeCancelled && inList(donHuyListRef.current)) ||
       inList(daNhanHoanListRef.current)
     );
   };
@@ -3729,19 +3794,13 @@ export default function OrderManager({
         return;
       }
 
-      if (isCodeAlreadyVerified(key)) {
+      if (isCodeAlreadyVerified(key, scannerModeRef.current !== 'handover')) {
         lastQrScanRef.current = { key, at: now };
         playScanSound('warning');
         vibrateScan('warning');
         flashViewfinder('error', 500);
-        // A cancelled parcel must remain identifiable on every scan. Reuse the
-        // session result without adding another row or hitting the server again.
-        const cancelled = [...donHuyListRef.current, ...daNhanHoanListRef.current]
-          .find((item) => item.repeatWarning && [item.code, item.orderSn, item.trackingNumber]
-            .some((value) => normalizeOrderScanKey(value || '') === key));
-        const message = cancelled?.repeatWarning || SCANNED_ORDER_MESSAGE;
-        setCameraScanResult(message);
-        showScanToast(message, cancelled ? 'error' : 'warning');
+        setCameraScanResult(SCANNED_ORDER_MESSAGE);
+        showScanToast(SCANNED_ORDER_MESSAGE, 'warning');
         return;
       }
 
@@ -3765,7 +3824,10 @@ export default function OrderManager({
 
       try {
         if (!localOrder) {
-          setCameraScanResult(`Đang tra cứu mã: ${trimmed}...`);
+          const preview = lookupScannerSyncMap(scannerSyncMapRef.current, trimmed);
+          setCameraScanResult(preview
+            ? `Đang xác minh đơn #${preview.order_id}...`
+            : `Đang tra cứu mã: ${trimmed}...`);
           const token = localStorage.getItem('admin_token') || '';
           try {
             const remote = await lookupCurrentScannerOrder(trimmed, token);
@@ -3850,22 +3912,22 @@ export default function OrderManager({
           (matchedReturnWaybill && order.return_tracking_no) ||
           getOrderWaybillCode(order);
         const orderKey = normalizeOrderScanKey(order.orderSn || order.id);
-        const repeatCancelWarning = isCancelBucket
-          ? `⚠ ${cancelReturnKind === 'failed_delivery' ? 'GIAO THẤT BẠI' : 'ĐƠN HỦY'}${waybill ? ` · VĐ ${waybill}` : ''} · #${order.orderSn}`
-          : undefined;
+        // A cancelled parcel remains inspectable on every handover scan.
+        // Receipt locks still protect return intake and all normal handovers.
+        const inspectCancelled = activeMode === 'handover' && isCancelBucket;
         if (
-          isCodeAlreadyVerified(orderKey) ||
+          !inspectCancelled && (
+            isCodeAlreadyVerified(orderKey) ||
           isCodeAlreadyVerified(normalizeOrderScanKey(waybill)) ||
           isCodeAlreadyVerified(normalizeOrderScanKey(order.trackingNumber || '')) ||
           isCodeAlreadyVerified(normalizeOrderScanKey(order.tracking_no || '')) ||
-          isCodeAlreadyVerified(normalizeOrderScanKey(order.return_tracking_no || ''))
+          isCodeAlreadyVerified(normalizeOrderScanKey(order.return_tracking_no || '')))
         ) {
           playScanSound('warning');
           vibrateScan('warning');
           flashViewfinder('error', 500);
-          const message = repeatCancelWarning || SCANNED_ORDER_MESSAGE;
-          setCameraScanResult(message);
-          showScanToast(message, repeatCancelWarning ? 'error' : 'warning');
+          setCameraScanResult(SCANNED_ORDER_MESSAGE);
+          showScanToast(SCANNED_ORDER_MESSAGE, 'warning');
           return;
         }
 
@@ -3875,17 +3937,15 @@ export default function OrderManager({
           orderId: order.id,
           orderSn: order.orderSn,
           trackingNumber: waybill || order.trackingNumber || order.tracking_no || order.internalTrackingCode,
-          repeatWarning: repeatCancelWarning,
           at: now,
         };
 
-        if (isReturnScanLocked(order)) {
+        if (!inspectCancelled && isReturnScanLocked(order)) {
           playScanSound('error');
           vibrateScan('warning');
           flashViewfinder('error', 500);
-          const message = repeatCancelWarning || SCANNED_ORDER_MESSAGE;
-          setCameraScanResult(message);
-          showScanToast(message, 'error');
+          setCameraScanResult(SCANNED_ORDER_MESSAGE);
+          showScanToast(SCANNED_ORDER_MESSAGE, 'error');
           return;
         }
 
@@ -3903,11 +3963,16 @@ export default function OrderManager({
             playScanSound('warning');
             vibrateScan('warning');
             flashViewfinder('error', 500);
-            setDonHuyList((prev) => {
-              const next = [item, ...prev];
+            // Repeat warnings must not inflate the session count or save payload.
+            const alreadyListed = donHuyListRef.current.some((row) =>
+              normalizeOrderScanKey(row.orderSn || row.orderId || row.code) ===
+              normalizeOrderScanKey(item.orderSn || item.orderId || item.code),
+            );
+            if (!alreadyListed && !isReturnScanLocked(order)) {
+              const next = [item, ...donHuyListRef.current];
               donHuyListRef.current = next;
-              return next;
-            });
+              setDonHuyList(next);
+            }
             const isFailedDelivery = cancelReturnKind === 'failed_delivery';
             setCameraScanResult(
               waybill
@@ -4115,9 +4180,7 @@ export default function OrderManager({
   );
 
   useEffect(() => {
-    verifyScanRef.current = (q: string) => {
-      void verifySingleOrder(q);
-    };
+    verifyScanRef.current = verifySingleOrder;
   }, [verifySingleOrder]);
 
   // Súng USB: bắt phím ở document — không focus input (tránh bàn phím ảo mobile).
@@ -4143,7 +4206,7 @@ export default function OrderManager({
         e.preventDefault();
         const code = buf.trim();
         buf = '';
-        if (code) verifyScanRef.current(code);
+        if (code) void verifyScanRef.current(code);
         return;
       }
       if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -4202,10 +4265,22 @@ export default function OrderManager({
           return;
         }
 
-        const qrCodeSuccessCallback = (decodedText: string) => {
-          if (!decodedText?.trim() || isTearingDownScannerRef.current) return;
-          // Realtime: verify ngay — không xếp hàng đợi batch.
-          verifyScanRef.current(decodedText);
+        const qrCodeSuccessCallback = (decodedText: string): false | Promise<void> => {
+          if (
+            !isMounted || isTearingDownScannerRef.current || isScanBusyRef.current ||
+            !normalizeOrderScanKey(decodedText)
+          ) {
+            return false;
+          }
+
+          setIsCameraScanCovered(true);
+          // Giữ phản hồi đủ lâu để nhìn thấy, kể cả khi phân loại trả về ngay.
+          return Promise.all([
+            verifyScanRef.current(decodedText),
+            new Promise<void>((resolve) => window.setTimeout(resolve, 350)),
+          ]).then(() => undefined).finally(() => {
+            if (isMounted) setIsCameraScanCovered(false);
+          });
         };
 
         void startLiveQrScanner({
@@ -4213,6 +4288,12 @@ export default function OrderManager({
           tapLayerId: CAMERA_TAP_LAYER_ID,
           preferredZoom: 2,
           onSuccess: qrCodeSuccessCallback,
+          onError: (error) => {
+            console.error('[Camera Scan] Classification failed:', error);
+            setCameraScanSuccess(false);
+            setCameraScanError(true);
+            setCameraScanResult('Không thể phân loại mã. Vui lòng quét lại.');
+          },
           onCapabilities: (info) => {
             setScannerZoomCaps(info.zoom);
             setScannerCameraCount(info.cameraCount);
@@ -4426,6 +4507,8 @@ export default function OrderManager({
   /** Lọc ĐVVC: all | spx | ghn | instant | other — mặc định luôn `'all'`. */
   const [selectedShippingCarrier, setSelectedShippingCarrier] =
     useState<ShippingCarrierFilter>('all');
+  const selectedShippingCarrierRef = useRef<ShippingCarrierFilter>('all');
+  selectedShippingCarrierRef.current = selectedShippingCarrier;
 
   // Detail Modal & Bulk Print Modal
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
@@ -4438,6 +4521,10 @@ export default function OrderManager({
   // Real Shopee/TikTok logistics API call state (ship_order / shipping document)
   const [printingOrderId, setPrintingOrderId] = useState<string | null>(null);
   const [isBulkPrinting, setIsBulkPrinting] = useState(false);
+  const batchPrintInFlightRef = useRef(false);
+  const handoverInFlightKeysRef = useRef(new Set<string>());
+  const orderManagerLifetimeRef = useRef(new AbortController());
+  useEffect(() => () => orderManagerLifetimeRef.current.abort(), []);
 
   const handlePrintExternalWaybill = useCallback(async (order: Order) => {
     const key = String(order.id || order.orderSn || '').trim();
@@ -4556,13 +4643,13 @@ export default function OrderManager({
   // Auto-hiding toast — replaces blocking alert() in bulk ship/print flows.
   // (state + showToast khai báo gần đầu component — dùng chung Làm mới / in / bàn giao)
 
-  const authHeaders = (): Record<string, string> => {
+  const authHeaders = useCallback((): Record<string, string> => {
     const token = localStorage.getItem('admin_token');
     return {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     };
-  };
+  }, []);
 
   const releasePdfOpenSession = () => {
     if (pdfOpenUnlockTimerRef.current) clearTimeout(pdfOpenUnlockTimerRef.current);
@@ -5796,8 +5883,8 @@ export default function OrderManager({
 
   const CONFIRM_AUTO_PRINT_WAIT_MESSAGE =
     'Đang đợi Shopee tạo mã và gộp file in (lô lớn có thể mất 1–2 phút)...';
-  /** Chờ 1,5 giây để Shopee xử lý RTS trước khi gọi API gộp. */
-  const CONFIRM_AUTO_PRINT_BUFFER_MS = 1500;
+  /** Lô lớn cần thêm nhịp để Shopee cập nhật RTS; không tăng timeout toàn luồng. */
+  const confirmAutoPrintBufferMs = (count: number) => count >= 20 ? 5000 : count >= 5 ? 3000 : 1500;
 
   /** Xác nhận xong 100% → nghỉ buffer rồi mới gộp PDF. Không dừng modal để user tự bấm in. */
   const beginConfirmAutoPrint = (orderSns: string[]) => {
@@ -5823,7 +5910,7 @@ export default function OrderManager({
       if (flowGen !== confirmFlowGenRef.current) return;
       if (!confirmProgressActiveRef.current) return;
       void autoMergeAfterConfirmRef.current(sns, flowGen);
-    }, CONFIRM_AUTO_PRINT_BUFFER_MS);
+    }, confirmAutoPrintBufferMs(sns.length));
   };
 
   const updateConfirmWaitProgress = (opts?: {
@@ -6094,13 +6181,17 @@ export default function OrderManager({
     const deadline = Date.now() + 5 * 60 * 1000;
     let finalJob: any | null = null;
     let pollCount = 0;
+    let consecutiveFailures = 0;
     while (Date.now() < deadline) {
-      if (pollCount > 0) await new Promise((resolve) => setTimeout(resolve, 300));
+      if (pollCount > 0) {
+        await new Promise((resolve) => setTimeout(resolve, Math.min(2000, 300 + consecutiveFailures * 400)));
+      }
       pollCount += 1;
       try {
         const response = await fetch(`/api/shopee/ship-order/job/${jobId}`, { headers: authHeaders() });
         if (!response.ok) throw new Error('Không thể đọc tiến độ xác nhận.');
         const job = await parseJsonResponse<any>(response);
+        consecutiveFailures = 0;
         finalJob = job;
         const completed = Number(job.completed) || 0;
         const tot = Number(job.total) || total;
@@ -6113,8 +6204,14 @@ export default function OrderManager({
           job.message || `Đang xác nhận ${completed}/${tot} đơn...`,
         );
       } catch (error) {
-        setProgressMessage(error instanceof Error ? error.message : 'Không thể đọc tiến độ xác nhận.');
-        return finalJob;
+        consecutiveFailures += 1;
+        setProgressMessage(
+          consecutiveFailures >= 3
+            ? 'Đang kết nối lại để đọc tiến độ. Máy chủ vẫn tiếp tục xử lý đơn...'
+            : (error instanceof Error ? error.message : 'Không thể đọc tiến độ xác nhận.'),
+        );
+        if (consecutiveFailures >= 12) return finalJob;
+        continue;
       }
     }
     return finalJob;
@@ -6123,6 +6220,20 @@ export default function OrderManager({
   /** Kết thúc xác nhận — giữ optimistic; modal tiến trình chờ user bấm Đóng. */
   const finishShipJobResult = async (finalJob: any | null, total: number) => {
     const results = finalJob?.results || [];
+    const failedKeys = new Set<string>(results.filter((r: any) => r?.success === false)
+      .flatMap((r: any) => [r.orderId, r.orderSn, `shopee-${r.orderSn}`]).filter(Boolean));
+    if (failedKeys.size) {
+      const next = ordersRef.current.map(order => {
+        if (!failedKeys.has(order.id) && !failedKeys.has(order.orderSn)) return order;
+        const copy = { ...order };
+        markShipmentReview(copy, 'Shopee từ chối xác nhận / chưa cấp mã vận đơn');
+        return copy;
+      });
+      ordersRef.current = next;
+      onUpdateOrders(next, { persist: false });
+      void fetchOrdersWithShop({ silent: true, page: 1, limit: ORDERS_PAGE_SIZE, merge: false,
+        tab: activeSubTabRef.current === 'all' ? '' : activeSubTabRef.current });
+    }
     const summary = buildShipConfirmSummary(finalJob || {}, total);
     const report = `Thành công: ${summary.successCount} đơn. Thất bại: ${summary.failCount} đơn.`;
 
@@ -6438,6 +6549,8 @@ export default function OrderManager({
     const validQueued = shipConfirmOrders.filter(
       (order) => String(order.orderSn || order.id || '').trim(),
     );
+    // Giữ snapshot trước mọi await/refetch để thứ tự nhóm sản phẩm không đổi sau xác nhận.
+    const printOrderSnapshot = validQueued.map((order) => ({ id: order.id, orderSn: order.orderSn }));
     const orderIds = validQueued.map((order) => String(order.id || '').trim()).filter(Boolean);
     const orderSns = validQueued
       .map((order) => String(order.orderSn || '').replace(/^shopee-/i, '').trim())
@@ -6503,17 +6616,21 @@ export default function OrderManager({
         throw new Error(finalJob?.message || 'Hết thời gian chờ xác nhận đơn.');
       }
       if (finalJob.status === 'failed') {
+        const persistencePending = finalJob.error === 'confirm_persist_failed' || finalJob.persistencePending === true;
+        if (persistencePending) {
+          confirmAutoPrintPendingRef.current = false;
+          patchLabelWaitState(orderSns, null);
+          confirmProgressActiveRef.current = true;
+          setProgressDone(true);
+          setProgressMessage(finalJob.message || 'Shopee đã xác nhận nhưng chưa lưu xong trạng thái. Chưa chuyển sang in; hãy tải lại danh sách để đối soát.');
+          void refreshOrdersStayOnCurrentTab();
+          return;
+        }
         throw new Error(finalJob.message || finalJob.error || 'Xác nhận thất bại.');
       }
 
       const summary = await finishShipJobResult(finalJob, orderSns.length);
-      const successfulSns = [
-        ...new Set(
-          (summary.successfulOrderIds || [])
-            .map((id: string) => String(id || '').replace(/^shopee-/i, '').trim())
-            .filter(Boolean),
-        ),
-      ];
+      const successfulSns = getConfirmedPrintOrderSns(printOrderSnapshot, summary.successfulOrderIds || []);
       const failedDetails = summary.failedOrderDetails || [];
       if (failedDetails.length > 0) {
         const failedKeys = new Set<string>();
@@ -6559,7 +6676,7 @@ export default function OrderManager({
         setProgressTotal(confirmTotal);
         setProgressDone(false);
         beginConfirmAutoPrint(successfulSns);
-        void startSilentPdfPrefetch(successfulSns);
+        // In gộp tự chuẩn bị PDF; không khởi động một lượt tải ngầm trùng các đơn này.
         refreshOrdersStayOnCurrentTab();
       } else {
         confirmAutoPrintPendingRef.current = false;
@@ -6804,6 +6921,7 @@ export default function OrderManager({
           : 'Lỗi không xác định';
       clearShipProgressOverlay();
       showToast(`Xác nhận thất bại: ${message}`);
+      refreshOrdersStayOnCurrentTab();
     } finally {
       setIsShipping(false);
       closeConfirmProgressBanner();
@@ -6870,6 +6988,7 @@ export default function OrderManager({
   ): Promise<boolean> => {
     const onConfirmModal = opts?.onConfirmModal === true;
     const flowGen = opts?.flowGen;
+    if (batchPrintInFlightRef.current) return false;
     const confirmUiStale = () =>
       onConfirmModal && flowGen != null && flowGen !== confirmFlowGenRef.current;
     const showConfirmPrintError = (message: string) => {
@@ -6898,6 +7017,7 @@ export default function OrderManager({
       return false;
     }
 
+    batchPrintInFlightRef.current = true;
     const logTag = opts?.logTag || 'IN LẠI';
     // Mảng orderSns đã đúng thứ tự màn hình. Không xin server sắp lại.
     const groupPicking = opts?.groupPicking === true;
@@ -7049,7 +7169,7 @@ export default function OrderManager({
       } catch (fetchErr: any) {
         const timeout = controller.signal.aborted || fetchErr?.name === 'AbortError' || fetchErr?.name === 'TimeoutError';
         const failMessage = timeout
-          ? 'Shopee chưa tạo xong PDF sau thời gian chờ. Vui lòng thử lại sau ít phút.'
+          ? 'Hết thời gian chờ chuẩn bị hoặc tải file in. Đơn đã xác nhận vẫn được giữ; vui lòng thử in lại.'
           : (fetchErr instanceof Error ? fetchErr.message : 'Không thể kết nối API in gộp. Vui lòng thử lại.');
         if (onConfirmModal) {
           showConfirmPrintError(`Gộp file thất bại: ${failMessage}`);
@@ -7085,6 +7205,8 @@ export default function OrderManager({
       });
       clearShipProgressOverlay();
       return false;
+    } finally {
+      batchPrintInFlightRef.current = false;
     }
   };
 
@@ -7129,35 +7251,49 @@ export default function OrderManager({
     }
   };
 
+  const [editingDraft, setEditingDraft] = useState<OrderDraft | null>(null);
+  const [editingPosKey, setEditingPosKey] = useState('');
+  const [editingPosOrder, setEditingPosOrder] = useState<Order | null>(null);
+  const [editingPosError, setEditingPosError] = useState('');
+  const [recentPosOrders, setRecentPosOrders] = useState<Order[]>([]);
+  useEffect(() => {
+    if (activeSubTab !== 'quick_pos' && activeSubTab !== 'create_external') setEditingDraft(null);
+    if (activeSubTab !== 'quick_pos') {
+      setEditingPosKey('');
+      setEditingPosOrder(null);
+      setEditingPosError('');
+    }
+  }, [activeSubTab]);
+
+  useEffect(() => {
+    if (!editingPosKey || activeSubTab !== 'quick_pos') return;
+    const controller = new AbortController();
+    const token = localStorage.getItem('admin_token') || '';
+    void (async () => {
+      try {
+        const response = await fetch(`/api/orders/pos/${encodeURIComponent(editingPosKey)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        const data = await response.json();
+        if (!response.ok || !data?.order?.id || !data?.order?.orderSn) {
+          throw new Error(data?.error || 'Không tải được đơn tạo nhanh.');
+        }
+        if (!controller.signal.aborted) setEditingPosOrder(data.order);
+      } catch (error) {
+        if (!controller.signal.aborted) setEditingPosError(error instanceof Error ? error.message : 'Không tải được đơn tạo nhanh.');
+      }
+    })();
+    return () => controller.abort();
+  }, [activeSubTab, editingPosKey]);
+
   const [showCreateOrderPage, setShowCreateOrderPage] = useState(
     () => activeSubTab === 'create_external',
   );
   const [showQuickPosPage, setShowQuickPosPage] = useState(
     () => activeSubTab === 'quick_pos',
   );
-  const [editingDraft, setEditingDraft] = useState<OrderDraft | null>(null);
-  const [editingPosOrder, setEditingPosOrder] = useState<Order | null>(null);
-  const [editingPosKey, setEditingPosKey] = useState('');
-  const [editingPosError, setEditingPosError] = useState('');
-  const [recentPosOrders, setRecentPosOrders] = useState<Order[]>([]);
-  useEffect(() => {
-    if (activeSubTab !== 'quick_pos') { setEditingPosKey(''); setEditingPosOrder(null); setEditingPosError(''); }
-  }, [activeSubTab]);
-  useEffect(() => {
-    if (!editingPosKey || activeSubTab !== 'quick_pos') return;
-    const controller = new AbortController();
-    void (async () => {
-      try {
-        const response = await fetch(`/api/orders/pos/${encodeURIComponent(editingPosKey)}`, { headers: authHeaders(), cache: 'no-store', signal: controller.signal });
-        const data = await response.json();
-        if (!response.ok || !data?.order?.id || !data?.order?.orderSn) throw new Error(data?.error || 'Không tải được đơn tạo nhanh.');
-        if (!controller.signal.aborted) setEditingPosOrder(data.order);
-      } catch (error: unknown) {
-        if (!controller.signal.aborted) setEditingPosError(error instanceof Error ? error.message : 'Không tải được đơn tạo nhanh.');
-      }
-    })();
-    return () => controller.abort();
-  }, [activeSubTab, editingPosKey]);
 
   /**
    * Tab "Đã giao cho ĐVVC": dò API Shopee ngầm (ACK) — khi đơn thật sự SHIPPED
@@ -7272,8 +7408,9 @@ export default function OrderManager({
           page: 1,
           limit: ORDERS_PAGE_SIZE,
           merge: false,
-          tab: activeSubTab === 'all' ? '' : activeSubTab,
-          kind: listKind,
+          tab: orderListTabForQuery(activeSubTab, searchQuery),
+          q: searchQuery.trim() || undefined,
+          kind: searchQuery.trim() ? undefined : listKind,
         });
       }
       void fetchOrderCounts();
@@ -7281,15 +7418,7 @@ export default function OrderManager({
       setIsPullRefreshing(false);
       setPullDistance(0);
     }
-  }, [activeSubTab, fetchFulfillmentProducts, fetchOrderCounts, fetchOrdersWithShop, isPullRefreshing, listKind]);
-
-  // Helper count statistics — ưu tiên tổng hợp Mongo 3 tab; fallback list đang mở.
-  const aggregatedOrderProducts = useMemo(
-    () =>
-      fulfillmentProducts ??
-      (orders.length <= 80 ? aggregateOrderProducts(orders, products ?? []) : []),
-    [fulfillmentProducts, orders, products]
-  );
+  }, [activeSubTab, fetchFulfillmentProducts, fetchOrderCounts, fetchOrdersWithShop, isPullRefreshing, listKind, searchQuery]);
 
   /**
    * Counter 3 nhóm Hủy/Hoàn/RTS — CHỈ đọc counter Đơn Hủy/Hoàn từ BE.
@@ -7363,8 +7492,13 @@ export default function OrderManager({
     // Partial match — không min-length; khi có từ khóa thì bỏ qua phạm vi tab (xem displayOrders).
     if (searchQuery.trim() && !orderMatchesSearchKeyword(order, searchQuery)) return false;
 
-    // Backend đã trả list chuẩn của tab Hủy/Hoàn — render 100%, không chặn shop/sàn/print.
-    if (isBackendCancelReturnTab) return true;
+    // Backend đã lọc tab/khoảng ngày/ĐVVC; chỉ giữ bộ lọc hiển thị còn lại.
+    if (isBackendCancelReturnTab) {
+      if (!matchesSelectedShop(order)) return false;
+      if (printStatusFilter === 'printed' && !isOrderPrintedEffective(order)) return false;
+      if (printStatusFilter === 'unprinted' && isOrderPrintedEffective(order)) return false;
+      return true;
+    }
 
     if (activeSubTab === 'external_orders' && order.channel !== 'manual') return false;
     if (activeSubTab !== 'external_orders' && selectedPlatform !== 'all') {
@@ -7380,10 +7514,16 @@ export default function OrderManager({
     return true;
   };
 
-  const pendingPosOrders = useMemo(() => activeSubTab === 'external_orders' ? recentPosOrders.filter((order) => {
-    const created = orderCreatedAtMs(order);
-    return searchQuery.trim() || (created >= Date.parse(orderDateRange.startDate) && created <= Date.parse(orderDateRange.endDate));
-  }) : [], [activeSubTab, recentPosOrders, searchQuery, orderDateRange]);
+  const pendingPosOrders = useMemo(() => {
+    if (activeSubTab !== 'external_orders') return [];
+    const start = Date.parse(orderDateRange.startDate);
+    const end = Date.parse(orderDateRange.endDate);
+    return recentPosOrders.filter((order) => {
+      const created = orderCreatedAtMs(order);
+      return searchQuery.trim() || (created >= start && created <= end);
+    });
+  }, [activeSubTab, orderDateRange, recentPosOrders, searchQuery]);
+
   useEffect(() => {
     if (activeSubTab !== 'external_orders' || ordersAppliedTab !== 'external_orders' || !recentPosOrders.length) return;
     const listedIds = new Set(orders.map((order) => order.id));
@@ -7392,8 +7532,13 @@ export default function OrderManager({
       return remaining.length === current.length ? current : remaining;
     });
   }, [activeSubTab, ordersAppliedTab, orders, recentPosOrders.length]);
+
   const ordersPoolBeforeCarrier = useMemo(
-    () => [...orders, ...pendingPosOrders.filter((order) => !orders.some((row) => row.id === order.id))].filter(matchesOrdersListBaseFilters),
+    () => {
+      const listedIds = new Set(orders.map((order) => order.id));
+      return [...orders, ...pendingPosOrders.filter((order) => !listedIds.has(order.id))]
+        .filter(matchesOrdersListBaseFilters);
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mirrors live filter inputs below
     [
       orders,
@@ -7574,18 +7719,18 @@ export default function OrderManager({
     setSelectedOrderIds(ids);
   }, [displayOrders, activeSubTab]);
 
-  const listPagingTotal = ordersListReady ? displayOrders.length : 0;
+  const serverPageSize = Math.max(1, Number(ordersMeta?.pageSize) || itemsPerPage);
+  const listPagingTotal = ordersListReady
+    ? Math.max(displayOrders.length, Number(ordersMeta?.total) || 0)
+    : 0;
 
   const listPagingPages = useMemo(
-    () => Math.max(1, Math.ceil(listPagingTotal / itemsPerPage) || 1),
-    [listPagingTotal],
+    () => Math.max(1, Number(ordersMeta?.totalPages) || Math.ceil(listPagingTotal / serverPageSize) || 1),
+    [listPagingTotal, ordersMeta?.totalPages, serverPageSize],
   );
 
-  const paginatedDisplayOrders = useMemo(() => {
-    const safePage = Math.min(Math.max(1, currentPage), listPagingPages);
-    const start = (safePage - 1) * itemsPerPage;
-    return displayOrders.slice(start, start + itemsPerPage);
-  }, [displayOrders, currentPage, listPagingPages]);
+  // Backend đã phân trang; không cắt lần hai trên mảng của trang hiện tại.
+  const paginatedDisplayOrders = useMemo(() => displayOrders, [displayOrders]);
 
   const clientPageNumbers = useMemo(
     () => buildClientPageNumbers(currentPage, listPagingPages),
@@ -7593,10 +7738,15 @@ export default function OrderManager({
   );
 
   useEffect(() => {
-    if (currentPage > listPagingPages) {
+    if (
+      ordersListReady &&
+      !ordersLoading &&
+      Number(ordersMeta?.page) === currentPage &&
+      currentPage > listPagingPages
+    ) {
       setCurrentPage(listPagingPages);
     }
-  }, [currentPage, listPagingPages]);
+  }, [currentPage, listPagingPages, ordersListReady, ordersLoading, ordersMeta?.page]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -7612,7 +7762,8 @@ export default function OrderManager({
 
   const listMetaTotal = Number(ordersMeta?.total);
   const isRealEmptyList =
-    !ordersLoading && Number.isFinite(listMetaTotal) && listMetaTotal === 0 && (activeSubTab !== 'external_orders' || displayOrders.length === 0);
+    !ordersLoading && Number.isFinite(listMetaTotal) && listMetaTotal === 0 &&
+    (activeSubTab !== 'external_orders' || displayOrders.length === 0);
   const isFilterEmptyList =
     !ordersLoading &&
     Number.isFinite(listMetaTotal) &&
@@ -7925,6 +8076,10 @@ export default function OrderManager({
   // mock packing-slip preview for non-Shopee (manual/tiktok) orders.
   /** Xóa dữ liệu hàng loạt — chỉ hoạt động trong tab Đã nhận đơn hủy/hoàn. */
   const handleBulkDeleteOrders = async () => {
+    if (activeSubTabRef.current !== 'received_cancel_returns') {
+      showToast('Chỉ được xóa dữ liệu trong tab Đã nhận đơn hủy/hoàn.');
+      return;
+    }
     const selected = getSelectedOrders();
     if (selected.length === 0) {
       showToast('Vui lòng chọn ít nhất 1 đơn hàng để xóa.');
@@ -7946,15 +8101,27 @@ export default function OrderManager({
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ orderSns }),
+        body: JSON.stringify({ orderSns, tab: 'received_cancel_returns' }),
       });
       const data = await res.json();
       if (data.success) {
-        const deletedSns = new Set(orderSns);
-        const updated = orders.filter(o => !deletedSns.has(o.orderSn || '') && !deletedSns.has(o.id || ''));
-        onUpdateOrders(updated, { persist: true });
-        setSelectedOrderIds([]);
-        showToast(`Đã xóa ${data.deleted} đơn (Mongo: ${data.mongoDeleted}, don_hoan_huy: ${data.donHoanHuyDeleted ?? 0}, JSON: ${data.jsonRemoved}).`);
+        const deletedSns = new Set(
+          (Array.isArray(data.orderSns) ? data.orderSns : orderSns).map((sn: unknown) => String(sn || '').replace(/^shopee-/i, '').trim()),
+        );
+        const updated = ordersRef.current.filter((o) => {
+          const key = String(o.orderSn || o.id || '').replace(/^shopee-/i, '').trim();
+          return !deletedSns.has(key);
+        });
+        onUpdateOrders(updated, { persist: false, invalidateList: true });
+        if (currentPageRef.current > 1 && updated.length === 0) {
+          goToOrdersPage(currentPageRef.current - 1);
+        } else {
+          void refetchOrdersPageRef.current({ silent: true, force: true, bustCache: true, page: currentPageRef.current });
+        }
+        void fetchOrderCounts({ force: true });
+        setSelectedOrderIds((current) => current.filter((id) => !deletedSns.has(String(id).replace(/^shopee-/i, '').trim())));
+        const rejected = Array.isArray(data.rejectedOrderSns) ? data.rejectedOrderSns.length : 0;
+        showToast(`Đã xóa ${data.deleted} đơn${rejected ? `, từ chối ${rejected} đơn không thuộc tab nhận hủy/hoàn` : ''}.`);
       } else {
         showToast(data.error || data.message || 'Xóa thất bại.');
       }
@@ -8118,7 +8285,7 @@ export default function OrderManager({
   /** Kết thúc: ghi DB ngay (timeout 90s) — tắt camera song song, không chờ 3s trước API. */
   const handleFinishContinuousScan = async () => {
     // Chống double-click / gọi trùng khi đang ghi DB.
-    if (isFlushingQueue) return;
+    if (isFlushingQueue || isScanBusyRef.current || isCameraScanCovered) return;
     setShowEndConfirm(false);
 
     const shipped = [...daXuatKhoListRef.current];
@@ -8728,7 +8895,8 @@ export default function OrderManager({
             <button
               type="button"
               onClick={() => void exitScannerModeToPicker()}
-              className="shrink-0 min-h-8 px-2.5 rounded-lg bg-zinc-800 text-zinc-400 text-[10px] font-bold uppercase"
+              disabled={isVerifyingScan || isCameraScanCovered}
+              className="shrink-0 min-h-8 px-2.5 rounded-lg bg-zinc-800 text-zinc-400 text-[10px] font-bold uppercase disabled:opacity-50"
             >
               ← Chế độ
             </button>
@@ -8927,7 +9095,13 @@ export default function OrderManager({
                 )}
               </div>
             )}
-            {(isVerifyingScan && !isFlushingQueue) && (
+            {isCameraScanCovered ? (
+              <div role="status" className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 bg-emerald-700 px-4 text-center text-white">
+                <CheckCircle2 className="h-12 w-12" aria-hidden="true" />
+                <p className="text-lg font-extrabold">Đã nhận mã</p>
+                {isVerifyingScan && <p className="text-sm text-emerald-50">Đang phân loại đơn…</p>}
+              </div>
+            ) : isVerifyingScan && !isFlushingQueue && (
               <div className="pointer-events-none absolute top-2 left-2 right-2 z-10 flex items-center justify-center gap-2 rounded-lg bg-black/50 px-3 py-1.5">
                 <Loader2 className="w-4 h-4 text-blue-400 animate-spin" />
                 <p className="text-[11px] font-bold text-white/90">Đang phân loại...</p>
@@ -8970,7 +9144,7 @@ export default function OrderManager({
         <div className="shrink-0 p-3 pt-2 border-t border-zinc-800 bg-zinc-950 space-y-2">
           <button
             type="button"
-            disabled={isFlushingQueue}
+            disabled={isFlushingQueue || isVerifyingScan || isCameraScanCovered}
             onClick={() => setShowEndConfirm(true)}
             className="w-full min-h-14 rounded-2xl bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white font-black text-base uppercase tracking-wide transition-colors shadow-lg shadow-rose-900/40 disabled:opacity-50"
           >
@@ -9003,7 +9177,7 @@ export default function OrderManager({
                 </button>
                 <button
                   type="button"
-                  disabled={isFlushingQueue}
+                  disabled={isFlushingQueue || isVerifyingScan || isCameraScanCovered}
                   onClick={() => void handleFinishContinuousScan()}
                   className="flex-1 min-h-11 rounded-xl bg-rose-600 text-white font-bold text-sm disabled:opacity-50 disabled:pointer-events-none"
                 >
@@ -9087,37 +9261,75 @@ export default function OrderManager({
     );
   }
 
+  const showDrafts = () => { setEditingDraft(null); selectOrdersSubTab('drafts'); };
+  const updateExternalListRow = (order: Order, remove = false) => {
+    const matches = (row: Order) => row.id === order.id || row.orderSn === order.orderSn;
+    setRecentPosOrders((current) => remove
+      ? current.filter((row) => !matches(row))
+      : current.map((row) => matches(row) ? order : row));
+    const current = ordersRef.current;
+    const updated = remove ? current.filter((row) => !matches(row))
+      : current.map((row) => matches(row) ? order : row);
+    ordersRef.current = updated;
+    onUpdateOrders(updated, { persist: false, invalidateList: true });
+  };
+  const showExternalOrders = () => {
+    setSelectedPlatform('manual');
+    setSelectedShopId('all');
+    selectOrdersSubTab('external_orders');
+  };
+  const showSavedPosOrders = () => {
+    if (!editingPosOrder) {
+      setSearchQuery('');
+      setDatePreset('30d');
+      resetListLocalFilters();
+    }
+    showExternalOrders();
+  };
+  const openPosOrder = (order: Order) => {
+    setEditingDraft(null);
+    setEditingPosOrder(null);
+    setEditingPosError('');
+    setEditingPosKey(order.id || order.orderSn);
+    selectOrdersSubTab('quick_pos');
+  };
   if (activeSubTab === 'drafts') {
-    return <OrderDraftsPage
-      authHeaders={authHeaders}
+    return <OrderDraftsPage authHeaders={authHeaders}
       onBack={() => selectOrdersSubTab('all')}
       onEdit={(draft) => { setEditingDraft(draft); selectOrdersSubTab(draft.kind === 'pos' ? 'quick_pos' : 'create_external'); }}
-      onCreate={(kind) => { setEditingDraft(null); selectOrdersSubTab(kind === 'pos' ? 'quick_pos' : 'create_external'); }}
-    />;
+      onCreate={(kind) => { setEditingDraft(null); selectOrdersSubTab(kind === 'pos' ? 'quick_pos' : 'create_external'); }} />;
   }
 
   if (showQuickPosPage) {
-    if (editingPosKey && !editingPosOrder) return <div className="p-4 space-y-3"><button type="button" onClick={() => selectOrdersSubTab('external_orders')}>‹ Đơn ngoại sàn</button><p role={editingPosError ? 'alert' : 'status'}>{editingPosError || 'Đang tải đơn tạo nhanh…'}</p></div>;
+    if (editingPosKey && !editingPosOrder) {
+      return (
+        <div className="max-w-6xl mx-auto space-y-4 p-4">
+          <button type="button" onClick={showExternalOrders} className="font-bold text-sm text-slate-700">‹ Đơn ngoại sàn</button>
+          <p role={editingPosError ? 'alert' : 'status'} className="text-sm text-slate-700">
+            {editingPosError || 'Đang tải đơn tạo nhanh…'}
+          </p>
+        </div>
+      );
+    }
     return (
       <QuickPosPage
         key={editingPosOrder?.id || editingDraft?.id || 'new'}
-        initialDraft={editingDraft?.kind === 'pos' ? editingDraft : null}
+        initialDraft={editingDraft}
         initialOrder={editingPosOrder}
+        onEditSavedOrder={openPosOrder}
+        onShowSavedOrders={showSavedPosOrders}
+        onDraftSaved={showDrafts}
+        onShowDrafts={showDrafts}
         products={products}
-        orders={orders}
-        onBack={() => {
-          setShowQuickPosPage(false); setEditingDraft(null); setEditingPosOrder(null);
-          selectOrdersSubTab('external_orders');
-        }}
-        onDraftSaved={() => { setEditingDraft(null); setShowQuickPosPage(false); selectOrdersSubTab('drafts'); }}
-        onShowDrafts={() => { setShowQuickPosPage(false); selectOrdersSubTab('drafts'); }}
+        onBack={recentPosOrders.length > 0 ? showSavedPosOrders : showExternalOrders}
         onOrderSaved={(order, created) => {
-          if (created) { setRecentPosOrders((current) => [order, ...current.filter((row) => row.id !== order.id)]); applyOptimisticTabCountDelta({ external_orders: 1 }); }
-          else setRecentPosOrders((current) => current.map((row) => row.id === order.id ? order : row));
-          onUpdateOrders(created ? orders : orders.map((item) => item.id === order.id ? order : item), { persist: false, invalidateList: true });
+          if (created) {
+            setRecentPosOrders((current) => [order, ...current.filter((row) => row.id !== order.id)]);
+            applyOptimisticTabCountDelta({ external_orders: 1 });
+          } else {
+            updateExternalListRow(order);
+          }
         }}
-        onEditSavedOrder={(order) => { setEditingPosOrder(order); }}
-        onShowSavedOrders={() => { setSearchQuery(''); setDatePreset('30d'); resetListLocalFilters(); setSelectedPlatform('manual'); setSelectedShopId('all'); selectOrdersSubTab('external_orders'); }}
         onUpdateProduct={onUpdateProduct}
         onAddLog={onAddLog}
         authHeaders={authHeaders}
@@ -9128,12 +9340,16 @@ export default function OrderManager({
   if (showCreateOrderPage) {
     return (
       <ManualOrderPage
-        initialDraft={editingDraft?.kind === 'manual' ? editingDraft : null}
+        key={editingDraft?.id || 'new'}
+        initialDraft={editingDraft}
+        onDraftSaved={showDrafts}
+        onShowDrafts={showDrafts}
         products={products}
         orders={orders}
-        onBack={() => { setShowCreateOrderPage(false); setEditingDraft(null); selectOrdersSubTab('external_orders'); }}
-        onDraftSaved={() => { setEditingDraft(null); setShowCreateOrderPage(false); selectOrdersSubTab('drafts'); }}
-        onShowDrafts={() => { setShowCreateOrderPage(false); selectOrdersSubTab('drafts'); }}
+        onBack={() => {
+          setShowCreateOrderPage(false);
+          selectOrdersSubTab('external_orders');
+        }}
         onUpdateOrders={onUpdateOrders}
         onUpdateProduct={onUpdateProduct}
         onAddLog={onAddLog}
@@ -9991,19 +10207,21 @@ export default function OrderManager({
             <span>{isBulkHandingOver ? 'Đang giao ĐVVC...' : 'Giao ĐVVC'}</span>
           </button>
 
-          <button
-            type="button"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              void handleBulkDeleteOrders();
-            }}
-            className="px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white text-xs font-black rounded-lg shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
-            title="Xóa dữ liệu đã chọn"
-          >
-            <Trash2 className="w-3.5 h-3.5 shrink-0" />
-            <span>Xóa dữ liệu</span>
-          </button>
+          {activeSubTab === 'received_cancel_returns' && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                void handleBulkDeleteOrders();
+              }}
+              className="px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white text-xs font-black rounded-lg shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+              title="Xóa dữ liệu đã chọn"
+            >
+              <Trash2 className="w-3.5 h-3.5 shrink-0" />
+              <span>Xóa dữ liệu</span>
+            </button>
+          )}
         </div>
       </div>
       )}
@@ -10163,8 +10381,6 @@ export default function OrderManager({
           <div className="p-2 max-md:p-0">
             <ExternalOrdersTable
               orders={paginatedDisplayOrders}
-              printingOrderId={printingOrderId}
-              onPrintWaybill={(order) => void handlePrintExternalWaybill(order)}
               renderMobileOrder={isMobileViewport ? (order, controls) => (
                 <OrderCardRow
                   key={order.id || order.orderSn}
@@ -10190,17 +10406,22 @@ export default function OrderManager({
                   onPatchItemSellingPrice={handlePatchItemSellingPrice}
                 />
               ) : undefined}
-              onEditPosOrder={(order) => { setEditingPosOrder(null); setEditingPosError(''); setEditingPosKey(order.id || order.orderSn); selectOrdersSubTab('quick_pos'); }}
-              onOrderEdited={(updated) => {
-                const next = orders.map((o) => o.id === updated.id || o.orderSn === updated.orderSn ? updated : o);
-                onUpdateOrders(next, { persist: false, invalidateList: true });
+              onEditPosOrder={openPosOrder}
+              onOrderEdited={(order) => {
+                updateExternalListRow(order);
+                if (activeSubTabRef.current === 'external_orders') {
+                  void refetchOrdersPageRef.current({ force: true, bustCache: true, page: 1 });
+                }
               }}
-              onOrderDeleted={(deleted) => {
-                setRecentPosOrders((current) => current.filter((o) => o.id !== deleted.id && o.orderSn !== deleted.orderSn));
-                onUpdateOrders(orders.filter((o) => o.id !== deleted.id && o.orderSn !== deleted.orderSn), { persist: false, invalidateList: true });
+              onOrderDeleted={(order) => {
+                updateExternalListRow(order, true);
                 applyOptimisticTabCountDelta({ external_orders: -1 });
-                void refetchOrdersPageRef.current({ force: true, bustCache: true, page: 1 });
+                if (activeSubTabRef.current === 'external_orders') {
+                  void refetchOrdersPageRef.current({ force: true, bustCache: true, page: 1 });
+                }
               }}
+              printingOrderId={printingOrderId}
+              onPrintWaybill={(order) => void handlePrintExternalWaybill(order)}
               onOrderUpdated={(updated) => {
                 const sn = String(updated.orderSn || '').trim();
                 const id = String(updated.id || '').trim();

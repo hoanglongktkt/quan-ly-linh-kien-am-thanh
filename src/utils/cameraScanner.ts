@@ -1,7 +1,7 @@
 /**
  * Live QR scanner — Continuous Frame Processing.
  * Primary: BarcodeDetector (Chrome/Android = Google ML Kit / Play Services).
- * Fallback: @zxing/browser continuous decode.
+ * Fallback: ZXing, throttled while the native detector is available.
  *
  * Flagship phone tuning: continuous AF + digital zoom (default 2x) + multi-lens switch.
  */
@@ -22,6 +22,8 @@ const DECODE_MAX_EDGE = 720;
 const DETECTOR_INTERVAL_MS = 50;
 /** ZXing poll khi chạy song song với detector (nhẹ hơn một chút). */
 const ZXING_INTERVAL_MS = 80;
+const ZXING_NATIVE_FALLBACK_MS = 400;
+const NATIVE_DECODE_GRACE_MS = 700;
 /** Zoom kỹ thuật số mặc định — máy cảm biến lớn đứng xa ~20cm vẫn đọc được. */
 const DEFAULT_SCAN_ZOOM = 2.0;
 /** localStorage key — nhớ ống kính user đã chọn qua "Đổi Camera". */
@@ -432,12 +434,13 @@ export async function applyScannerZoom(
 function drawDownscaledFrame(
   video: HTMLVideoElement,
   canvas: HTMLCanvasElement,
+  maxEdge = DECODE_MAX_EDGE,
 ): CanvasRenderingContext2D | null {
   const vw = video.videoWidth || 0;
   const vh = video.videoHeight || 0;
   if (vw < 2 || vh < 2) return null;
 
-  const scale = Math.min(1, DECODE_MAX_EDGE / Math.max(vw, vh));
+  const scale = Math.min(1, maxEdge / Math.max(vw, vh));
   const w = Math.max(1, Math.floor(vw * scale));
   const h = Math.max(1, Math.floor(vh * scale));
 
@@ -450,7 +453,7 @@ function drawDownscaledFrame(
   return ctx;
 }
 
-function createZxingReader(): BrowserMultiFormatReader {
+function createZxingReader(tryHarder = false): BrowserMultiFormatReader {
   const hints = new Map();
   hints.set(DecodeHintType.POSSIBLE_FORMATS, [
     BarcodeFormat.QR_CODE,
@@ -464,7 +467,8 @@ function createZxingReader(): BrowserMultiFormatReader {
     BarcodeFormat.ITF,
     BarcodeFormat.CODABAR,
   ]);
-  hints.set(DecodeHintType.TRY_HARDER, true);
+  // ZXing's MultiFormatReader checks hint presence, even when the value is false.
+  if (tryHarder) hints.set(DecodeHintType.TRY_HARDER, true);
   return new BrowserMultiFormatReader(hints, {
     delayBetweenScanAttempts: ZXING_INTERVAL_MS,
     delayBetweenScanSuccess: 400,
@@ -478,7 +482,8 @@ function createZxingReader(): BrowserMultiFormatReader {
 export async function startLiveQrScanner(opts: {
   containerId: string;
   tapLayerId?: string;
-  onSuccess: (decodedText: string) => void;
+  /** Return false to ignore a result, or a promise to pause decoding until processing ends. */
+  onSuccess: (decodedText: string) => void | false | Promise<void>;
   onError?: (error: Error) => void;
   /** Gọi khi stream sẵn sàng / đổi camera / đổi zoom capability. */
   onCapabilities?: (info: {
@@ -570,6 +575,7 @@ export async function startLiveQrScanner(opts: {
   const detectorInfo = createBarcodeDetector();
   const detector = detectorInfo?.detector ?? null;
   const canvas = document.createElement('canvas');
+  const detectorCanvas = document.createElement('canvas');
   let stopped = false;
   let detectorBusy = false;
   let zxingBusy = false;
@@ -577,21 +583,45 @@ export async function startLiveQrScanner(opts: {
   let lastZxingAt = 0;
   let lastEmittedKey = '';
   let lastEmittedAt = 0;
+  let holdLastEmittedKey = false;
+  let decodePaused = false;
+  let decodeVersion = 0;
   let rafId = 0;
   let zxingRafId = 0;
   let zxingReader: BrowserMultiFormatReader | null = null;
-  let zxingControls: { stop: () => void } | null = null;
+  let zxingHardReader: BrowserMultiFormatReader | null = null;
+  let zxingMisses = 0;
+  let lastNativeSuccessAt = performance.now();
 
   const emitSuccess = (text: string) => {
     const trimmed = String(text || '').trim();
-    if (!trimmed || stopped) return;
+    if (!trimmed || stopped || decodePaused) return;
     const key = trimmed.toUpperCase().replace(/[\s\-_]+/g, '');
     const now = Date.now();
     // Debounce cùng mã từ 2 engine (QR + barcode) trong 900ms.
-    if (key === lastEmittedKey && now - lastEmittedAt < 900) return;
+    if (key === lastEmittedKey && now - lastEmittedAt < 900) {
+      if (holdLastEmittedKey) lastEmittedAt = now;
+      return;
+    }
+    const processing = opts.onSuccess(trimmed);
+    if (processing === false) return;
     lastEmittedKey = key;
     lastEmittedAt = now;
-    opts.onSuccess(trimmed);
+    holdLastEmittedKey = false;
+    if (!processing || typeof processing.then !== 'function') return;
+
+    holdLastEmittedKey = true;
+    decodePaused = true;
+    decodeVersion += 1;
+    void processing
+      .catch((error: unknown) => {
+        if (!stopped) opts.onError?.(error instanceof Error ? error : new Error(String(error)));
+      })
+      .finally(() => {
+        // The label can still be in view when decoding resumes after a slow lookup.
+        lastEmittedAt = Date.now();
+        decodePaused = false;
+      });
   };
 
   const loopDetect = async () => {
@@ -601,11 +631,12 @@ export async function startLiveQrScanner(opts: {
     });
 
     const now = performance.now();
-    if (detectorBusy || now - lastDetectorAt < DETECTOR_INTERVAL_MS) return;
+    if (decodePaused || detectorBusy || now - lastDetectorAt < DETECTOR_INTERVAL_MS) return;
     if (video.readyState < 2) return;
 
     detectorBusy = true;
     lastDetectorAt = now;
+    const frameVersion = decodeVersion;
     try {
       if (!detector) return;
       // Ưu tiên detect trực tiếp trên video (độ phân giải gốc) — barcode 1D cần độ rộng.
@@ -613,11 +644,16 @@ export async function startLiveQrScanner(opts: {
       try {
         codes = await detector.detect(video);
       } catch {
-        const ctx = drawDownscaledFrame(video, canvas);
-        if (ctx) codes = await detector.detect(canvas);
+        if (stopped || frameVersion !== decodeVersion) return;
+        const ctx = drawDownscaledFrame(video, detectorCanvas);
+        if (ctx) codes = await detector.detect(detectorCanvas);
       }
+      if (stopped || frameVersion !== decodeVersion) return;
       const value = codes?.[0]?.rawValue;
-      if (value) emitSuccess(value);
+      if (value) {
+        lastNativeSuccessAt = performance.now();
+        emitSuccess(value);
+      }
     } catch {
       /* frame skip */
     } finally {
@@ -632,15 +668,28 @@ export async function startLiveQrScanner(opts: {
         void canvasLoop();
       });
       const now = performance.now();
-      if (zxingBusy || now - lastZxingAt < ZXING_INTERVAL_MS) return;
+      const nativeHandlesBarcodes = Boolean(detector && !detectorInfo?.qrOnly);
+      const interval = nativeHandlesBarcodes ? ZXING_NATIVE_FALLBACK_MS : ZXING_INTERVAL_MS;
+      if (nativeHandlesBarcodes && now - lastNativeSuccessAt < NATIVE_DECODE_GRACE_MS) return;
+      if (decodePaused || zxingBusy || now - lastZxingAt < interval) return;
       if (video.readyState < 2) return;
       zxingBusy = true;
       lastZxingAt = now;
       try {
-        drawDownscaledFrame(video, canvas);
-        const result = reader.decodeFromCanvas(canvas);
-        if (result) emitSuccess(result.getText());
+        // Preserve thin 1D bars rather than shrinking every label to 720px.
+        if (!drawDownscaledFrame(video, canvas, CAPTURE_WIDTH)) return;
+        // Fast reader first; periodically retry difficult or rotated labels.
+        const hardAttempt = zxingMisses >= 3 && zxingMisses % 4 === 3;
+        const activeReader = hardAttempt
+          ? (zxingHardReader ??= createZxingReader(true))
+          : reader;
+        const result = activeReader.decodeFromCanvas(canvas);
+        if (result) {
+          zxingMisses = 0;
+          emitSuccess(result.getText());
+        }
       } catch {
+        zxingMisses += 1;
         /* NotFoundException mỗi frame — bình thường */
       } finally {
         zxingBusy = false;
@@ -649,42 +698,21 @@ export async function startLiveQrScanner(opts: {
     void canvasLoop();
   };
 
-  const startZxingParallel = async () => {
-    zxingReader = createZxingReader();
-    try {
-      zxingControls = await zxingReader.decodeFromVideoElement(video, (result, err) => {
-        if (stopped) return;
-        if (result) {
-          emitSuccess(result.getText());
-          return;
-        }
-        void err;
-      });
-    } catch (err) {
-      console.warn('[QR Scanner] ZXing video element failed, using canvas poll', err);
-      if (zxingReader) startZxingCanvasPoll(zxingReader);
-    }
-  };
-
-  // Luôn chạy ZXing (barcode 1D + QR). BarcodeDetector chạy song song nếu có.
+  // Prefer native decoding; keep ZXing for unsupported or difficult labels.
   if (detector) {
     console.log(
-      `[QR Scanner] Engine: BarcodeDetector${detectorInfo?.qrOnly ? ' (qr-only)' : ' (QR+1D)'} + ZXing parallel`,
+      `[QR Scanner] Engine: BarcodeDetector${detectorInfo?.qrOnly ? ' (qr-only) + ZXing' : ' (QR+1D) + throttled ZXing fallback'}`,
     );
     void loopDetect();
-    void startZxingParallel();
   } else {
     console.log('[QR Scanner] Engine: ZXing continuous (QR + barcode 1D)');
-    void startZxingParallel();
   }
+  zxingReader = createZxingReader();
+  startZxingCanvasPoll(zxingReader);
 
   const teardownDom = async () => {
-    try {
-      zxingControls?.stop();
-    } catch {
-      /* ignore */
-    }
     zxingReader = null;
+    zxingHardReader = null;
     try {
       stream.getTracks().forEach((t) => t.stop());
     } catch {
@@ -706,6 +734,8 @@ export async function startLiveQrScanner(opts: {
     try {
       canvas.width = 0;
       canvas.height = 0;
+      detectorCanvas.width = 0;
+      detectorCanvas.height = 0;
     } catch {
       /* ignore */
     }
@@ -796,6 +826,8 @@ export async function startLiveQrScanner(opts: {
 
         // Sau đổi camera: mặc định lại zoom 2x.
         currentZoom = opts.preferredZoom ?? DEFAULT_SCAN_ZOOM;
+        lastNativeSuccessAt = performance.now();
+        zxingMisses = 0;
         warmUpFocus(stream.getVideoTracks()[0]);
         notifyCaps();
         return true;

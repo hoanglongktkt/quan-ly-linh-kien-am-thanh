@@ -1,3 +1,4 @@
+import { isPendingShipmentReview } from '../orders/shipmentReview.ts';
 // Quy tắc dùng chung; giữ nguyên xử lý cho cả backend và frontend.
 import type { Order } from '../../src/types';
 import { isShopeeInternalTrackingCode } from './tracking.ts';
@@ -116,6 +117,7 @@ export function getOrderFulfillmentType(
 export function isProcessedCondition(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
+  if (isPendingShipmentReview(order)) return false;
   const raw = getShopeeOrderRawStatus(order);
   // Dùng cờ thao tác đã lưu khi trạng thái sàn chưa kịp cập nhật.
   if (!['READY_TO_SHIP', 'RETRY_SHIP', 'PROCESSED'].includes(raw)) return false;
@@ -261,6 +263,7 @@ export function matchesShippingTab(order: Order): boolean {
  * PROCESSED + đã in hoặc đã chuẩn bị + chưa bàn giao ĐVVC.
  */
 export function matchesProcessedPickupTab(order: Order): boolean {
+  if (isPendingShipmentReview(order)) return false;
   // Trạng thái nội bộ đã kết thúc phải được loại giống bộ lọc Mongo.
   if (['shipping', 'completed', 'cancelled', 'return_pending', 'return_received'].includes(order.status)) return false;
   if (isShopeeShippingStatus(order)) return false;
@@ -275,6 +278,7 @@ export function matchesProcessedPickupTab(order: Order): boolean {
  * READY_TO_SHIP / RETRY_SHIP / PROCESSED nhưng chưa in và chưa chuẩn bị.
  */
 export function matchesUnprocessedPickupTab(order: Order): boolean {
+  if (isPendingShipmentReview(order)) return false;
   if (isShopeeShippingStatus(order)) return false;
   if (isShopeeCompletedStatus(order)) return false;
   if (isShopeeCancelledLikeStatus(order)) return false;

@@ -125,6 +125,37 @@ export function apiFetch(input: string, init?: RequestInit): Promise<Response> {
   return fetch(url, init);
 }
 
+/** Tạo signal có timeout và vẫn tôn trọng signal hủy từ caller. */
+export function createTimeoutSignal(timeoutMs: number, parentSignal?: AbortSignal): {
+  signal: AbortSignal;
+  cleanup: () => void;
+} {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const onAbort = () => controller.abort();
+  if (parentSignal) {
+    if (parentSignal.aborted) controller.abort();
+    else parentSignal.addEventListener('abort', onAbort, { once: true });
+  }
+  if (timeoutMs > 0) timer = setTimeout(() => controller.abort(), timeoutMs);
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      if (timer) clearTimeout(timer);
+      parentSignal?.removeEventListener('abort', onAbort);
+    },
+  };
+}
+
+export function isAbortError(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      ((error as { name?: string }).name === 'AbortError' ||
+        (error as { name?: string }).name === 'TimeoutError'),
+  );
+}
+
 /** Trích thông báo lỗi từ body JSON (ưu tiên message/error từ server/Shopee). */
 function extractApiErrorMessage(text: string, fallback: string): string {
   try {
