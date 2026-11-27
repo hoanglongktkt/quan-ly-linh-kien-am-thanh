@@ -9997,7 +9997,7 @@ export default function OrderManager({
       {activeSubTab !== 'order_products' && (
       <div className="om-orders-filters-panel bg-white p-5 max-md:p-4 rounded-3xl border border-gray-100 shadow-xs">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-          <div className="relative w-full min-w-0 xl:w-[270px] xl:shrink-0 2xl:w-[320px]">
+          <div className="relative w-full min-w-0 xl:order-2 xl:w-[165px] xl:shrink-0 2xl:w-[185px]">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-blue-600 w-4 h-4" />
             <input
               type="text"
@@ -10073,7 +10073,7 @@ export default function OrderManager({
               })}
             </div>
           )}
-          <div className="flex shrink-0 flex-wrap items-center gap-3 xl:ml-auto">
+          <div className="flex shrink-0 flex-wrap items-center gap-3 xl:order-3 xl:ml-0">
             <OrderDateFilter
               preset={datePreset}
               customStart={customStartDate}
