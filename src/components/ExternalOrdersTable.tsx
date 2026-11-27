@@ -340,41 +340,55 @@ function ExternalOrderActions({
   const canCancel = canGhn && st !== 'cancelled' && st !== 'delivered';
   const pos = isPosOrder(order);
 
+  const iconButtonClass =
+    'inline-flex h-10 w-10 md:h-8 md:w-8 shrink-0 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50';
+
   return (
-    <div className="inline-flex flex-col items-stretch gap-1 min-w-[8.5rem]">
-      {(!pos || (st !== 'cancelled' && st !== 'rts')) && (
+    <div className="inline-flex flex-col items-center gap-1.5">
+      <div className="inline-flex items-center justify-center gap-1.5">
+        {(!pos || (st !== 'cancelled' && st !== 'rts')) && (
+          <button
+            type="button"
+            disabled={anyBusy}
+            onClick={() => onEditOrder(order)}
+            className={`${iconButtonClass} bg-slate-800 text-white hover:bg-slate-900 focus-visible:ring-slate-500`}
+            title="Sửa đơn"
+            aria-label="Sửa đơn"
+          >
+            <Pencil className="h-4 w-4" aria-hidden="true" />
+          </button>
+        )}
         <button
           type="button"
           disabled={anyBusy}
-          onClick={() => onEditOrder(order)}
-          className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-lg disabled:opacity-50"
+          onClick={() => onDeleteOrder(order)}
+          className={`${iconButtonClass} border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 focus-visible:ring-rose-400`}
+          title="Xóa đơn"
+          aria-label={busyKind === 'delete' ? 'Đang xóa đơn' : 'Xóa đơn'}
+          aria-busy={busyKind === 'delete'}
         >
-          <Pencil className="w-3.5 h-3.5" /> Sửa đơn
+          {busyKind === 'delete' ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <Trash2 className="h-4 w-4" aria-hidden="true" />
+          )}
         </button>
-      )}
-      <button
-        type="button"
-        disabled={anyBusy}
-        onClick={() => onDeleteOrder(order)}
-        className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-50"
-      >
-        {busyKind === 'delete' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-        Xóa đơn
-      </button>
-      <button
-        type="button"
-        disabled={anyBusy}
-        onClick={() => onPrintInvoice(order)}
-        className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold text-[10px] rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-        title="In lại hóa đơn bán lẻ (POS) cho khách"
-      >
-        {invoiceBusy ? (
-          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-        ) : (
-          <Receipt className="w-3.5 h-3.5" />
-        )}
-        In hóa đơn
-      </button>
+        <button
+          type="button"
+          disabled={anyBusy}
+          onClick={() => onPrintInvoice(order)}
+          className={`${iconButtonClass} bg-amber-500 text-white hover:bg-amber-600 focus-visible:ring-amber-400`}
+          title="In lại hóa đơn bán lẻ (POS) cho khách"
+          aria-label={invoiceBusy ? 'Đang in hóa đơn' : 'In hóa đơn'}
+          aria-busy={invoiceBusy}
+        >
+          {invoiceBusy ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <Receipt className="h-4 w-4" aria-hidden="true" />
+          )}
+        </button>
+      </div>
       {!pos && <>
       <button
         type="button"
