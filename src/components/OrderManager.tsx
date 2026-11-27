@@ -9798,13 +9798,13 @@ export default function OrderManager({
 
       {!isMobileViewport && (
       <div
-        className="om-orders-sub-tabs border-b border-gray-200 flex flex-col gap-1.5 md:flex-row md:flex-wrap md:gap-1 bg-white p-1 rounded-xl md:overflow-x-visible whitespace-normal scrollbar-hide"
+        className="om-orders-sub-tabs flex flex-col gap-1.5 rounded-xl border border-blue-200 bg-blue-50/70 p-1.5 whitespace-normal scrollbar-hide md:flex-row md:flex-wrap md:items-center md:overflow-x-visible"
       >        <button
           onClick={() => selectOrdersSubTab('all')}
-          className={`om-orders-mobile-hide-subtab px-4 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer ${
+          className={`om-orders-mobile-hide-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer ${
             activeSubTab === 'all' 
-              ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20' 
-              : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+              ? 'border-emerald-700 bg-emerald-600 text-white font-extrabold shadow-sm'
+: 'border-blue-200 bg-white/90 text-blue-800 hover:border-blue-300 hover:bg-blue-100/80'
           }`}
         >
           Tất cả đơn hàng ({getCount('all')})
@@ -9812,112 +9812,112 @@ export default function OrderManager({
 
         <button
           onClick={() => selectOrdersSubTab('pending_confirm')}
-          className={`om-orders-mobile-hide-subtab px-4 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
+          className={`om-orders-mobile-hide-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'pending_confirm' || activeSubTab === 'pending_verification'
-              ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20' 
-              : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+              ? 'border-emerald-700 bg-emerald-600 text-white font-extrabold shadow-sm'
+: 'border-blue-200 bg-white/90 text-blue-800 hover:border-blue-300 hover:bg-blue-100/80'
           }`}
         >
           <span>Chờ xác nhận</span>
-          <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-amber-100 text-amber-700 border border-amber-200/50">
+          <span className="px-1.5 py-0.5 text-[10px] leading-none tabular-nums font-bold rounded-full bg-amber-100 text-amber-700 border border-amber-200/50">
             {getCount('pending_confirm')}
           </span>
         </button>
 
         <button
           onClick={() => selectOrdersSubTab('unprocessed')}
-          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 max-md:w-full max-md:justify-start max-md:text-left text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+          className={`om-orders-mobile-show-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer ${
             activeSubTab === 'unprocessed' 
-              ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20' 
-              : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+              ? 'border-emerald-700 bg-emerald-600 text-white font-extrabold shadow-sm'
+: 'border-blue-200 bg-white/90 text-blue-800 hover:border-blue-300 hover:bg-blue-100/80'
           }`}
         >
           <span className="uppercase text-left">Đơn chưa xử lý</span>
-          <span className="px-1.5 py-0.2 text-[10px] font-black rounded-full bg-rose-100 text-rose-700 border border-rose-200">
+          <span className="px-1.5 py-0.5 text-[10px] leading-none tabular-nums font-black rounded-full bg-rose-100 text-rose-700 border border-rose-200">
             {getCount('unprocessed')}
           </span>
         </button>
 
         <button
           onClick={() => selectOrdersSubTab('processed')}
-          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 max-md:w-full max-md:justify-start max-md:text-left text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+          className={`om-orders-mobile-show-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer ${
             activeSubTab === 'processed' 
-              ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20' 
-              : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+              ? 'border-emerald-700 bg-emerald-600 text-white font-extrabold shadow-sm'
+: 'border-blue-200 bg-white/90 text-blue-800 hover:border-blue-300 hover:bg-blue-100/80'
           }`}
         >
           <span className="uppercase text-left">Chờ lấy hàng (Đã xử lý)</span>
-          <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-blue-100 text-blue-700 border border-blue-200">
+          <span className="px-1.5 py-0.5 text-[10px] leading-none tabular-nums font-bold rounded-full bg-blue-100 text-blue-700 border border-blue-200">
             {getCount('processed')}
           </span>
         </button>
 
         <button
           onClick={() => openHandedOverCarrierTab({ skipFetch: false })}
-          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 max-md:w-full max-md:justify-start max-md:text-left text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+          className={`om-orders-mobile-show-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer ${
             activeSubTab === 'handed_over_carrier' 
-              ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20' 
-              : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+              ? 'border-emerald-700 bg-emerald-600 text-white font-extrabold shadow-sm'
+: 'border-blue-200 bg-white/90 text-blue-800 hover:border-blue-300 hover:bg-blue-100/80'
           }`}
         >
           <span className="uppercase text-left">Đã giao cho ĐVVC</span>
-          <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-violet-100 text-violet-700 border border-violet-200">
+          <span className="px-1.5 py-0.5 text-[10px] leading-none tabular-nums font-bold rounded-full bg-violet-100 text-violet-700 border border-violet-200">
             {getCount('handed_over_carrier')}
           </span>
         </button>
 
         <button
           onClick={() => selectOrdersSubTab('shipping')}
-          className={`om-orders-mobile-hide-subtab px-4 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
+          className={`om-orders-mobile-hide-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'shipping' 
-              ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20' 
-              : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+              ? 'border-emerald-700 bg-emerald-600 text-white font-extrabold shadow-sm'
+: 'border-blue-200 bg-white/90 text-blue-800 hover:border-blue-300 hover:bg-blue-100/80'
           }`}
         >
           <span>Đang giao</span>
-          <span className="px-1.5 py-0.2 text-[10px] font-semibold rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200/50">
+          <span className="px-1.5 py-0.5 text-[10px] leading-none tabular-nums font-semibold rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200/50">
             {getCount('shipping')}
           </span>
         </button>
 
         <button
           onClick={() => selectOrdersSubTab('cancel_returns', 'all')}
-          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 max-md:w-full max-md:justify-start max-md:text-left text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+          className={`om-orders-mobile-show-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer ${
             activeSubTab === 'cancel_returns' 
-              ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20' 
-              : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+              ? 'border-emerald-700 bg-emerald-600 text-white font-extrabold shadow-sm'
+: 'border-blue-200 bg-white/90 text-blue-800 hover:border-blue-300 hover:bg-blue-100/80'
           }`}
         >
           <span className="uppercase text-left">ĐƠN HỦY, ĐƠN HOÀN</span>
-          <span className="px-1.5 py-0.2 text-[10px] font-semibold rounded-full bg-orange-100 text-orange-700 border border-orange-200">
+          <span className="px-1.5 py-0.5 text-[10px] leading-none tabular-nums font-semibold rounded-full bg-orange-100 text-orange-700 border border-orange-200">
             {getCount('cancel_returns')}
           </span>
         </button>
 
         <button
           onClick={() => selectOrdersSubTab('received_cancel_returns')}
-          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 max-md:w-full max-md:justify-start max-md:text-left text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+          className={`om-orders-mobile-show-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer ${
             activeSubTab === 'received_cancel_returns'
-              ? 'border-teal-600 text-teal-700 font-extrabold bg-teal-50/40'
-              : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+              ? 'border-emerald-700 bg-emerald-600 text-white font-extrabold shadow-sm'
+: 'border-blue-200 bg-white/90 text-blue-800 hover:border-blue-300 hover:bg-blue-100/80'
           }`}
         >
           <span className="uppercase text-left">Đã nhận đơn hủy, đơn hoàn</span>
-          <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-teal-100 text-teal-800 border border-teal-200">
+          <span className="px-1.5 py-0.5 text-[10px] leading-none tabular-nums font-bold rounded-full bg-teal-100 text-teal-800 border border-teal-200">
             {getCount('received_cancel_returns')}
           </span>
         </button>
 
         <button
           onClick={() => selectOrdersSubTab('order_products')}
-          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 max-md:w-full max-md:justify-start max-md:text-left text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+          className={`om-orders-mobile-show-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer ${
             activeSubTab === 'order_products'
-              ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20'
-              : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+              ? 'border-emerald-700 bg-emerald-600 text-white font-extrabold shadow-sm'
+: 'border-blue-200 bg-white/90 text-blue-800 hover:border-blue-300 hover:bg-blue-100/80'
           }`}
         >
           <span className="uppercase text-left">Những sản phẩm có trong đơn</span>
-          <span className="px-1.5 py-0.2 text-[10px] font-semibold rounded-full bg-violet-100 text-violet-700 border border-violet-200">
+          <span className="px-1.5 py-0.5 text-[10px] leading-none tabular-nums font-semibold rounded-full bg-violet-100 text-violet-700 border border-violet-200">
             {getCount('order_products')}
           </span>
         </button>
