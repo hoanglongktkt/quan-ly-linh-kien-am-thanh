@@ -9829,7 +9829,7 @@ export default function OrderManager({
 
       {!isMobileViewport && (
       <div
-        className="om-orders-sub-tabs sticky top-0 z-30 flex flex-col gap-1 rounded-xl border border-slate-200 bg-white/95 p-1 whitespace-nowrap shadow-sm backdrop-blur-sm scrollbar-hide md:flex-row md:flex-nowrap md:items-center md:overflow-x-auto"
+        className="om-orders-sub-tabs sticky top-0 z-30 flex min-w-0 flex-col gap-1 rounded-xl border border-slate-200 bg-white/95 p-1 whitespace-nowrap shadow-sm backdrop-blur-sm scrollbar-hide md:flex-row md:flex-nowrap md:items-center md:overflow-x-auto"
       >        <button
           onClick={() => selectOrdersSubTab('all')}
           className={`om-orders-mobile-hide-subtab inline-flex shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-normal leading-tight transition-all cursor-pointer ${
@@ -9997,7 +9997,7 @@ export default function OrderManager({
       {activeSubTab !== 'order_products' && (
       <div className="om-orders-filters-panel bg-white p-5 max-md:p-4 rounded-3xl border border-gray-100 shadow-xs">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-          <div className="relative w-full min-w-0 xl:w-[380px] xl:shrink-0">
+          <div className="relative w-full min-w-0 xl:w-[270px] xl:shrink-0 2xl:w-[320px]">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-blue-600 w-4 h-4" />
             <input
               type="text"
@@ -10073,24 +10073,23 @@ export default function OrderManager({
               })}
             </div>
           )}
-        </div>
-
-        <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3">
-          <OrderDateFilter
-            preset={datePreset}
-            customStart={customStartDate}
-            customEnd={customEndDate}
-            onPresetChange={(next) => {
-              setDatePreset(next);
-              if (next === 'custom') {
-                const fallback = defaultCustomDateInputs();
-                setCustomStartDate((prev) => prev || fallback.start);
-                setCustomEndDate((prev) => prev || fallback.end);
-              }
-            }}
-            onCustomStartChange={setCustomStartDate}
-            onCustomEndChange={setCustomEndDate}
-          />
+          <div className="flex shrink-0 flex-wrap items-center gap-3 xl:ml-auto">
+            <OrderDateFilter
+              preset={datePreset}
+              customStart={customStartDate}
+              customEnd={customEndDate}
+              onPresetChange={(next) => {
+                setDatePreset(next);
+                if (next === 'custom') {
+                  const fallback = defaultCustomDateInputs();
+                  setCustomStartDate((prev) => prev || fallback.start);
+                  setCustomEndDate((prev) => prev || fallback.end);
+                }
+              }}
+              onCustomStartChange={setCustomStartDate}
+              onCustomEndChange={setCustomEndDate}
+            />
+          </div>
         </div>
         {activeSubTab === 'unprocessed' && (
           <label className="mt-3 flex items-center gap-2.5 cursor-pointer select-none w-fit max-w-full">

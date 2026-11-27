@@ -70,6 +70,13 @@ body {
   height: 0;
 }
 
+/* Order tabs stay available while the document list scrolls. */
+.om-orders-sub-tabs {
+  position: sticky !important;
+  top: 0;
+  z-index: 30;
+}
+
 /* Desktop sidebar rail: giữ icon, ẩn text khi menu đang thu gọn. */
 @media (min-width: 769px) {
   #sidebar-nav.sidebar-compact {
