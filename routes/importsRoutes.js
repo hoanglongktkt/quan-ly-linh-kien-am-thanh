@@ -4,6 +4,7 @@ import {
   getImportHistory,
   getImportProductContext,
   createImport,
+  createImportBatch,
   clearAllImports,
   getSupplierReport,
 } from "../controllers/importsController.js";
@@ -17,6 +18,7 @@ router.get("/supplier-report", getSupplierReport);
 router.get("/history/:productId", getImportHistory);
 router.get("/product-context/:productId", getImportProductContext);
 router.post("/", createImport);
+router.post("/batch", createImportBatch);
 router.post("/clear-all", clearAllImports);
 
 export default router;

@@ -14,6 +14,10 @@ import SupplierImportReportModal from './SupplierImportReportModal';
 import { buildShopeeSyncPayload } from '../utils/shopeeSyncPayload';
 import { parseJsonResponse } from '../utils/apiClient';
 import {
+  readPendingImportBatch, keepPendingImportBatch, clearPendingImportBatch,
+  ImportBatchSaveError, type PendingImportBatch,
+} from '../utils/importBatch';
+import {
   Plus,
   Search,
   ArrowUpRight,
@@ -223,7 +227,7 @@ interface ImportManagerProps {
   onRefreshSuppliers?: () => Promise<void> | void;
   onSuppliersUpdated?: (suppliers: Supplier[]) => void;
   products: Product[];
-  onAddImport: (transaction: ImportTransaction) => void | Promise<void>;
+  onAddImports: (transactions: ImportTransaction[], batchId: string) => Promise<void>;
   onEditProductShortcut: (productId: string) => void;
   initialProductId?: string | null;
   onInitialProductConsumed?: () => void;
@@ -238,7 +242,7 @@ export default function ImportManager({
   onRefreshSuppliers,
   onSuppliersUpdated,
   products,
-  onAddImport,
+  onAddImports,
   onEditProductShortcut,
   initialProductId,
   onInitialProductConsumed,
@@ -246,8 +250,11 @@ export default function ImportManager({
   systemFees = [],
   onProductPriceUpdated,
 }: ImportManagerProps) {
+  const [pendingBatch, setPendingBatch] = useState<PendingImportBatch | null>(readPendingImportBatch);
+  const pendingBatchRef = useRef(pendingBatch);
+  const submitGuardRef = useRef(false);
   const [localSuppliers, setLocalSuppliers] = useState<Supplier[]>(suppliersProp);
-  const [viewMode, setViewMode] = useState<'list' | 'create'>('list');
+  const [viewMode, setViewMode] = useState<'list' | 'create'>(pendingBatch ? 'create' : 'list');
   const prefillHandledRef = useRef<string | null>(null);
   const supplierSelectRef = useRef<ImportSupplierSelectHandle>(null);
   const productSearchRef = useRef<ImportProductSearchSelectHandle>(null);
@@ -282,10 +289,15 @@ export default function ImportManager({
   const [search, setSearch] = useState('');
   const [selectedSupplierFilter, setSelectedSupplierFilter] = useState('all');
 
-  const [selectedSupplierId, setSelectedSupplierId] = useState('');
-  const [selectedProducts, setSelectedProducts] = useState<SelectedImportLine[]>([]);
-  const [importCost, setImportCost] = useState<number>(0);
-  const [paidAmount, setPaidAmount] = useState<number>(0);
+  const [selectedSupplierId, setSelectedSupplierId] = useState(pendingBatch?.transactions[0]?.supplierId || '');
+  const [selectedProducts, setSelectedProducts] = useState<SelectedImportLine[]>(() =>
+    pendingBatch?.transactions.map((tx) => ({
+      productId: tx.productId, title: tx.productTitle, sku: tx.productSku,
+      quantity: tx.quantity, unitPrice: tx.newImportPrice, oldImportPrice: tx.oldImportPrice,
+      currentStock: 0, sellingPrice: 0,
+    })) || []);
+  const [importCost, setImportCost] = useState<number>(() => pendingBatch?.transactions.reduce((s, tx) => s + (tx.importCost || 0), 0) || 0);
+  const [paidAmount, setPaidAmount] = useState<number>(() => pendingBatch?.transactions.reduce((s, tx) => s + tx.paidAmount, 0) || 0);
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState<{ text: string; ok: boolean } | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -605,6 +617,10 @@ export default function ImportManager({
   };
 
   const bootstrapCreateForm = async (prefillProductId?: string) => {
+    if (pendingBatchRef.current) {
+      setViewMode('create');
+      return;
+    }
     const token = localStorage.getItem('admin_token');
     let fresh: Supplier[] = [];
     if (token) {
@@ -707,8 +723,40 @@ export default function ImportManager({
       .sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
       .slice(0, 5);
 
+  const submitPendingBatch = async (pending: PendingImportBatch) => {
+    const wasUncertain = pendingBatchRef.current !== null;
+    submitGuardRef.current = true;
+    setSubmitting(true);
+    try {
+      keepPendingImportBatch(pending);
+      pendingBatchRef.current = pending;
+      setPendingBatch(pending);
+      await onAddImports(pending.transactions, pending.batchId);
+      clearPendingImportBatch();
+      pendingBatchRef.current = null;
+      setPendingBatch(null);
+      setViewMode('list');
+      showToast('Đã lưu toàn bộ phiếu nhập và cập nhật tồn kho, công nợ.', true, 5000);
+    } catch (error) {
+      if (error instanceof ImportBatchSaveError && !error.uncertain && !wasUncertain) {
+        clearPendingImportBatch();
+        pendingBatchRef.current = null;
+        setPendingBatch(null);
+      }
+      alert(error instanceof Error ? error.message : 'Chưa xác nhận được kết quả lưu. Hãy thử lại cùng phiếu.');
+    } finally {
+      submitGuardRef.current = false;
+      setSubmitting(false);
+    }
+  };
+
   const handleSubmitImport = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitGuardRef.current) return;
+    if (pendingBatchRef.current) {
+      await submitPendingBatch(pendingBatchRef.current);
+      return;
+    }
     if (!selectedSupplierId) {
       alert('Vui lòng chọn nhà cung cấp!');
       supplierSelectRef.current?.focus();
@@ -736,8 +784,9 @@ export default function ImportManager({
       return;
     }
 
-    setSubmitting(true);
-    try {
+    const transactions: ImportTransaction[] = [];
+    const batchId = `imp-${crypto.randomUUID()}`;
+    {
       let remainingPaid = finalPaid;
       const date = new Date().toISOString().split('T')[0];
 
@@ -754,7 +803,7 @@ export default function ImportManager({
         else if (linePaid > 0) status = 'partial';
 
         const tx: ImportTransaction = {
-          id: `imp-${Date.now()}-${i}`,
+          id: `${batchId}-${i}`,
           supplierId: selectedSupplierId,
           supplierName: supplier.name,
           date,
@@ -770,17 +819,11 @@ export default function ImportManager({
           status,
           warehouseId: 'KhoGoc',
         };
-        await onAddImport(tx);
+        transactions.push(tx);
       }
 
-      setViewMode('list');
-      showToast('Đã lưu đơn nhập kho thành công! Tồn kho đã được cập nhật.', true, 5000);
-    } catch (err) {
-      console.error(err);
-      alert('Có lỗi khi lưu đơn nhập. Vui lòng thử lại.');
-    } finally {
-      setSubmitting(false);
     }
+    await submitPendingBatch({ batchId, transactions });
   };
 
   const historyModalEl = historyModal && (
@@ -874,6 +917,7 @@ export default function ImportManager({
               <button
                 type="button"
                 onClick={() => setViewMode('list')}
+                disabled={submitting || !!pendingBatch}
                 className="mt-0.5 p-2 hover:bg-gray-50 rounded-xl border border-gray-200 text-gray-500 hover:text-gray-800 shrink-0"
               >
                 <ArrowLeft className="w-5 h-5" />
@@ -896,6 +940,12 @@ export default function ImportManager({
           </div>
 
           <form onSubmit={handleSubmitImport} className="px-6 lg:px-10 py-6 space-y-6">
+            {pendingBatch && !submitting && (
+              <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                Phiếu đang chờ xác nhận kết quả lưu. Nhấn “Thử lưu lại” để kiểm tra cùng phiếu, tránh nhập trùng.
+              </p>
+            )}
+            <fieldset disabled={submitting || !!pendingBatch} className="space-y-6 min-w-0">
             {/* Block 1: NCC */}
             <section className="space-y-2">
               <label className="text-xs font-bold uppercase tracking-wider text-gray-400">
@@ -1184,10 +1234,13 @@ export default function ImportManager({
                 </div>
               </div>
 
+            </section>
+            </fieldset>
               <div className="flex gap-3 justify-end">
                 <button
                   type="button"
                   onClick={() => setViewMode('list')}
+                  disabled={submitting || !!pendingBatch}
                   className="px-5 py-3 bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 font-semibold text-sm rounded-xl"
                 >
                   Hủy
@@ -1197,10 +1250,9 @@ export default function ImportManager({
                   disabled={submitting || selectedProducts.length === 0 || !selectedSupplierId}
                   className="min-w-[200px] px-6 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm rounded-xl shadow-sm"
                 >
-                  {submitting ? 'Đang lưu...' : 'Xác nhận nhập kho'}
+                  {submitting ? `Đang lưu ${selectedProducts.length} sản phẩm...` : pendingBatch ? 'Thử lưu lại' : 'Xác nhận nhập kho'}
                 </button>
               </div>
-            </section>
           </form>
         </div>
 

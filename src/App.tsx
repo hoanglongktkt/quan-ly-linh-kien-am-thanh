@@ -31,6 +31,7 @@ import { purgeLegacyCatalogCache } from './utils/catalogStorage';
 import { sanitizeOrders, sortOrdersByCreatedAtDesc, orderCreatedAtMs } from './utils/sanitizeOrder';
 import { safeGetJson, safeRemoveItem, safeSetItem } from './utils/safeStorage';
 import { parseJsonResponse } from './utils/apiClient';
+import { saveImportBatchRequest, ImportBatchSaveError } from './utils/importBatch';
 import { decodeJwtPayload, isJwtLocallyValid } from './utils/jwtClient';
 import { onTabWake } from './utils/tabWakeGate';
 import { clearLegacyOrdersLocalStorage, loadOrdersCache, saveOrdersCache } from './utils/orderCache';
@@ -2643,105 +2644,33 @@ export default function App() {
     };
   }, [isAuthenticated, ordersNetworkBootReady, activeTab]);
 
-  const handleAddImport = async (transaction: ImportTransaction) => {
-    const token = localStorage.getItem('admin_token');
-    let savedProduct: Product | null = null;
-    if (token) {
-      try {
-        const response = await fetch('/api/imports', {
-          method: 'POST',
-          headers: apiAuthHeaders(),
-          body: JSON.stringify({
-            ...transaction,
-            warehouseId: 'KhoGoc',
-            productSku: transaction.productSku,
-          }),
-        });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(data.error || 'Lưu phiếu nhập thất bại');
-        }
-        if (Array.isArray(data.imports)) {
-          setImports(data.imports);
-        } else {
-          setImports((prev) => [transaction, ...prev]);
-        }
-        if (data.product && data.product.id) {
-          savedProduct = data.product as Product;
-        }
-      } catch (err) {
-        console.error('Save import error:', err);
-        alert(`Không lưu được phiếu nhập: ${err instanceof Error ? err.message : String(err)}`);
-        return;
-      }
-    } else {
-      setImports((prev) => [transaction, ...prev]);
+  const handleAddImports = async (transactions: ImportTransaction[], batchId: string) => {
+    if (!localStorage.getItem('admin_token')) {
+      throw new ImportBatchSaveError('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại trước khi lưu.', false);
     }
-
-    // Cập nhật UI từ product server trả về (đã cộng tồn + đè importPrice) — không cộng đôi
-    setProducts((prevProducts) =>
-      prevProducts.map((p) => {
-        if (savedProduct && p.id === savedProduct.id) {
-          return { ...p, ...savedProduct, status: 'active' as const };
-        }
-        if (p.id === transaction.productId) {
-          return {
-            ...p,
-            ...(savedProduct || {}),
-            stock: savedProduct
-              ? Number(savedProduct.stock)
-              : (Number(p.stock) || 0) + transaction.quantity,
-            importPrice: savedProduct
-              ? Number(savedProduct.importPrice)
-              : transaction.newImportPrice,
-            status: 'active' as const,
-          };
-        }
-        const children = getProductChildren(p);
-        if (!children.some((c) => c.id === transaction.productId || (savedProduct && c.id === savedProduct.id))) {
-          return p;
-        }
-        const targetId = savedProduct?.id || transaction.productId;
-        const nextChildren = children.map((c) =>
-          c.id === targetId || c.id === transaction.productId
-            ? {
-                ...c,
-                ...(savedProduct && savedProduct.id === c.id ? savedProduct : {}),
-                stock: savedProduct && savedProduct.id === c.id
-                  ? Number(savedProduct.stock)
-                  : (Number(c.stock) || 0) + transaction.quantity,
-                importPrice: savedProduct && savedProduct.id === c.id
-                  ? Number(savedProduct.importPrice)
-                  : transaction.newImportPrice,
-                status: 'active' as const,
-              }
-            : c
-        );
-        const totalStock = nextChildren.reduce((s, c) => s + (Number(c.stock) || 0), 0);
-        return { ...p, children: nextChildren, stock: totalStock };
-      })
-    );
-
-    // Đồng bộ lại từ Kho Gốc để màn hình chính (ProductList) thấy tồn/giá mới
-    void fetchProducts({ forceRefresh: true, silent: true });
-
-    const supplier = suppliers.find((s) => s.id === transaction.supplierId);
-    if (supplier) {
-      await handleUpdateSupplier({
-        ...supplier,
-        totalOrderValue: supplier.totalOrderValue + transaction.totalAmount,
-        totalPaid: supplier.totalPaid + transaction.paidAmount,
-        totalDebt: supplier.totalDebt + (transaction.totalAmount - transaction.paidAmount),
-      });
+    const data = await saveImportBatchRequest(transactions, batchId, apiAuthHeaders());
+    const entryIds = new Set(data.entries.map((entry) => entry.id));
+    setImports((prev) => [...data.entries].reverse().concat(prev.filter((entry) => !entryIds.has(entry.id))));
+    const updatedProducts = new Map(data.updatedProducts.map((product) => [product.id, product]));
+    setProducts((prev) => {
+      const existing = new Set(prev.map((product) => product.id));
+      return [
+        ...data.updatedProducts.filter((product) => !existing.has(product.id)),
+        ...prev.map((product) => updatedProducts.get(product.id) || product),
+      ];
+    });
+    if (data.supplier) {
+      setSuppliers((prev) => prev.map((supplier) =>
+        supplier.id === data.supplier?.id ? data.supplier : supplier,
+      ));
     }
-
+    void fetchProducts({ forceRefresh: true, silent: true }).catch((error) => {
+      console.warn('[Imports] Catalog refresh after saved batch:', error);
+    });
     handleAddLog({
-      id: `log-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      channel: 'all',
-      type: 'stock_sync',
-      status: 'success',
-      message: `Đã nhập sỉ thành công ${transaction.quantity} cái [${transaction.productTitle}] từ ${transaction.supplierName}.`,
+      id: `log-${batchId}`,
+      timestamp: new Date().toISOString(), channel: 'all', type: 'stock_sync', status: 'success',
+      message: `Đã nhập kho ${data.entries.length} sản phẩm từ ${data.supplier?.name || transactions[0]?.supplierName || ''}.`,
     });
   };
 
@@ -3425,7 +3354,7 @@ export default function App() {
                 onRefreshSuppliers={fetchSuppliers}
                 onSuppliersUpdated={setSuppliers}
                 products={products}
-                onAddImport={handleAddImport}
+                onAddImports={handleAddImports}
                 onEditProductShortcut={handleEditProductShortcut}
                 initialProductId={importPrefillProductId}
                 onInitialProductConsumed={() => setImportPrefillProductId(null)}

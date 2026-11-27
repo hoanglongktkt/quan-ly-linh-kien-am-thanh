@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { resolveAppRoot } from "../utils/appPaths.js";
+import { recoverImportBatchFiles } from "../utils/importBatchFiles.js";
 
 const APP_ROOT = resolveAppRoot();
 const SUPPLIERS_DB_PATH = path.join(APP_ROOT, "data", "suppliers.json");
@@ -21,14 +22,17 @@ function normalizeSupplier(raw) {
   };
 }
 
-function loadSuppliers() {
+export function loadSuppliers({ strict = false } = {}) {
   try {
+    recoverImportBatchFiles(path.dirname(SUPPLIERS_DB_PATH));
     if (!fs.existsSync(SUPPLIERS_DB_PATH)) return [];
     const raw = fs.readFileSync(SUPPLIERS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.map(normalizeSupplier) : [];
+    if (!Array.isArray(parsed)) throw new Error("invalid_suppliers_file");
+    return parsed.map(normalizeSupplier);
   } catch (error) {
     console.error("[Suppliers DB] Failed to read suppliers.json:", error);
+    if (strict) throw error;
     return [];
   }
 }

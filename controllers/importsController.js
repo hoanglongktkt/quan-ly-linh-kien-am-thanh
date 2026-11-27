@@ -1,6 +1,12 @@
 import fs from "fs";
 import path from "path";
 import { resolveAppRoot } from "../utils/appPaths.js";
+import { recoverImportBatchFiles } from "../utils/importBatchFiles.js";
+import { loadSuppliers } from "./suppliersController.js";
+import {
+  normalizeImportBatch, prepareImportProducts, replayImportProducts,
+  buildImportBatchEntries, importBatchError,
+} from "../services/importBatch.js";
 
 const APP_ROOT = resolveAppRoot();
 const IMPORTS_DB_PATH = path.join(APP_ROOT, "data", "imports.json");
@@ -9,6 +15,8 @@ const IMPORTS_DB_PATH = path.join(APP_ROOT, "data", "imports.json");
 let deps = {
   loadProductById: async () => null,
   loadProducts: async () => [],
+  isProductsDiskMode: () => false,
+  withProductsDiskImportBatch: async () => { throw new Error("import_batch_not_initialized"); },
   applyImportStockAndPriceToMainWarehouse: async () => {
     throw new Error("applyImportStockAndPriceToMainWarehouse_not_initialized");
   },
@@ -18,24 +26,85 @@ export function initImportsController(partial) {
   deps = { ...deps, ...partial };
 }
 
-export function loadImports() {
+export function loadImports({ strict = false } = {}) {
   try {
+    recoverImportBatchFiles(path.dirname(IMPORTS_DB_PATH));
     if (!fs.existsSync(IMPORTS_DB_PATH)) return [];
     const raw = fs.readFileSync(IMPORTS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) throw new Error("invalid_imports_file");
+    return parsed;
   } catch (error) {
     console.error("[Imports DB] Failed to read imports.json:", error);
+    if (strict) throw error;
     return [];
   }
 }
 
 export function saveImports(imports) {
+  const temp = `${IMPORTS_DB_PATH}.${process.pid}.tmp`;
   try {
     fs.mkdirSync(path.dirname(IMPORTS_DB_PATH), { recursive: true });
-    fs.writeFileSync(IMPORTS_DB_PATH, JSON.stringify(imports, null, 2), "utf-8");
+    recoverImportBatchFiles(path.dirname(IMPORTS_DB_PATH));
+    fs.writeFileSync(temp, JSON.stringify(imports, null, 2), "utf-8");
+    fs.renameSync(temp, IMPORTS_DB_PATH);
   } catch (error) {
     console.error("[Imports DB] Failed to write imports.json:", error);
+    try { fs.unlinkSync(temp); } catch { /* no staged file */ }
+    throw error;
+  }
+}
+
+/** POST /api/imports/batch: one request, one commit, one supplier update. */
+export async function createImportBatch(req, res) {
+  const started = Date.now();
+  try {
+    const batch = normalizeImportBatch(req.body);
+    // This installation stores the master warehouse on disk; keep the legacy
+    // single-product Mongo endpoint available without mixing two storage modes.
+    if (!deps.isProductsDiskMode()) throw importBatchError("import_batch_requires_disk_storage", 409);
+    const result = await deps.withProductsDiskImportBatch((products, commit) => {
+      const imports = loadImports({ strict: true });
+      const suppliers = loadSuppliers({ strict: true });
+      const previous = imports.filter((entry) => entry.batchId === batch.batchId);
+      if (previous.length) {
+        if (previous.length !== batch.items.length || previous.some((entry) => entry.batchFingerprint !== batch.fingerprint)) {
+          throw importBatchError("import_batch_id_conflict", 409);
+        }
+        return {
+          entries: previous, updatedProducts: replayImportProducts(products, previous),
+          supplier: suppliers.find((s) => s.id === batch.supplierId) || null, replayed: true,
+        };
+      }
+      const supplierIndex = suppliers.findIndex((s) => s.id === batch.supplierId);
+      if (supplierIndex < 0) throw importBatchError("supplier_not_found", 404);
+      const supplier = suppliers[supplierIndex];
+      const applied = prepareImportProducts(products, batch.items);
+      const entries = buildImportBatchEntries(batch, supplier, applied.results);
+      const total = entries.reduce((sum, entry) => sum + entry.totalAmount, 0);
+      const paid = entries.reduce((sum, entry) => sum + entry.paidAmount, 0);
+      const updatedSupplier = {
+        ...supplier,
+        totalOrderValue: supplier.totalOrderValue + total,
+        totalPaid: supplier.totalPaid + paid,
+        totalDebt: supplier.totalDebt + total - paid,
+      };
+      if (![total, paid, updatedSupplier.totalOrderValue, updatedSupplier.totalPaid, updatedSupplier.totalDebt].every(Number.isSafeInteger)) {
+        throw importBatchError("invalid_supplier_totals");
+      }
+      const nextSuppliers = [...suppliers];
+      nextSuppliers[supplierIndex] = updatedSupplier;
+      commit(applied.products, [...entries].reverse().concat(imports), nextSuppliers);
+      return { entries, updatedProducts: applied.updatedProducts, supplier: updatedSupplier, replayed: false };
+    });
+    console.log("[Imports] batch committed", { batchId: batch.batchId, count: result.entries.length, replayed: result.replayed, elapsedMs: Date.now() - started });
+    return res.status(result.replayed ? 200 : 201).json({ success: true, batchId: batch.batchId, ...result });
+  } catch (error) {
+    const pending = error?.code === "IMPORT_COMMIT_PENDING";
+    console.error("[Imports] batch failed:", error);
+    return res.status(pending ? 503 : error?.status || 500).json({
+      success: false, error: error?.message || "import_batch_failed", retrySameBatch: pending,
+    });
   }
 }
 
@@ -216,7 +285,9 @@ export async function createImport(req, res) {
 
 /** POST /api/imports/clear-all */
 export async function clearAllImports(_req, res) {
-  saveImports([]);
+  try { saveImports([]); } catch {
+    return res.status(500).json({ success: false, error: "clear_imports_failed" });
+  }
   console.log("[Imports] Đã xóa sạch toàn bộ lịch sử nhập hàng.");
   return res.json({ success: true, cleared: true, imports: [] });
 }

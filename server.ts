@@ -1,6 +1,7 @@
 import { hasShipmentWaybill, markShipmentReview, reconcileShipmentReview } from './modules/orders/shipmentReview.ts';
 import { readShopeePushData, extractShopeeWebhookRawStatus } from "./modules/webhooks/pushData.ts";
 import express from "express";
+import { withProductsDiskImportBatch } from "./src/db/productsDiskStore.ts";
 import operationsRoutes, { startDefaultOperationsHealthMonitor } from "./routes/operationsRoutes.js";
 import { observeWebhookStage } from "./modules/operations/telemetry.js";
 import { yieldSyncIfWebhookWaiting, isSyncControlError } from "./modules/shopee-sync/syncYield.js";
@@ -23200,6 +23201,7 @@ async function startServer() {
     loadProducts,
     applyImportStockAndPriceToMainWarehouse,
     isProductsDiskMode,
+    withProductsDiskImportBatch,
   });
   app.use("/api/imports", authMiddleware, importsRoutes);
 

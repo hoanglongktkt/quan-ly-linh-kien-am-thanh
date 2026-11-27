@@ -21811,14 +21811,14 @@ var require_etag = __commonJS({
   "../../../node_modules/etag/index.js"(exports2, module2) {
     "use strict";
     module2.exports = etag;
-    var crypto15 = require("crypto");
+    var crypto16 = require("crypto");
     var Stats = require("fs").Stats;
     var toString3 = Object.prototype.toString;
     function entitytag(entity) {
       if (entity.length === 0) {
         return '"0-2jmj7l5rSw0yVb/vlWAYkK/YBwk"';
       }
-      var hash2 = crypto15.createHash("sha1").update(entity, "utf8").digest("base64").substring(0, 27);
+      var hash2 = crypto16.createHash("sha1").update(entity, "utf8").digest("base64").substring(0, 27);
       var len = typeof entity === "string" ? Buffer.byteLength(entity, "utf8") : entity.length;
       return '"' + len.toString(16) + "-" + hash2 + '"';
     }
@@ -24711,11 +24711,11 @@ var require_request = __commonJS({
 // ../../../node_modules/cookie-signature/index.js
 var require_cookie_signature = __commonJS({
   "../../../node_modules/cookie-signature/index.js"(exports2) {
-    var crypto15 = require("crypto");
+    var crypto16 = require("crypto");
     exports2.sign = function(val, secret) {
       if ("string" !== typeof val) throw new TypeError("Cookie value must be provided as a string.");
       if (null == secret) throw new TypeError("Secret key must be provided.");
-      return val + "." + crypto15.createHmac("sha256", secret).update(val).digest("base64").replace(/\=+$/, "");
+      return val + "." + crypto16.createHmac("sha256", secret).update(val).digest("base64").replace(/\=+$/, "");
     };
     exports2.unsign = function(val, secret) {
       if ("string" !== typeof val) throw new TypeError("Signed cookie string must be provided.");
@@ -24724,7 +24724,7 @@ var require_cookie_signature = __commonJS({
       return sha1(mac) == sha1(val) ? str : false;
     };
     function sha1(str) {
-      return crypto15.createHash("sha1").update(str).digest("hex");
+      return crypto16.createHash("sha1").update(str).digest("hex");
     }
   }
 });
@@ -25693,19 +25693,19 @@ var require_express2 = __commonJS({
 });
 
 // utils/appPaths.js
-function resolveAppRoot() {
+function resolveAppRoot2() {
   const candidates = [
     process.env.PASSENGER_APP_ROOT,
     typeof __dirname !== "undefined" ? __dirname : "",
     process.cwd()
   ].map((c) => String(c || "").trim()).filter(Boolean);
   for (const candidate of candidates) {
-    const abs = import_path.default.resolve(candidate);
-    if (import_fs.default.existsSync(import_path.default.join(abs, "server.cjs")) || import_fs.default.existsSync(import_path.default.join(abs, "data")) || import_fs.default.existsSync(import_path.default.join(abs, ".htaccess")) || import_fs.default.existsSync(import_path.default.join(abs, ".env"))) {
+    const abs = import_path2.default.resolve(candidate);
+    if (import_fs2.default.existsSync(import_path2.default.join(abs, "server.cjs")) || import_fs2.default.existsSync(import_path2.default.join(abs, "data")) || import_fs2.default.existsSync(import_path2.default.join(abs, ".htaccess")) || import_fs2.default.existsSync(import_path2.default.join(abs, ".env"))) {
       return abs;
     }
   }
-  return import_path.default.resolve(candidates[0] || process.cwd());
+  return import_path2.default.resolve(candidates[0] || process.cwd());
 }
 function resolveAppBaseUrl() {
   const fromEnv = String(process.env.APP_URL || process.env.API_BASE_URL || "").trim();
@@ -25713,12 +25713,12 @@ function resolveAppBaseUrl() {
   if (process.env.NODE_ENV === "production") return PRODUCTION_APP_URL;
   return PRODUCTION_APP_URL;
 }
-var import_path, import_fs, PDF_DIR, PRODUCTION_APP_URL;
+var import_path2, import_fs2, PDF_DIR, PRODUCTION_APP_URL;
 var init_appPaths = __esm({
   "utils/appPaths.js"() {
-    import_path = __toESM(require("path"), 1);
-    import_fs = __toESM(require("fs"), 1);
-    PDF_DIR = import_path.default.join(resolveAppRoot(), "storage", "labels");
+    import_path2 = __toESM(require("path"), 1);
+    import_fs2 = __toESM(require("fs"), 1);
+    PDF_DIR = import_path2.default.join(resolveAppRoot2(), "storage", "labels");
     PRODUCTION_APP_URL = "https://quanly.linhkienamthanh.net";
   }
 });
@@ -25831,7 +25831,7 @@ var require_main = __commonJS({
     var fs27 = require("fs");
     var path27 = require("path");
     var os5 = require("os");
-    var crypto15 = require("crypto");
+    var crypto16 = require("crypto");
     var TIPS = [
       "\u25C8 encrypted .env [www.dotenvx.com]",
       "\u25C8 secrets for agents [www.dotenvx.com]",
@@ -26075,7 +26075,7 @@ var require_main = __commonJS({
       const authTag = ciphertext.subarray(-16);
       ciphertext = ciphertext.subarray(12, -16);
       try {
-        const aesgcm = crypto15.createDecipheriv("aes-256-gcm", key, nonce);
+        const aesgcm = crypto16.createDecipheriv("aes-256-gcm", key, nonce);
         aesgcm.setAuthTag(authTag);
         return `${aesgcm.update(ciphertext)}${aesgcm.final()}`;
       } catch (error) {
@@ -48375,14 +48375,14 @@ var require_buffer_equal_constant_time = __commonJS({
 var require_jwa = __commonJS({
   "../../../node_modules/jwa/index.js"(exports2, module2) {
     var Buffer5 = require_safe_buffer().Buffer;
-    var crypto15 = require("crypto");
+    var crypto16 = require("crypto");
     var formatEcdsa = require_ecdsa_sig_formatter();
     var util4 = require("util");
     var MSG_INVALID_ALGORITHM = '"%s" is not a valid algorithm.\n  Supported algorithms are:\n  "HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512" and "none".';
     var MSG_INVALID_SECRET = "secret must be a string or buffer";
     var MSG_INVALID_VERIFIER_KEY = "key must be a string or a buffer";
     var MSG_INVALID_SIGNER_KEY = "key must be a string, a buffer or an object";
-    var supportsKeyObjects = typeof crypto15.createPublicKey === "function";
+    var supportsKeyObjects = typeof crypto16.createPublicKey === "function";
     if (supportsKeyObjects) {
       MSG_INVALID_VERIFIER_KEY += " or a KeyObject";
       MSG_INVALID_SECRET += "or a KeyObject";
@@ -48472,17 +48472,17 @@ var require_jwa = __commonJS({
       return function sign2(thing, secret) {
         checkIsSecretKey(secret);
         thing = normalizeInput(thing);
-        var hmac = crypto15.createHmac("sha" + bits, secret);
+        var hmac = crypto16.createHmac("sha" + bits, secret);
         var sig = (hmac.update(thing), hmac.digest("base64"));
         return fromBase64(sig);
       };
     }
     var bufferEqual;
-    var timingSafeEqual = "timingSafeEqual" in crypto15 ? function timingSafeEqual2(a, b) {
+    var timingSafeEqual = "timingSafeEqual" in crypto16 ? function timingSafeEqual2(a, b) {
       if (a.byteLength !== b.byteLength) {
         return false;
       }
-      return crypto15.timingSafeEqual(a, b);
+      return crypto16.timingSafeEqual(a, b);
     } : function timingSafeEqual2(a, b) {
       if (!bufferEqual) {
         bufferEqual = require_buffer_equal_constant_time();
@@ -48499,7 +48499,7 @@ var require_jwa = __commonJS({
       return function sign2(thing, privateKey) {
         checkIsPrivateKey(privateKey);
         thing = normalizeInput(thing);
-        var signer = crypto15.createSign("RSA-SHA" + bits);
+        var signer = crypto16.createSign("RSA-SHA" + bits);
         var sig = (signer.update(thing), signer.sign(privateKey, "base64"));
         return fromBase64(sig);
       };
@@ -48509,7 +48509,7 @@ var require_jwa = __commonJS({
         checkIsPublicKey(publicKey);
         thing = normalizeInput(thing);
         signature = toBase64(signature);
-        var verifier = crypto15.createVerify("RSA-SHA" + bits);
+        var verifier = crypto16.createVerify("RSA-SHA" + bits);
         verifier.update(thing);
         return verifier.verify(publicKey, signature, "base64");
       };
@@ -48518,11 +48518,11 @@ var require_jwa = __commonJS({
       return function sign2(thing, privateKey) {
         checkIsPrivateKey(privateKey);
         thing = normalizeInput(thing);
-        var signer = crypto15.createSign("RSA-SHA" + bits);
+        var signer = crypto16.createSign("RSA-SHA" + bits);
         var sig = (signer.update(thing), signer.sign({
           key: privateKey,
-          padding: crypto15.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto15.constants.RSA_PSS_SALTLEN_DIGEST
+          padding: crypto16.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto16.constants.RSA_PSS_SALTLEN_DIGEST
         }, "base64"));
         return fromBase64(sig);
       };
@@ -48532,12 +48532,12 @@ var require_jwa = __commonJS({
         checkIsPublicKey(publicKey);
         thing = normalizeInput(thing);
         signature = toBase64(signature);
-        var verifier = crypto15.createVerify("RSA-SHA" + bits);
+        var verifier = crypto16.createVerify("RSA-SHA" + bits);
         verifier.update(thing);
         return verifier.verify({
           key: publicKey,
-          padding: crypto15.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto15.constants.RSA_PSS_SALTLEN_DIGEST
+          padding: crypto16.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto16.constants.RSA_PSS_SALTLEN_DIGEST
         }, signature, "base64");
       };
     }
@@ -52121,88 +52121,6 @@ var init_chatSseController = __esm({
     sseClients = /* @__PURE__ */ new Map();
     sseTimeouts = /* @__PURE__ */ new Map();
     sseClientKeys = /* @__PURE__ */ new Map();
-  }
-});
-
-// models/DonHoanHuy.js
-var DonHoanHuy_exports = {};
-__export(DonHoanHuy_exports, {
-  default: () => DonHoanHuy_default
-});
-var import_mongoose7, DonHoanHuySchema, DonHoanHuy, DonHoanHuy_default;
-var init_DonHoanHuy = __esm({
-  "models/DonHoanHuy.js"() {
-    import_mongoose7 = __toESM(require("mongoose"), 1);
-    DonHoanHuySchema = new import_mongoose7.default.Schema(
-      {
-        orderSn: {
-          type: String,
-          required: true,
-          trim: true
-        },
-        status: {
-          type: String,
-          default: "scanned",
-          trim: true
-        },
-        scannedAt: {
-          type: Date,
-          default: Date.now
-          // TTL removed — xóa thủ công bằng API
-        },
-        note: {
-          type: String,
-          default: "",
-          trim: true
-        },
-        /** Shopee shop_id — String (uint64-safe), không lưu Number */
-        shopId: {
-          type: String,
-          default: null,
-          trim: true
-        },
-        tracking_no: {
-          type: String,
-          default: null,
-          trim: true
-        },
-        return_tracking_no: {
-          type: String,
-          default: null,
-          trim: true
-        },
-        scan_code: {
-          type: String,
-          default: null,
-          trim: true
-        },
-        type: {
-          type: String,
-          default: null,
-          trim: true
-        },
-        local_status: {
-          type: String,
-          default: null,
-          trim: true
-        }
-      },
-      {
-        collection: "don_hoan_huy",
-        versionKey: false,
-        strict: false
-        // giữ field legacy (local_status, type, ...) nếu đã có trên Atlas
-      }
-    );
-    DonHoanHuySchema.index({ orderSn: 1 }, { unique: true, name: "don_hoan_huy_orderSn_unique" });
-    DonHoanHuySchema.index({ tracking_no: 1 }, { name: "don_hoan_huy_tracking_no" });
-    DonHoanHuySchema.index({ return_tracking_no: 1 }, { name: "don_hoan_huy_return_tracking_no" });
-    DonHoanHuySchema.index({ scan_code: 1 }, { name: "don_hoan_huy_scan_code" });
-    DonHoanHuySchema.index({ scannedAt: -1 }, { name: "don_hoan_huy_scannedAt" });
-    DonHoanHuySchema.index({ type: 1 }, { name: "don_hoan_huy_type" });
-    DonHoanHuySchema.index({ local_status: 1 }, { name: "don_hoan_huy_local_status" });
-    DonHoanHuy = import_mongoose7.default.models.DonHoanHuy || import_mongoose7.default.model("DonHoanHuy", DonHoanHuySchema);
-    DonHoanHuy_default = DonHoanHuy;
   }
 });
 
@@ -61991,22 +61909,22 @@ var require_crypto2 = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.NodeCrypto = void 0;
-    var crypto15 = require("crypto");
+    var crypto16 = require("crypto");
     var NodeCrypto = class {
       async sha256DigestBase64(str) {
-        return crypto15.createHash("sha256").update(str).digest("base64");
+        return crypto16.createHash("sha256").update(str).digest("base64");
       }
       randomBytesBase64(count) {
-        return crypto15.randomBytes(count).toString("base64");
+        return crypto16.randomBytes(count).toString("base64");
       }
       async verify(pubkey, data, signature) {
-        const verifier = crypto15.createVerify("RSA-SHA256");
+        const verifier = crypto16.createVerify("RSA-SHA256");
         verifier.update(data);
         verifier.end();
         return verifier.verify(pubkey, signature, "base64");
       }
       async sign(privateKey, data) {
-        const signer = crypto15.createSign("RSA-SHA256");
+        const signer = crypto16.createSign("RSA-SHA256");
         signer.update(data);
         signer.end();
         return signer.sign(privateKey, "base64");
@@ -62024,7 +61942,7 @@ var require_crypto2 = __commonJS({
        *   string in hexadecimal encoding.
        */
       async sha256DigestHex(str) {
-        return crypto15.createHash("sha256").update(str).digest("hex");
+        return crypto16.createHash("sha256").update(str).digest("hex");
       }
       /**
        * Computes the HMAC hash of a message using the provided crypto key and the
@@ -62036,7 +61954,7 @@ var require_crypto2 = __commonJS({
        */
       async signWithHmacSha256(key, msg) {
         const cryptoKey = typeof key === "string" ? key : toBuffer(key);
-        return toArrayBuffer(crypto15.createHmac("sha256", cryptoKey).update(msg).digest());
+        return toArrayBuffer(crypto16.createHmac("sha256", cryptoKey).update(msg).digest());
       }
     };
     exports2.NodeCrypto = NodeCrypto;
@@ -62727,10 +62645,10 @@ var require_oauth2client = __commonJS({
        * https://github.com/googleapis/google-auth-library-nodejs/blob/main/samples/oauth2-codeVerifier.js
        */
       async generateCodeVerifierAsync() {
-        const crypto15 = (0, crypto_1.createCrypto)();
-        const randomString = crypto15.randomBytesBase64(96);
+        const crypto16 = (0, crypto_1.createCrypto)();
+        const randomString = crypto16.randomBytesBase64(96);
         const codeVerifier = randomString.replace(/\+/g, "~").replace(/=/g, "_").replace(/\//g, "-");
-        const unencodedCodeChallenge = await crypto15.sha256DigestBase64(codeVerifier);
+        const unencodedCodeChallenge = await crypto16.sha256DigestBase64(codeVerifier);
         const codeChallenge = unencodedCodeChallenge.split("=")[0].replace(/\+/g, "-").replace(/\//g, "_");
         return { codeVerifier, codeChallenge };
       }
@@ -63171,7 +63089,7 @@ var require_oauth2client = __commonJS({
        * @return Returns a promise resolving to LoginTicket on verification.
        */
       async verifySignedJwtWithCertsAsync(jwt3, certs, requiredAudience, issuers, maxExpiry) {
-        const crypto15 = (0, crypto_1.createCrypto)();
+        const crypto16 = (0, crypto_1.createCrypto)();
         if (!maxExpiry) {
           maxExpiry = _OAuth2Client.DEFAULT_MAX_TOKEN_LIFETIME_SECS_;
         }
@@ -63184,7 +63102,7 @@ var require_oauth2client = __commonJS({
         let envelope;
         let payload;
         try {
-          envelope = JSON.parse(crypto15.decodeBase64StringUtf8(segments[0]));
+          envelope = JSON.parse(crypto16.decodeBase64StringUtf8(segments[0]));
         } catch (err) {
           if (err instanceof Error) {
             err.message = `Can't parse token envelope: ${segments[0]}': ${err.message}`;
@@ -63195,7 +63113,7 @@ var require_oauth2client = __commonJS({
           throw new Error("Can't parse token envelope: " + segments[0]);
         }
         try {
-          payload = JSON.parse(crypto15.decodeBase64StringUtf8(segments[1]));
+          payload = JSON.parse(crypto16.decodeBase64StringUtf8(segments[1]));
         } catch (err) {
           if (err instanceof Error) {
             err.message = `Can't parse token payload '${segments[0]}`;
@@ -63212,7 +63130,7 @@ var require_oauth2client = __commonJS({
         if (envelope.alg === "ES256") {
           signature = formatEcdsa.joseToDer(signature, "ES256").toString("base64");
         }
-        const verified = await crypto15.verify(cert, signed, signature);
+        const verified = await crypto16.verify(cert, signed, signature);
         if (!verified) {
           throw new Error("Invalid token signature: " + jwt3);
         }
@@ -65782,14 +65700,14 @@ var require_awsrequestsigner = __commonJS({
       }
     };
     exports2.AwsRequestSigner = AwsRequestSigner;
-    async function sign2(crypto15, key, msg) {
-      return await crypto15.signWithHmacSha256(key, msg);
+    async function sign2(crypto16, key, msg) {
+      return await crypto16.signWithHmacSha256(key, msg);
     }
-    async function getSigningKey(crypto15, key, dateStamp, region, serviceName) {
-      const kDate = await sign2(crypto15, `AWS4${key}`, dateStamp);
-      const kRegion = await sign2(crypto15, kDate, region);
-      const kService = await sign2(crypto15, kRegion, serviceName);
-      const kSigning = await sign2(crypto15, kService, "aws4_request");
+    async function getSigningKey(crypto16, key, dateStamp, region, serviceName) {
+      const kDate = await sign2(crypto16, `AWS4${key}`, dateStamp);
+      const kRegion = await sign2(crypto16, kDate, region);
+      const kService = await sign2(crypto16, kRegion, serviceName);
+      const kSigning = await sign2(crypto16, kService, "aws4_request");
       return kSigning;
     }
     async function generateAuthenticationHeaderMap(options) {
@@ -66755,7 +66673,7 @@ var require_gdchclient = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GdchClient = exports2.GDCH_SERVICE_ACCOUNT_TYPE = void 0;
-    var crypto15 = require("crypto");
+    var crypto16 = require("crypto");
     var fs27 = require("fs");
     var https3 = require("https");
     var oauth2client_1 = require_oauth2client();
@@ -66946,7 +66864,7 @@ var require_gdchclient = __commonJS({
         const encodedHeader = this.base64UrlEncode(JSON.stringify(header));
         const encodedPayload = this.base64UrlEncode(JSON.stringify(payload));
         const signingInput = `${encodedHeader}.${encodedPayload}`;
-        const signature = crypto15.sign("sha256", Buffer.from(signingInput), {
+        const signature = crypto16.sign("sha256", Buffer.from(signingInput), {
           key: this.privateKey,
           dsaEncoding: "ieee-p1363"
         });
@@ -67807,24 +67725,24 @@ var require_googleauth = __commonJS({
           const signed = await client.sign(data);
           return signed.signedBlob;
         }
-        const crypto15 = (0, crypto_1.createCrypto)();
+        const crypto16 = (0, crypto_1.createCrypto)();
         if (client instanceof jwtclient_1.JWT && client.key) {
-          const sign2 = await crypto15.sign(client.key, data);
+          const sign2 = await crypto16.sign(client.key, data);
           return sign2;
         }
         const creds = await this.getCredentials();
         if (!creds.client_email) {
           throw new Error("Cannot sign data without `client_email`.");
         }
-        return this.signBlob(crypto15, creds.client_email, data, endpoint);
+        return this.signBlob(crypto16, creds.client_email, data, endpoint);
       }
-      async signBlob(crypto15, emailOrUniqueId, data, endpoint) {
+      async signBlob(crypto16, emailOrUniqueId, data, endpoint) {
         const url2 = new URL(endpoint + `${emailOrUniqueId}:signBlob`);
         const res = await this.request({
           method: "POST",
           url: url2.href,
           data: {
-            payload: crypto15.encodeBase64StringUtf8(data)
+            payload: crypto16.encodeBase64StringUtf8(data)
           },
           retry: true,
           retryConfig: {
@@ -72456,7 +72374,7 @@ var require_form_data = __commonJS({
     var parseUrl2 = require("url").parse;
     var fs27 = require("fs");
     var Stream4 = require("stream").Stream;
-    var crypto15 = require("crypto");
+    var crypto16 = require("crypto");
     var mime = require_mime_types();
     var asynckit = require_asynckit();
     var setToStringTag = require_es_set_tostringtag();
@@ -72665,7 +72583,7 @@ var require_form_data = __commonJS({
       return Buffer.concat([dataBuffer, Buffer.from(this._lastBoundary())]);
     };
     FormData5.prototype._generateBoundary = function() {
-      this._boundary = "--------------------------" + crypto15.randomBytes(12).toString("hex");
+      this._boundary = "--------------------------" + crypto16.randomBytes(12).toString("hex");
     };
     FormData5.prototype.getLengthSync = function() {
       var knownLength = this._overheadLength + this._valueLength;
@@ -73957,7 +73875,7 @@ var init_auth2 = __esm({
     import_fs19 = __toESM(require("fs"), 1);
     import_path19 = __toESM(require("path"), 1);
     init_appPaths();
-    APP_ROOT9 = resolveAppRoot();
+    APP_ROOT9 = resolveAppRoot2();
     APP_BASE_URL3 = resolveAppBaseUrl();
     TIKTOK_TOKENS_PATH = import_path19.default.resolve(APP_ROOT9, "data", "tiktok_tokens.json");
     CHANNEL_SETTINGS_PATH2 = import_path19.default.resolve(APP_ROOT9, "data", "channel_settings.json");
@@ -77352,6 +77270,73 @@ var init_ping = __esm({
   }
 });
 
+// modules/logistics/tracking.ts
+function isShopeeInternalTrackingCode(code) {
+  return /^0FG/i.test(String(code || "").trim());
+}
+function isCarrierTrackingCode(code) {
+  const k = String(code || "").trim().toUpperCase();
+  if (!k || isShopeeInternalTrackingCode(k)) return false;
+  if (k.length < 6 || k.length > 40) return false;
+  if (/^\d{6,40}$/.test(k)) return true;
+  if (/^[A-Z0-9][A-Z0-9\-_./]{5,39}$/.test(k)) return true;
+  return false;
+}
+
+// modules/orders/shipmentReview.ts
+function hasShipmentWaybill(order) {
+  return [
+    order.tracking_no,
+    order.trackingNumber,
+    order.shopee_tracking_number,
+    ...Array.isArray(order.package_list) ? order.package_list.flatMap((p) => [p.tracking_number, p.tracking_no, p.trackingNumber]) : []
+  ].some((value) => {
+    const code = String(value || "").trim();
+    return Boolean(code && code !== "0" && !isShopeeInternalTrackingCode(code));
+  });
+}
+function canReviewShipment(order) {
+  return String(order.channel || "").toLowerCase() === "shopee" && !["SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED", "CANCELLED", "IN_CANCEL", "TO_RETURN"].includes(
+    String(order.shopee_order_status || "").toUpperCase()
+  ) && !["shipping", "completed", "cancelled", "return_pending", "return_received"].includes(order.status) && !order.return_sn && order.is_return !== true && order.is_handed_over !== true && order.isHandedOverToCarrier !== true && order.is_handed_over_to_carrier !== true && !["HANDED_OVER", "CANCELLED_STORED", "RETURN_RECEIVED"].includes(
+    String(order.local_status || order.localStatus || order.internal_status || "").toUpperCase()
+  );
+}
+function isPendingShipmentReview(order) {
+  return canReviewShipment(order) && order.is_pending_shopee_check === true && !hasShipmentWaybill(order);
+}
+function markShipmentReview(order, reason) {
+  if (!canReviewShipment(order)) return false;
+  Object.assign(order, {
+    status: "pending_confirm",
+    is_pending_shopee_check: true,
+    isPrepared: false,
+    isPrinted: false,
+    has_tracking: hasShipmentWaybill(order),
+    shopeeSyncPending: false,
+    shopeeSyncError: reason
+  });
+  return true;
+}
+function reconcileShipmentReview(order) {
+  if (!canReviewShipment(order) || order.is_pending_shopee_check !== true) return false;
+  const ready2 = hasShipmentWaybill(order);
+  Object.assign(order, {
+    status: ready2 ? "unprocessed" : "pending_confirm",
+    isPrepared: false,
+    isPrinted: false,
+    is_pending_shopee_check: !ready2,
+    shopeeSyncPending: false
+  });
+  if (ready2) {
+    order.shopeeSyncError = "";
+    if (["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"].includes(
+      String(order.shopee_order_status || "").toUpperCase()
+    )) order.shopee_order_status = "PROCESSED";
+  }
+  return true;
+}
+
 // services/shopee/jsonBig.js
 var import_json_bigint = __toESM(require_json_bigint(), 1);
 var JSONBig = (0, import_json_bigint.default)({ storeAsString: true });
@@ -77504,9 +77489,740 @@ function extractShopeeWebhookRawStatus(payload) {
 // server.ts
 var import_express33 = __toESM(require_express2(), 1);
 
+// src/db/productsDiskStore.ts
+var import_fs = __toESM(require("fs"), 1);
+var import_path = __toESM(require("path"), 1);
+
+// utils/importBatchFiles.js
+var import_node_fs = __toESM(require("node:fs"), 1);
+var import_node_path = __toESM(require("node:path"), 1);
+var import_node_crypto = __toESM(require("node:crypto"), 1);
+var JOURNAL = ".import-batch-journal.json";
+var TARGETS = /* @__PURE__ */ new Set(["products.json", "imports.json", "suppliers.json"]);
+var POS_TARGETS = /* @__PURE__ */ new Set(["products.json", "pos-stock-edits.json"]);
+var digest = (text2) => import_node_crypto.default.createHash("sha256").update(text2).digest("hex");
+function withImportBatchFileLock(dataDir, work) {
+  import_node_fs.default.mkdirSync(dataDir, { recursive: true });
+  const lockPath = import_node_path.default.join(dataDir, ".import-batch.lock");
+  let descriptor;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      descriptor = import_node_fs.default.openSync(lockPath, "wx");
+      break;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      let alive = true;
+      try {
+        const owner = JSON.parse(import_node_fs.default.readFileSync(lockPath, "utf8"));
+        if (!Number.isInteger(owner.pid) || owner.pid <= 0) throw new Error("invalid_lock_owner");
+        try {
+          process.kill(owner.pid, 0);
+        } catch (check) {
+          if (check.code === "ESRCH") alive = false;
+        }
+      } catch {
+        alive = Date.now() - import_node_fs.default.statSync(lockPath).mtimeMs < 3e4;
+      }
+      if (!alive && attempt === 0) {
+        try {
+          import_node_fs.default.unlinkSync(lockPath);
+        } catch (remove) {
+          if (remove.code !== "ENOENT") throw remove;
+        }
+        continue;
+      }
+      throw Object.assign(new Error("import_batch_busy_retry_same_batch"), { code: "IMPORT_COMMIT_PENDING" });
+    }
+  }
+  try {
+    import_node_fs.default.writeFileSync(descriptor, JSON.stringify({ pid: process.pid }));
+    return work();
+  } finally {
+    import_node_fs.default.closeSync(descriptor);
+    import_node_fs.default.unlinkSync(lockPath);
+  }
+}
+function recoverImportBatchFiles(dataDir) {
+  const journalPath = import_node_path.default.join(dataDir, JOURNAL);
+  if (!import_node_fs.default.existsSync(journalPath)) return false;
+  const journal = JSON.parse(import_node_fs.default.readFileSync(journalPath, "utf8"));
+  const targets = journal.version === 2 ? POS_TARGETS : TARGETS;
+  if (![1, 2].includes(journal.version) || !Array.isArray(journal.files) || journal.files.length !== targets.size) {
+    throw new Error("invalid_import_commit_journal");
+  }
+  const seen = /* @__PURE__ */ new Set();
+  for (const file of journal.files) {
+    if (!targets.has(file.target) || seen.has(file.target) || !new RegExp(`^\\.import-[a-f0-9-]+-${file.target.replace(".", "\\.")}\\.tmp$`).test(file.staged) || !/^[a-f0-9]{64}$/.test(file.sha256)) {
+      throw new Error("invalid_import_commit_path");
+    }
+    seen.add(file.target);
+  }
+  for (const file of journal.files) {
+    const staged = import_node_path.default.join(dataDir, file.staged);
+    const target = import_node_path.default.join(dataDir, file.target);
+    if (import_node_fs.default.existsSync(staged)) {
+      if (digest(import_node_fs.default.readFileSync(staged)) !== file.sha256) throw new Error("import_stage_corrupted");
+      try {
+        import_node_fs.default.renameSync(staged, target);
+      } catch (error) {
+        if (error.code !== "ENOENT" || !import_node_fs.default.existsSync(target) || digest(import_node_fs.default.readFileSync(target)) !== file.sha256) throw error;
+      }
+    } else if (!import_node_fs.default.existsSync(target) || digest(import_node_fs.default.readFileSync(target)) !== file.sha256) {
+      throw new Error("import_stage_missing");
+    }
+  }
+  try {
+    import_node_fs.default.unlinkSync(journalPath);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  return true;
+}
+function commitImportBatchFiles(dataDir, values) {
+  commitInventoryFiles(dataDir, values, TARGETS, 1);
+}
+function commitPosStockEditFiles(dataDir, values) {
+  commitInventoryFiles(dataDir, values, POS_TARGETS, 2);
+}
+function commitInventoryFiles(dataDir, values, targets, version) {
+  import_node_fs.default.mkdirSync(dataDir, { recursive: true });
+  recoverImportBatchFiles(dataDir);
+  const id = import_node_crypto.default.randomUUID();
+  const journalPath = import_node_path.default.join(dataDir, JOURNAL);
+  const journalTemp = import_node_path.default.join(dataDir, `.import-${id}-journal.tmp`);
+  const files = [];
+  let journalWritten = false;
+  try {
+    for (const target of targets) {
+      if (!Array.isArray(values[target])) throw new Error("invalid_import_commit_data");
+      const text2 = JSON.stringify(values[target]);
+      const staged = `.import-${id}-${target}.tmp`;
+      files.push({ target, staged, sha256: digest(text2) });
+      import_node_fs.default.writeFileSync(import_node_path.default.join(dataDir, staged), text2, { encoding: "utf8", flush: true });
+    }
+    import_node_fs.default.writeFileSync(journalTemp, JSON.stringify({ version, files }), { encoding: "utf8", flush: true });
+    import_node_fs.default.renameSync(journalTemp, journalPath);
+    journalWritten = true;
+    recoverImportBatchFiles(dataDir);
+  } catch (error) {
+    if (journalWritten) {
+      try {
+        recoverImportBatchFiles(dataDir);
+        return;
+      } catch (recoveryError) {
+        const pending = new Error("import_commit_pending_retry_same_batch", { cause: recoveryError });
+        pending.code = "IMPORT_COMMIT_PENDING";
+        throw pending;
+      }
+    }
+    for (const file of [...files.map((f3) => import_node_path.default.join(dataDir, f3.staged)), journalTemp]) {
+      try {
+        import_node_fs.default.unlinkSync(file);
+      } catch {
+      }
+    }
+    throw error;
+  }
+}
+
+// modules/orders/posOrderEdit.ts
+function posQuantities(items = []) {
+  const sums = /* @__PURE__ */ Object.create(null);
+  for (const item of items) {
+    const id = String(item.productId || "").trim();
+    if (id) sums[id] = (sums[id] || 0) + Math.max(0, Math.round(Number(item.quantity) || 0));
+  }
+  return sums;
+}
+function planPosStockEdit(previous, items) {
+  const before = posQuantities(previous.items);
+  const after = posQuantities(items);
+  const allocations = previous.pos_stock_allocations || (previous.stock_deducted ? before : {});
+  const deltas = Object.entries({ ...before, ...after }).flatMap(([id]) => {
+    const change = (after[id] || 0) - (before[id] || 0);
+    const delta = change < 0 ? -Math.max(0, (allocations[id] || 0) - (after[id] || 0)) : change;
+    return delta === 0 ? [] : [{ id, delta }];
+  });
+  return { allocations, deltas };
+}
+function applyPosStockEdit(products, plan) {
+  const allocations = new Map(Object.entries(plan.allocations));
+  const deltas = new Map(plan.deltas.map(({ id, delta }) => [id, delta]));
+  const stocks = /* @__PURE__ */ Object.create(null);
+  const changed = /* @__PURE__ */ new Map();
+  const stockOf = (product) => Math.max(0, Math.round(Number(product.stock) || 0));
+  const updateStock = (product, stock) => ({
+    ...product,
+    stock,
+    status: product.status === "draft" ? "draft" : stock ? "active" : "out_of_stock",
+    lastSynced: (/* @__PURE__ */ new Date()).toISOString()
+  });
+  const adjust = (row) => {
+    const id = String(row.id || row._id || "").trim();
+    const delta = deltas.get(id);
+    if (delta === void 0) return row;
+    deltas.delete(id);
+    const stock = stockOf(row);
+    const applied = Math.min(stock, delta);
+    allocations.set(id, (allocations.get(id) || 0) + applied);
+    stocks[id] = stock - applied;
+    return applied === 0 ? row : updateStock(row, stocks[id]);
+  };
+  for (const product of products) {
+    const next = adjust(product);
+    if (next !== product) changed.set(String(product.id || product._id), next);
+  }
+  for (const product of products) {
+    if (deltas.size === 0) break;
+    const id = String(product.id || product._id || "");
+    const parent = changed.get(id) || product;
+    const childKey = parent.children?.length ? "children" : "children_models";
+    const children = parent[childKey];
+    if (!Array.isArray(children)) continue;
+    const nextChildren = children.map(adjust);
+    if (nextChildren.every((row, index) => row === children[index])) continue;
+    const stock = nextChildren.reduce((sum, row) => sum + stockOf(row), 0);
+    stocks[id] = stock;
+    changed.set(id, { ...updateStock(parent, stock), [childKey]: nextChildren });
+  }
+  for (const [id, delta] of deltas) {
+    if (delta < 0) allocations.set(id, (allocations.get(id) || 0) + delta);
+  }
+  return {
+    changed,
+    stocks,
+    allocations: Object.fromEntries([...allocations].filter(([, quantity]) => quantity > 0))
+  };
+}
+
+// src/utils/productSearch.ts
+function normalizeProductSearchText(input) {
+  return String(input ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/gi, "d").toLowerCase().replace(/\s+/g, " ").trim();
+}
+function escapeRegexLiteral(input) {
+  return String(input || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function buildAccentFlexiblePattern(rawQuery) {
+  const folded = normalizeProductSearchText(rawQuery);
+  if (!folded) return null;
+  const map = {
+    a: "a\xE1\xE0\u1EA3\xE3\u1EA1\u0103\u1EAF\u1EB1\u1EB3\u1EB5\u1EB7\xE2\u1EA5\u1EA7\u1EA9\u1EAB\u1EAD",
+    d: "d\u0111",
+    e: "e\xE9\xE8\u1EBB\u1EBD\u1EB9\xEA\u1EBF\u1EC1\u1EC3\u1EC5\u1EC7",
+    i: "i\xED\xEC\u1EC9\u0129\u1ECB",
+    o: "o\xF3\xF2\u1ECF\xF5\u1ECD\xF4\u1ED1\u1ED3\u1ED5\u1ED7\u1ED9\u01A1\u1EDB\u1EDD\u1EDF\u1EE1\u1EE3",
+    u: "u\xFA\xF9\u1EE7\u0169\u1EE5\u01B0\u1EE9\u1EEB\u1EED\u1EEF\u1EF1",
+    y: "y\xFD\u1EF3\u1EF7\u1EF9\u1EF5"
+  };
+  let pattern = "";
+  for (const ch of folded) {
+    if (ch === " ") {
+      pattern += "\\s+";
+      continue;
+    }
+    const group = map[ch];
+    if (group) {
+      pattern += `[${group}${group.toUpperCase()}]`;
+    } else {
+      pattern += escapeRegexLiteral(ch);
+    }
+  }
+  return pattern;
+}
+function buildAccentFlexibleRegex(rawQuery) {
+  const pattern = buildAccentFlexiblePattern(rawQuery);
+  if (!pattern) return null;
+  try {
+    return new RegExp(pattern, "i");
+  } catch {
+    return new RegExp(escapeRegexLiteral(normalizeProductSearchText(rawQuery)), "i");
+  }
+}
+function buildAccentFlexiblePrefixRegex(rawQuery) {
+  const pattern = buildAccentFlexiblePattern(rawQuery);
+  if (!pattern) return null;
+  try {
+    return new RegExp(`^${pattern}`, "i");
+  } catch {
+    return new RegExp(`^${escapeRegexLiteral(normalizeProductSearchText(rawQuery))}`, "i");
+  }
+}
+function productRowMatchesSearch(row, rawQuery) {
+  const q = normalizeProductSearchText(rawQuery);
+  if (!q) return true;
+  const parts = [
+    row?.sku,
+    row?.barcode,
+    row?.title,
+    row?.name,
+    row?.modelName,
+    ...Array.isArray(row?.tierLabels) ? row.tierLabels : []
+  ];
+  for (const key of ["children", "children_models"]) {
+    const list = Array.isArray(row?.[key]) ? row[key] : [];
+    for (const c of list) {
+      parts.push(c?.sku, c?.title, c?.name, c?.modelName, c?.barcode);
+    }
+  }
+  const hay = normalizeProductSearchText(parts.map((v) => String(v ?? "")).join(" "));
+  return hay.includes(q);
+}
+
+// src/db/productsDiskStore.ts
+function isProductsDiskMode() {
+  const raw = process.env.PRODUCTS_STORAGE ?? process.env.PRODUCTS_DISK;
+  if (raw == null || String(raw).trim() === "") return true;
+  const v = String(raw).trim().toLowerCase();
+  if (v === "mongo" || v === "atlas" || v === "0" || v === "false" || v === "off") {
+    return false;
+  }
+  return v === "disk" || v === "json" || v === "file" || v === "1" || v === "true" || v === "on";
+}
+var appRootResolved = "";
+var productsCache = null;
+var writeChain = Promise.resolve();
+function setProductsDiskAppRoot(appRoot) {
+  appRootResolved = String(appRoot || "").trim();
+  productsCache = null;
+}
+function resolveAppRoot() {
+  if (appRootResolved) return appRootResolved;
+  return process.cwd();
+}
+function getProductsDiskPath() {
+  return import_path.default.join(resolveAppRoot(), "data", "products.json");
+}
+function ensureDataDir() {
+  const dir = import_path.default.dirname(getProductsDiskPath());
+  if (!import_fs.default.existsSync(dir)) import_fs.default.mkdirSync(dir, { recursive: true });
+}
+function normalizeProduct(p) {
+  if (!p || typeof p !== "object") return null;
+  const id = String(p.id || "").trim();
+  if (!id) return null;
+  return { ...p, id };
+}
+function inheritShopeeLinkFromParent(child, parent) {
+  if (!child || typeof child !== "object") return child;
+  if (!parent || typeof parent !== "object") return child;
+  const next = { ...child };
+  if (!next.shopeeItemId && parent.shopeeItemId) next.shopeeItemId = parent.shopeeItemId;
+  if (!next.shopeeId && parent.shopeeId) next.shopeeId = parent.shopeeId;
+  if (!next.channels?.length && Array.isArray(parent.channels) && parent.channels.length) {
+    next.channels = [...parent.channels];
+  }
+  if (!next.title && parent.title) next.title = parent.title;
+  if (!next.imageUrl && parent.imageUrl) next.imageUrl = parent.imageUrl;
+  if (!next.avatarUrl && parent.avatarUrl) next.avatarUrl = parent.avatarUrl;
+  return next;
+}
+function readProductsFromDisk() {
+  const file = getProductsDiskPath();
+  if (recoverImportBatchFiles(import_path.default.dirname(file))) productsCache = null;
+  if (!import_fs.default.existsSync(file)) {
+    productsCache = { mtimeMs: 0, products: [] };
+    return [];
+  }
+  const st = import_fs.default.statSync(file);
+  if (productsCache && productsCache.mtimeMs === st.mtimeMs) {
+    return productsCache.products;
+  }
+  try {
+    const raw = import_fs.default.readFileSync(file, "utf-8");
+    const parsed = raw.trim() ? JSON.parse(raw) : [];
+    const products = (Array.isArray(parsed) ? parsed : []).map(normalizeProduct).filter(Boolean);
+    productsCache = { mtimeMs: st.mtimeMs, products };
+    return products;
+  } catch (err) {
+    console.error("[Products Disk] \u0110\u1ECDc products.json th\u1EA5t b\u1EA1i:", err?.message || err);
+    throw err instanceof Error ? err : new Error(String(err));
+  }
+}
+function writeProductsToDiskSync(products) {
+  ensureDataDir();
+  const file = getProductsDiskPath();
+  const list = (Array.isArray(products) ? products : []).map(normalizeProduct).filter(Boolean).map((p) => stampInventorySortFields(p));
+  const tmp = `${file}.tmp.${process.pid}`;
+  import_fs.default.writeFileSync(tmp, JSON.stringify(list), "utf-8");
+  import_fs.default.renameSync(tmp, file);
+  try {
+    const st = import_fs.default.statSync(file);
+    productsCache = { mtimeMs: st.mtimeMs, products: list };
+  } catch {
+    productsCache = { mtimeMs: Date.now(), products: list };
+  }
+  console.log(`[Products Disk] WRITE OK \u2014 path=${file} count=${list.length}`);
+}
+async function saveProductsToDisk(products) {
+  const run = writeChain.then(() => {
+    writeProductsToDiskSync(products);
+  });
+  writeChain = run.catch(() => void 0);
+  await run;
+}
+async function withProductsDiskImportBatch(work) {
+  const run = writeChain.then(() => withImportBatchFileLock(import_path.default.dirname(getProductsDiskPath()), () => work(readProductsFromDisk(), (products, imports, suppliers) => {
+    const list = products.map(normalizeProduct).filter(Boolean).map(stampInventorySortFields);
+    try {
+      commitImportBatchFiles(import_path.default.dirname(getProductsDiskPath()), {
+        "products.json": list,
+        "imports.json": imports,
+        "suppliers.json": suppliers
+      });
+    } finally {
+      productsCache = null;
+    }
+  })));
+  writeChain = run.then(() => void 0, () => void 0);
+  return run;
+}
+async function upsertProductsToDisk(products) {
+  const incoming = (Array.isArray(products) ? products : []).map(normalizeProduct).filter(Boolean);
+  if (incoming.length === 0) return 0;
+  const run = writeChain.then(() => withImportBatchFileLock(import_path.default.dirname(getProductsDiskPath()), () => {
+    const byId = new Map(readProductsFromDisk().map((p) => [String(p.id), p]));
+    for (const p of incoming) byId.set(String(p.id), { ...byId.get(String(p.id)), ...p, id: p.id });
+    writeProductsToDiskSync([...byId.values()]);
+  }));
+  writeChain = run.catch(() => void 0);
+  await run;
+  return incoming.length;
+}
+async function applyPosStockEditOnDisk(orderId, revision, plan) {
+  const dataDir = import_path.default.dirname(getProductsDiskPath());
+  const run = writeChain.then(() => withImportBatchFileLock(dataDir, () => {
+    const products = readProductsFromDisk();
+    const editFile = import_path.default.join(dataDir, "pos-stock-edits.json");
+    const edits = new Map(
+      import_fs.default.existsSync(editFile) ? JSON.parse(import_fs.default.readFileSync(editFile, "utf8")) : []
+    );
+    const previous = edits.get(orderId);
+    if (previous && previous.revision >= revision) return previous;
+    const { changed, stocks, allocations } = applyPosStockEdit(products, plan);
+    const result = { revision, stocks, allocations };
+    edits.set(orderId, result);
+    try {
+      commitPosStockEditFiles(dataDir, {
+        "products.json": products.map((p) => stampInventorySortFields(changed.get(p.id) || p)),
+        "pos-stock-edits.json": [...edits]
+      });
+    } finally {
+      productsCache = null;
+    }
+    return result;
+  }));
+  writeChain = run.then(() => void 0, () => void 0);
+  return run;
+}
+var SKU_CHILD_KEYS = ["children", "children_models"];
+async function updateProductSkuOnDisk(productId, newSku) {
+  const id = String(productId || "").trim();
+  const sku = String(newSku || "").trim();
+  if (!id || !sku) return { found: false, sku, target: null };
+  const current = readProductsFromDisk();
+  let found = false;
+  let target = null;
+  const next = [];
+  for (const product of current) {
+    if (found) {
+      next.push(product);
+      continue;
+    }
+    if (String(product?.id || "").trim() === id) {
+      found = true;
+      target = "parent";
+      next.push({ ...product, sku });
+      continue;
+    }
+    let childKey = null;
+    let childIdx = -1;
+    for (const key of SKU_CHILD_KEYS) {
+      const list = product?.[key];
+      if (!Array.isArray(list)) continue;
+      const idx = list.findIndex((child) => String(child?.id || "").trim() === id);
+      if (idx >= 0) {
+        childKey = key;
+        childIdx = idx;
+        break;
+      }
+    }
+    if (childKey && childIdx >= 0) {
+      found = true;
+      target = "child";
+      const list = product[childKey];
+      const children = list.map(
+        (child, index) => index === childIdx ? { ...child, sku } : child
+      );
+      next.push({ ...product, [childKey]: children });
+      continue;
+    }
+    next.push(product);
+  }
+  if (!found) return { found: false, sku, target: null };
+  await saveProductsToDisk(next);
+  return { found: true, sku, target };
+}
+async function deleteProductsByIdsFromDisk(ids) {
+  const safe = new Set(ids.map((id) => String(id || "").trim()).filter(Boolean));
+  if (safe.size === 0) return 0;
+  const current = readProductsFromDisk();
+  const kept = current.filter((p) => !safe.has(String(p.id || "").trim()));
+  const deleted = current.length - kept.length;
+  if (deleted > 0) await saveProductsToDisk(kept);
+  return deleted;
+}
+function countProductsOnDisk() {
+  return readProductsFromDisk().length;
+}
+function variationRows(product) {
+  for (const key of ["children", "children_models", "models", "variations"]) {
+    const list = product?.[key];
+    if (Array.isArray(list) && list.length > 0) return list;
+  }
+  return [];
+}
+function readPrice(row) {
+  const n = Number(row?.sellingPrice ?? row?.price ?? row?.original_price);
+  return Number.isFinite(n) ? n : 0;
+}
+function readStock(row) {
+  const n = Number(row?.stock ?? row?.current_stock ?? row?.normal_stock);
+  return Number.isFinite(n) ? n : 0;
+}
+function inventorySortMetrics(product) {
+  const rows = variationRows(product);
+  if (rows.length === 0) {
+    return { min_price: readPrice(product), total_stock: readStock(product) };
+  }
+  let min = Infinity;
+  let stock = 0;
+  for (let i2 = 0; i2 < rows.length; i2++) {
+    const price = readPrice(rows[i2]);
+    if (price < min) min = price;
+    stock += readStock(rows[i2]);
+  }
+  return { min_price: Number.isFinite(min) ? min : 0, total_stock: stock };
+}
+function stampInventorySortFields(product) {
+  if (!product || typeof product !== "object") return product;
+  try {
+    const metrics = inventorySortMetrics(product);
+    product.min_price = metrics.min_price;
+    product.total_stock = metrics.total_stock;
+  } catch (err) {
+    console.warn("[Inventory Sort] stamp failed:", err instanceof Error ? err.message : err);
+  }
+  return product;
+}
+function inventorySortValue(product, sortBy) {
+  const metrics = inventorySortMetrics(product);
+  return sortBy === "stock" ? metrics.total_stock : metrics.min_price;
+}
+function normalizeInventoryListSort(sort) {
+  const sortBy = sort?.sortBy === "stock" || sort?.sortBy === "sellingPrice" ? sort.sortBy : "";
+  const order = sort?.order === "asc" || sort?.order === "desc" ? sort.order : "";
+  if (!sortBy || !order) return null;
+  return { sortBy, order };
+}
+function sortInventoryRows(rows, sort) {
+  const spec = normalizeInventoryListSort(sort);
+  if (!spec) return rows;
+  const dir = spec.order === "asc" ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    const va = inventorySortValue(a, spec.sortBy);
+    const vb = inventorySortValue(b, spec.sortBy);
+    if (va !== vb) return (va - vb) * dir;
+    return String(a?.id ?? "").localeCompare(String(b?.id ?? ""));
+  });
+}
+function loadProductsPageFromDisk(page = 1, pageSize = 50, search = "", sort) {
+  const all3 = readProductsFromDisk();
+  const q = normalizeProductSearchText(search);
+  const filtered = q ? all3.filter((p) => productRowMatchesSearch(p, search)) : all3;
+  const sorted = sortInventoryRows(filtered, sort);
+  const safePage = Math.max(1, Math.floor(Number(page) || 1));
+  const safeSize = Math.min(50, Math.max(1, Math.floor(Number(pageSize) || 50)));
+  const total = sorted.length;
+  const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / safeSize) || 1);
+  const currentPage = Math.min(safePage, totalPages);
+  const start = (currentPage - 1) * safeSize;
+  return {
+    products: sorted.slice(start, start + safeSize),
+    total,
+    page: currentPage,
+    pageSize: safeSize,
+    totalPages,
+    hasMore: currentPage < totalPages
+  };
+}
+function productMatchKeys(p) {
+  const keys = [
+    p?.id,
+    p?.sku,
+    p?.shopeeItemId,
+    p?.shopeeModelId,
+    p?.barcode
+  ];
+  for (const c of Array.isArray(p?.children) ? p.children : []) {
+    keys.push(c?.id, c?.sku, c?.shopeeModelId);
+  }
+  for (const c of Array.isArray(p?.children_models) ? p.children_models : []) {
+    keys.push(c?.id, c?.sku, c?.shopeeModelId);
+  }
+  return keys.map((k) => String(k || "").trim()).filter(Boolean);
+}
+function loadProductByIdFromDisk(productId) {
+  const id = String(productId || "").trim();
+  if (!id) return null;
+  const all3 = readProductsFromDisk();
+  for (const p of all3) {
+    if (String(p.id || "").trim() === id) return p;
+    if (String(p.shopeeItemId || "").trim() === id) return p;
+    if (String(p.shopeeModelId || "").trim() === id) return p;
+    for (const key of ["children", "children_models"]) {
+      const list = Array.isArray(p[key]) ? p[key] : [];
+      const child = list.find(
+        (c) => String(c?.id || "").trim() === id || String(c?.shopeeModelId || "").trim() === id
+      );
+      if (child) {
+        return inheritShopeeLinkFromParent(child, p);
+      }
+    }
+  }
+  return null;
+}
+function loadProductsByIdsFromDisk(productIds, shopeeItemIds = []) {
+  const wanted = new Set(
+    [...productIds, ...shopeeItemIds].map((v) => String(v || "").trim()).filter(Boolean)
+  );
+  if (wanted.size === 0) return [];
+  return readProductsFromDisk().filter(
+    (p) => productMatchKeys(p).some((k) => wanted.has(k) || wanted.has(`shopee-item-${k}`))
+  );
+}
+function searchProductsFromDisk(query, limit = 40) {
+  const q = normalizeProductSearchText(query);
+  const safeLimit = Math.min(100, Math.max(1, Math.floor(Number(limit) || 40)));
+  const all3 = readProductsFromDisk();
+  if (!q) return all3.slice(0, safeLimit);
+  const scored = [];
+  for (const p of all3) {
+    if (!productRowMatchesSearch(p, query)) continue;
+    const sku = normalizeProductSearchText(p.sku);
+    const title = normalizeProductSearchText(p.title);
+    let score = 0;
+    if (sku === q) score = 300;
+    else if (sku.startsWith(q)) score = 200;
+    else if (sku.includes(q)) score = 120;
+    else if (title.includes(q)) score = 80;
+    else score = 90;
+    scored.push({ p, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, safeLimit).map((x2) => x2.p);
+}
+async function applyImportStockAndPriceOnDisk(productId, quantityDelta, importPrice, opts) {
+  const id = String(productId || "").trim();
+  const skuHint = String(opts?.skuHint || "").trim();
+  if (!id && !skuHint) throw new Error("Thi\u1EBFu productId/sku \u0111\u1EC3 c\u1EADp nh\u1EADt Kho G\u1ED1c");
+  const qty = Math.round(Number(quantityDelta) || 0);
+  const price = Math.max(0, Math.round(Number(importPrice) || 0));
+  const all3 = readProductsFromDisk();
+  let parentIdx = -1;
+  let mode = "parent";
+  let childKey = null;
+  let childIdx = -1;
+  for (let i2 = 0; i2 < all3.length; i2++) {
+    const p = all3[i2];
+    const parentMatch = id && String(p.id || "").trim() === id || skuHint && String(p.sku || "").trim().toLowerCase() === skuHint.toLowerCase();
+    const cKey = Array.isArray(p.children) && p.children.length ? "children" : Array.isArray(p.children_models) && p.children_models.length ? "children_models" : null;
+    if (cKey) {
+      const children = p[cKey];
+      const cIdx = children.findIndex((c) => {
+        const cid = String(c?.id || c?.shopeeModelId || "").trim();
+        const csku = String(c?.sku || "").trim();
+        return id && cid === id || skuHint && csku.toLowerCase() === skuHint.toLowerCase();
+      });
+      if (cIdx >= 0) {
+        parentIdx = i2;
+        mode = "child";
+        childKey = cKey;
+        childIdx = cIdx;
+        break;
+      }
+    }
+    if (parentMatch) {
+      parentIdx = i2;
+      childKey = cKey;
+      break;
+    }
+  }
+  if (parentIdx < 0) {
+    throw new Error(
+      `Kh\xF4ng t\xECm th\u1EA5y s\u1EA3n ph\u1EA9m trong Kho G\u1ED1c (disk). id=${id || "\u2014"} sku=${skuHint || "\u2014"}`
+    );
+  }
+  const parent = { ...all3[parentIdx], id: String(all3[parentIdx].id) };
+  let productOut;
+  let oldStock = 0;
+  let newStock = 0;
+  let oldImportPrice = 0;
+  if (mode === "child" && childKey && childIdx >= 0) {
+    const children = [...parent[childKey]];
+    const before = children[childIdx];
+    oldStock = Math.max(0, Math.round(Number(before.stock) || 0));
+    oldImportPrice = Math.max(0, Math.round(Number(before.importPrice) || 0));
+    newStock = Math.max(0, oldStock + qty);
+    const mergedChild = {
+      ...before,
+      id: before.id || id,
+      stock: newStock,
+      importPrice: price,
+      status: newStock <= 0 && before.status !== "draft" ? "out_of_stock" : before.status === "out_of_stock" ? "active" : before.status,
+      lastSynced: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    children[childIdx] = mergedChild;
+    const totalStock = children.reduce(
+      (s2, c) => s2 + Math.max(0, Math.round(Number(c.stock) || 0)),
+      0
+    );
+    all3[parentIdx] = {
+      ...parent,
+      [childKey]: children,
+      stock: totalStock,
+      lastSynced: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    productOut = mergedChild;
+  } else {
+    oldStock = Math.max(0, Math.round(Number(parent.stock) || 0));
+    oldImportPrice = Math.max(0, Math.round(Number(parent.importPrice) || 0));
+    newStock = Math.max(0, oldStock + qty);
+    productOut = {
+      ...parent,
+      stock: newStock,
+      importPrice: price,
+      status: newStock <= 0 && parent.status !== "draft" ? "out_of_stock" : parent.status === "out_of_stock" ? "active" : parent.status,
+      lastSynced: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    all3[parentIdx] = productOut;
+  }
+  await saveProductsToDisk(all3);
+  return {
+    product: productOut,
+    oldStock,
+    newStock,
+    oldImportPrice,
+    newImportPrice: price,
+    target: mode,
+    parentId: String(parent.id),
+    warehouse: "KhoGoc",
+    collection: "products"
+  };
+}
+
 // routes/operationsRoutes.js
 var import_express = __toESM(require_express2(), 1);
-var import_node_crypto2 = __toESM(require("node:crypto"), 1);
+var import_node_crypto3 = __toESM(require("node:crypto"), 1);
 var import_mongoose2 = __toESM(require("mongoose"), 1);
 
 // modules/operations/metrics.js
@@ -77655,7 +78371,7 @@ async function collectOperationsMetrics(db, { shopId, windowMinutes, includeApiE
 }
 
 // modules/operations/health.js
-var import_node_crypto = __toESM(require("node:crypto"), 1);
+var import_node_crypto2 = __toESM(require("node:crypto"), 1);
 var STATE_ID = "shopee_oms";
 var DB_OPTIONS = { maxTimeMS: 1500, timeoutMS: 2e3 };
 function healthThresholds(env2 = process.env) {
@@ -77761,7 +78477,7 @@ function createOperationsHealthCollector({
       }
       previous = await collection.findOne({ _id: STATE_ID }, DB_OPTIONS);
     }
-    const owner = import_node_crypto.default.randomUUID();
+    const owner = import_node_crypto2.default.randomUUID();
     const claim = await collection.findOneAndUpdate(
       { _id: STATE_ID, nextCheckAt: { $lte: now } },
       { $set: { owner, nextCheckAt: new Date(now.getTime() + thresholds.sampleIntervalMs) } },
@@ -77837,13 +78553,13 @@ function safeTokenMetadata(record) {
 }
 
 // services/shopee/auth.js
-var import_fs2 = __toESM(require("fs"), 1);
-var import_path3 = __toESM(require("path"), 1);
+var import_fs3 = __toESM(require("fs"), 1);
+var import_path4 = __toESM(require("path"), 1);
 var import_crypto = __toESM(require("crypto"), 1);
 init_appPaths();
 
 // modules/shopee-sync/client.js
-var import_path2 = __toESM(require("path"), 1);
+var import_path3 = __toESM(require("path"), 1);
 var import_node_module = require("node:module");
 init_concurrency();
 
@@ -78023,6 +78739,47 @@ var shopeeHttpGate = createWorkGate(3, 200);
 var confirmOrderGate = createWorkGate(2, 200);
 var labelBatchGate = createWorkGate(1, 40);
 var pdfMergeGate = createWorkGate(1, 2);
+function createKeyedBatchWork(gate, maxKeys = 1e3) {
+  const inFlight = /* @__PURE__ */ new Map();
+  return async (keys, worker, signal) => {
+    const unique = [...new Set(keys)];
+    const owned = unique.filter((key) => !inFlight.has(key));
+    if (inFlight.size + owned.length > maxKeys) {
+      throw Object.assign(new Error("Hang doi PDF dang day, vui long thu lai sau."), { code: "work_queue_full" });
+    }
+    if (owned.length) {
+      const batch = gate.run(() => worker(owned));
+      for (const key of owned) {
+        const task = batch.then((values) => {
+          if (!values.has(key)) throw new Error(`Missing batch result: ${key}`);
+          return values.get(key);
+        });
+        inFlight.set(key, task);
+        void task.then(
+          () => {
+            if (inFlight.get(key) === task) inFlight.delete(key);
+          },
+          () => {
+            if (inFlight.get(key) === task) inFlight.delete(key);
+          }
+        );
+      }
+    }
+    const result = Promise.all(unique.map((key) => inFlight.get(key)));
+    if (!signal) return result;
+    return new Promise((resolve, reject) => {
+      const abort = () => reject(signal.reason);
+      if (signal.aborted) {
+        result.catch(() => {
+        });
+        reject(signal.reason);
+        return;
+      }
+      signal.addEventListener("abort", abort, { once: true });
+      void result.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+    });
+  };
+}
 
 // modules/shopee-sync/client.js
 var import_meta = {};
@@ -78048,7 +78805,7 @@ function resolveCreateRequireFilename() {
     if (metaUrl && metaUrl !== "undefined") return metaUrl;
   } catch {
   }
-  return import_path2.default.resolve(process.cwd(), "server.cjs");
+  return import_path3.default.resolve(process.cwd(), "server.cjs");
 }
 var shopeeHttpDispatcher = void 0;
 try {
@@ -78484,7 +79241,7 @@ async function shopeePostJsonWithRetry(url2, body, context, opts) {
 }
 
 // services/shopee/auth.js
-var APP_ROOT = resolveAppRoot();
+var APP_ROOT = resolveAppRoot2();
 var APP_BASE_URL = resolveAppBaseUrl();
 function resolveShopeeCallbackUrl() {
   const explicit = String(process.env.SHOPEE_CALLBACK_URL || "").trim().replace(/\/$/, "");
@@ -78509,9 +79266,9 @@ if (!isShopeeConfigValid()) {
     `[Shopee API] \u26A0\uFE0F SHOPEE_PARTNER_ID (hi\u1EC7n t\u1EA1i: "${SHOPEE_PARTNER_ID || "(r\u1ED7ng)"}") ho\u1EB7c SHOPEE_PARTNER_KEY ch\u01B0a \u0111\u01B0\u1EE3c \u0111i\u1EC1n \u0111\xFAng trong .env. Partner_id ph\u1EA3i l\xE0 m\u1ED9t s\u1ED1 nguy\xEAn (v\xED d\u1EE5: 2001234), l\u1EA5y t\u1EEB App PRODUCTION (Live) tr\xEAn open.shopee.com, KH\xD4NG d\xF9ng Sandbox. M\u1ECDi l\u1EA7n g\u1ECDi API Shopee s\u1EBD b\u1EC3 tr\u1EA3 l\u1ED7i error_param cho \u0111\u1EBFn khi s\u1EEDa \u0111\xFAng gi\xE1 tr\u1ECB n\xE0y.`
   );
 }
-var SHOPEE_TOKENS_PATH = import_path3.default.resolve(APP_ROOT, "data", "shopee_tokens.json");
-var SHOPEE_OAUTH_LAST_PATH = import_path3.default.resolve(APP_ROOT, "data", "shopee_oauth_last.json");
-var CHANNEL_SETTINGS_PATH = import_path3.default.resolve(APP_ROOT, "data", "channel_settings.json");
+var SHOPEE_TOKENS_PATH = import_path4.default.resolve(APP_ROOT, "data", "shopee_tokens.json");
+var SHOPEE_OAUTH_LAST_PATH = import_path4.default.resolve(APP_ROOT, "data", "shopee_oauth_last.json");
+var CHANNEL_SETTINGS_PATH = import_path4.default.resolve(APP_ROOT, "data", "channel_settings.json");
 var CANONICAL_SHOPEE_SHOP_IDS = ["4127421", "831052930"];
 var INDEPENDENT_SHOPEE_SHOP_IDS = new Set(CANONICAL_SHOPEE_SHOP_IDS);
 var deps = {
@@ -78524,16 +79281,16 @@ function initShopeeAuth(partial) {
   deps = { ...deps, ...partial };
 }
 function ensureDataDirs() {
-  const dataDir = import_path3.default.join(APP_ROOT, "data");
-  import_fs2.default.mkdirSync(dataDir, { recursive: true });
-  if (!import_fs2.default.existsSync(SHOPEE_TOKENS_PATH)) {
-    import_fs2.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
+  const dataDir = import_path4.default.join(APP_ROOT, "data");
+  import_fs3.default.mkdirSync(dataDir, { recursive: true });
+  if (!import_fs3.default.existsSync(SHOPEE_TOKENS_PATH)) {
+    import_fs3.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
   }
 }
 function saveOAuthAudit(entry) {
   try {
     ensureDataDirs();
-    import_fs2.default.writeFileSync(
+    import_fs3.default.writeFileSync(
       SHOPEE_OAUTH_LAST_PATH,
       JSON.stringify({ ...entry, at: (/* @__PURE__ */ new Date()).toISOString() }, null, 2),
       "utf-8"
@@ -78544,8 +79301,8 @@ function saveOAuthAudit(entry) {
 }
 function loadLastOAuthAudit() {
   try {
-    if (!import_fs2.default.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
-    return JSON.parse(import_fs2.default.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
+    if (!import_fs3.default.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
+    return JSON.parse(import_fs3.default.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
   } catch {
     return null;
   }
@@ -78562,13 +79319,13 @@ function bootShopeeAuth() {
     console.error("[Boot] Failed to normalize shopee_tokens.json:", error);
   }
   console.log(
-    `[Boot] APP_ROOT=${APP_ROOT} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs2.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL}`
+    `[Boot] APP_ROOT=${APP_ROOT} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs3.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL}`
   );
 }
 function loadShopeeTokens() {
   try {
-    if (!import_fs2.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
-    const raw = import_fs2.default.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
+    if (!import_fs3.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
+    const raw = import_fs3.default.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
     if (!raw.trim()) return {};
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
@@ -78602,7 +79359,7 @@ function maskTokenStoreForLog(tokens) {
   return masked;
 }
 function saveShopeeTokens(tokensToWrite) {
-  const absPath = import_path3.default.resolve(SHOPEE_TOKENS_PATH);
+  const absPath = import_path4.default.resolve(SHOPEE_TOKENS_PATH);
   try {
     ensureDataDirs();
     const onDisk = normalizeTokenStore(loadShopeeTokens());
@@ -78638,19 +79395,19 @@ function saveShopeeTokens(tokensToWrite) {
         keys: keysAfter,
         byteLength: Buffer.byteLength(payload, "utf-8"),
         cwd: process.cwd(),
-        dataDir: import_path3.default.dirname(absPath),
-        dataDirExists: import_fs2.default.existsSync(import_path3.default.dirname(absPath)),
-        fileExists: import_fs2.default.existsSync(absPath)
+        dataDir: import_path4.default.dirname(absPath),
+        dataDirExists: import_fs3.default.existsSync(import_path4.default.dirname(absPath)),
+        fileExists: import_fs3.default.existsSync(absPath)
       })
     );
-    const dataDir = import_path3.default.dirname(absPath);
-    if (!import_fs2.default.existsSync(dataDir)) {
+    const dataDir = import_path4.default.dirname(absPath);
+    if (!import_fs3.default.existsSync(dataDir)) {
       throw new Error(`Th\u01B0 m\u1EE5c data/ kh\xF4ng t\u1ED3n t\u1EA1i: ${dataDir}`);
     }
-    import_fs2.default.writeFileSync(absPath, payload, "utf-8");
+    import_fs3.default.writeFileSync(absPath, payload, "utf-8");
     console.log(
       "[Shopee Tokens] fs.writeFileSync \u2014 GHI TH\xC0NH C\xD4NG",
-      JSON.stringify({ absPath, keys: keysAfter, fileSize: import_fs2.default.statSync(absPath).size })
+      JSON.stringify({ absPath, keys: keysAfter, fileSize: import_fs3.default.statSync(absPath).size })
     );
     return true;
   } catch (error) {
@@ -78982,8 +79739,8 @@ function saveShopeeTokenForShop(shopId, record) {
 }
 function listChannelSettingsShopIds() {
   try {
-    if (!import_fs2.default.existsSync(CHANNEL_SETTINGS_PATH)) return [];
-    const raw = import_fs2.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
+    if (!import_fs3.default.existsSync(CHANNEL_SETTINGS_PATH)) return [];
+    const raw = import_fs3.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : {};
     const shops = Array.isArray(parsed?.shops) ? parsed.shops : [];
     const ids = [];
@@ -79108,7 +79865,7 @@ function ensureShopeeLinkedShopTokenKeys() {
       delete next[id];
     }
     Object.assign(next, updates);
-    import_fs2.default.writeFileSync(SHOPEE_TOKENS_PATH, JSON.stringify(next, null, 2), "utf8");
+    import_fs3.default.writeFileSync(SHOPEE_TOKENS_PATH, JSON.stringify(next, null, 2), "utf8");
     console.log(
       `[Shopee Tokens] ensureLinkedShopTokenKeys \u2014 upsert=[${Object.keys(updates).join(", ")}] deleted=[${deleteKeys.map((k) => k.replace(/^__delete__/, "")).join(", ")}] pruned=${pruned}`
     );
@@ -79771,8 +80528,8 @@ function createOperationsRouter({
     const expected = process.env.OPS_METRICS_TOKEN || "";
     if (expected.length < 32) return res.status(503).json({ error: "ops_metrics_not_configured" });
     const supplied = req.get("authorization")?.replace(/^Bearer /, "") || "";
-    const digest2 = (value) => import_node_crypto2.default.createHash("sha256").update(value).digest();
-    if (!req.get("authorization")?.startsWith("Bearer ") || !import_node_crypto2.default.timingSafeEqual(digest2(supplied), digest2(expected))) {
+    const digest2 = (value) => import_node_crypto3.default.createHash("sha256").update(value).digest();
+    if (!req.get("authorization")?.startsWith("Bearer ") || !import_node_crypto3.default.timingSafeEqual(digest2(supplied), digest2(expected))) {
       return res.status(401).json({ error: "unauthorized" });
     }
     return next();
@@ -79914,7 +80671,7 @@ var WebhookJob = import_mongoose3.default.models.WebhookJob || import_mongoose3.
 var WebhookJob_default = WebhookJob;
 
 // modules/jobs/webhookJobQueue.js
-var import_node_crypto3 = __toESM(require("node:crypto"), 1);
+var import_node_crypto4 = __toESM(require("node:crypto"), 1);
 
 // modules/operations/stallDiagnostics.js
 var import_node_os2 = __toESM(require("node:os"), 1);
@@ -80343,8 +81100,8 @@ async function enqueueOrderSyncJob(payload = {}, priority = 0) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload) || !Number.isFinite(priority) || priority < 0 || priority > 10 || payload.mode && !["quick", "full", "task"].includes(payload.mode) || payload.shopIds && (!Array.isArray(payload.shopIds) || payload.shopIds.some((id) => !/^\d+$/.test(String(id)))) || payload.lookbackSec != null && (!Number.isFinite(Number(payload.lookbackSec)) || Number(payload.lookbackSec) < 60)) {
     throw new Error("sync_job_invalid");
   }
-  const jobId = `sync:${import_node_crypto3.default.randomUUID()}`;
-  const activeKey = priority < 10 ? import_node_crypto3.default.createHash("sha256").update(JSON.stringify({
+  const jobId = `sync:${import_node_crypto4.default.randomUUID()}`;
+  const activeKey = priority < 10 ? import_node_crypto4.default.createHash("sha256").update(JSON.stringify({
     mode: payload.mode || "incremental",
     task: payload.task || "",
     shopIds: [...payload.shopIds || []].sort(),
@@ -80480,7 +81237,7 @@ async function claimNextJob() {
           worker_revision: 5,
           processing_stage: "starting",
           stage_started_at: now,
-          claim_token: import_node_crypto3.default.randomUUID(),
+          claim_token: import_node_crypto4.default.randomUUID(),
           next_run_at: leaseUntil
         }
       }
@@ -81590,8 +82347,8 @@ function scheduleReadyToShipBackfill(deps23 = {}) {
 }
 
 // modules/logistics/pdfCleanupScheduler.js
-var import_fs3 = __toESM(require("fs"), 1);
-var import_path4 = __toESM(require("path"), 1);
+var import_fs4 = __toESM(require("fs"), 1);
+var import_path5 = __toESM(require("path"), 1);
 var import_node_cron4 = __toESM(require("node-cron"), 1);
 init_appPaths();
 var LABEL_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
@@ -81610,23 +82367,23 @@ function scheduleLabelPdfCleanup() {
     labelPdfCleanupRunning = true;
     let deleted = 0;
     try {
-      if (!import_fs3.default.existsSync(PDF_DIR)) return;
+      if (!import_fs4.default.existsSync(PDF_DIR)) return;
       const cutoff = Date.now() - LABEL_MAX_AGE_MS;
       let names = [];
       try {
-        names = import_fs3.default.readdirSync(PDF_DIR);
+        names = import_fs4.default.readdirSync(PDF_DIR);
       } catch (err) {
         console.warn("[Labels Cleanup Cron] Kh\xF4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c:", err?.message || err);
         return;
       }
       for (const name of names) {
         if (!/\.pdf$/i.test(name)) continue;
-        const full = import_path4.default.join(PDF_DIR, name);
+        const full = import_path5.default.join(PDF_DIR, name);
         try {
-          const st = import_fs3.default.statSync(full);
+          const st = import_fs4.default.statSync(full);
           if (!st.isFile()) continue;
           if (st.size <= 0 || st.mtimeMs < cutoff) {
-            import_fs3.default.unlinkSync(full);
+            import_fs4.default.unlinkSync(full);
             deleted += 1;
           }
         } catch (err) {
@@ -81930,7 +82687,7 @@ function readRawWebhookBody(req) {
 var import_express2 = __toESM(require_express2(), 1);
 
 // modules/webhooks/shopeeSignature.ts
-var import_node_crypto4 = __toESM(require("node:crypto"), 1);
+var import_node_crypto5 = __toESM(require("node:crypto"), 1);
 function normalizeSignature(value) {
   return value.trim().replace(/^(?:Bearer|HMAC)\s+/i, "").replace(/^sha256=/i, "").trim().toLowerCase();
 }
@@ -81938,7 +82695,7 @@ function timingSafeEqualHex(a, b) {
   try {
     const aBuf = Buffer.from(a, "hex");
     const bBuf = Buffer.from(b, "hex");
-    return aBuf.length === bBuf.length && import_node_crypto4.default.timingSafeEqual(aBuf, bBuf);
+    return aBuf.length === bBuf.length && import_node_crypto5.default.timingSafeEqual(aBuf, bBuf);
   } catch {
     return false;
   }
@@ -81992,7 +82749,7 @@ function verifyShopeeWebhookSignature(rawBody, authorization, requestUrls = []) 
   }
   for (const url2 of candidates) {
     const baseString = `${url2}|${bodyStr}`;
-    const expected = import_node_crypto4.default.createHmac("sha256", secret).update(baseString).digest("hex");
+    const expected = import_node_crypto5.default.createHmac("sha256", secret).update(baseString).digest("hex");
     if (timingSafeEqualHex(expected, supplied)) {
       console.log(`[Shopee Webhook] HMAC OK (url=${url2})`);
       return true;
@@ -83328,19 +84085,6 @@ function matchesHandedOverCarrierTab(order) {
   return true;
 }
 
-// modules/logistics/tracking.ts
-function isShopeeInternalTrackingCode(code) {
-  return /^0FG/i.test(String(code || "").trim());
-}
-function isCarrierTrackingCode(code) {
-  const k = String(code || "").trim().toUpperCase();
-  if (!k || isShopeeInternalTrackingCode(k)) return false;
-  if (k.length < 6 || k.length > 40) return false;
-  if (/^\d{6,40}$/.test(k)) return true;
-  if (/^[A-Z0-9][A-Z0-9\-_./]{5,39}$/.test(k)) return true;
-  return false;
-}
-
 // modules/logistics/handover.ts
 function getShopeeOrderRawStatus(order) {
   return String(order.shopee_order_status || order.order_status || "").toUpperCase();
@@ -83372,6 +84116,7 @@ function hasOrderTrackingNo(order) {
   return Boolean(getOrderTrackingNo(order));
 }
 function isProcessedCondition(order) {
+  if (isPendingShipmentReview(order)) return false;
   const raw = getShopeeOrderRawStatus(order);
   if (!["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"].includes(raw)) return false;
   return order.isPrepared === true || isTruthyFlag(order.isPrinted);
@@ -83417,6 +84162,7 @@ function matchesShippingTab(order) {
   return isShopeeShippingStatus(order);
 }
 function matchesProcessedPickupTab(order) {
+  if (isPendingShipmentReview(order)) return false;
   if (["shipping", "completed", "cancelled", "return_pending", "return_received"].includes(order.status)) return false;
   if (isShopeeShippingStatus(order)) return false;
   if (isShopeeCompletedStatus(order)) return false;
@@ -83425,6 +84171,7 @@ function matchesProcessedPickupTab(order) {
   return isProcessedCondition(order);
 }
 function matchesUnprocessedPickupTab(order) {
+  if (isPendingShipmentReview(order)) return false;
   if (isShopeeShippingStatus(order)) return false;
   if (isShopeeCompletedStatus(order)) return false;
   if (isShopeeCancelledLikeStatus(order)) return false;
@@ -83612,8 +84359,78 @@ async function setCachedShopeeAddressList(shopId, result) {
 // routes/scanRoutes.js
 var import_express3 = __toESM(require_express2(), 1);
 
-// controllers/scanController.js
-init_DonHoanHuy();
+// models/DonHoanHuy.js
+var import_mongoose7 = __toESM(require("mongoose"), 1);
+var DonHoanHuySchema = new import_mongoose7.default.Schema(
+  {
+    orderSn: {
+      type: String,
+      required: true,
+      trim: true
+    },
+    status: {
+      type: String,
+      default: "scanned",
+      trim: true
+    },
+    scannedAt: {
+      type: Date,
+      default: Date.now
+      // TTL removed — xóa thủ công bằng API
+    },
+    note: {
+      type: String,
+      default: "",
+      trim: true
+    },
+    /** Shopee shop_id — String (uint64-safe), không lưu Number */
+    shopId: {
+      type: String,
+      default: null,
+      trim: true
+    },
+    tracking_no: {
+      type: String,
+      default: null,
+      trim: true
+    },
+    return_tracking_no: {
+      type: String,
+      default: null,
+      trim: true
+    },
+    scan_code: {
+      type: String,
+      default: null,
+      trim: true
+    },
+    type: {
+      type: String,
+      default: null,
+      trim: true
+    },
+    local_status: {
+      type: String,
+      default: null,
+      trim: true
+    }
+  },
+  {
+    collection: "don_hoan_huy",
+    versionKey: false,
+    strict: false
+    // giữ field legacy (local_status, type, ...) nếu đã có trên Atlas
+  }
+);
+DonHoanHuySchema.index({ orderSn: 1 }, { unique: true, name: "don_hoan_huy_orderSn_unique" });
+DonHoanHuySchema.index({ tracking_no: 1 }, { name: "don_hoan_huy_tracking_no" });
+DonHoanHuySchema.index({ return_tracking_no: 1 }, { name: "don_hoan_huy_return_tracking_no" });
+DonHoanHuySchema.index({ scan_code: 1 }, { name: "don_hoan_huy_scan_code" });
+DonHoanHuySchema.index({ scannedAt: -1 }, { name: "don_hoan_huy_scannedAt" });
+DonHoanHuySchema.index({ type: 1 }, { name: "don_hoan_huy_type" });
+DonHoanHuySchema.index({ local_status: 1 }, { name: "don_hoan_huy_local_status" });
+var DonHoanHuy = import_mongoose7.default.models.DonHoanHuy || import_mongoose7.default.model("DonHoanHuy", DonHoanHuySchema);
+var DonHoanHuy_default = DonHoanHuy;
 
 // config/db.js
 var import_dotenv = __toESM(require_main(), 1);
@@ -83694,6 +84511,54 @@ function isMongoTimeoutOrNetworkError(err) {
   return /serverSelection|ServerSelectionError|MongoServerSelectionError|MongoNetworkTimeoutError|MongoNetworkError|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ETIMEOUT|timed out|timeout|27017|topology was destroyed|connection.*closed|pool destroyed|checking out a connection|wait queue|WaitQueueTimeout/i.test(
     `${msg} ${name}`
   );
+}
+
+// src/utils/orderCustomerSearch.ts
+function buildOrderCustomerSearchClauses(rawQuery) {
+  const name = buildAccentFlexibleRegex(rawQuery);
+  if (!name) return [];
+  const names = [
+    "customerName",
+    "customer_name",
+    "data.customerName",
+    "data.customer_name",
+    "buyer_username",
+    "data.buyer_username",
+    "recipient_address.name",
+    "data.recipient_address.name",
+    "data.raw.recipient_address.name",
+    "billing.first_name",
+    "billing.last_name",
+    "data.billing.first_name",
+    "data.billing.last_name",
+    "shipping.first_name",
+    "shipping.last_name",
+    "data.shipping.first_name",
+    "data.shipping.last_name"
+  ];
+  const clauses = names.map((field) => ({ [field]: name }));
+  if (/^[+\d\s().-]+$/.test(rawQuery.trim())) {
+    const digits = rawQuery.replace(/\D/g, "");
+    if (digits) {
+      const variants = digits.startsWith("84") ? [digits, "0" + digits.slice(2)] : [digits];
+      const pattern = variants.map((part) => [...part].map(escapeRegexLiteral).join("[\\s().-]*")).join("|");
+      const phone = new RegExp(pattern);
+      for (const field of [
+        "customerPhone",
+        "customer_phone",
+        "data.customerPhone",
+        "data.customer_phone",
+        "recipient_address.phone",
+        "data.recipient_address.phone",
+        "data.raw.recipient_address.phone",
+        "billing.phone",
+        "data.billing.phone",
+        "shipping.phone",
+        "data.shipping.phone"
+      ]) clauses.push({ [field]: phone });
+    }
+  }
+  return clauses;
 }
 
 // modules/orders/repositoryValues.ts
@@ -83799,15 +84664,15 @@ async function resolveShopeeOrderIdentities(orders, db, OrderModel2) {
 }
 
 // services/orderPush.js
-var import_node_crypto6 = require("node:crypto");
+var import_node_crypto7 = require("node:crypto");
 
 // services/webPushTransport.js
-var import_node_crypto5 = require("node:crypto");
+var import_node_crypto6 = require("node:crypto");
 var base64url = (value) => Buffer.from(value).toString("base64url");
 var decode = (value) => Buffer.from(value, "base64url");
 var vapidHeaders = /* @__PURE__ */ new Map();
 function generateVapidKeys() {
-  const key = (0, import_node_crypto5.createECDH)("prime256v1");
+  const key = (0, import_node_crypto6.createECDH)("prime256v1");
   key.generateKeys();
   const scalar2 = key.getPrivateKey();
   return {
@@ -83833,30 +84698,30 @@ function validatePushSubscription(value) {
   try {
     const key = decode(p256dh);
     if (key[0] !== 4 || key.length !== 65 || decode(auth).length !== 16) return null;
-    import_node_crypto5.ECDH.convertKey(key, "prime256v1");
+    import_node_crypto6.ECDH.convertKey(key, "prime256v1");
     return { endpoint: endpoint.href, keys: { p256dh, auth } };
   } catch {
     return null;
   }
 }
 function encryptPushPayload(payload, keys, {
-  salt = (0, import_node_crypto5.randomBytes)(16),
+  salt = (0, import_node_crypto6.randomBytes)(16),
   sender
 } = {}) {
   const plaintext = Buffer.from(payload);
   if (plaintext.length > 3993) throw new RangeError("web_push_payload_too_large");
   if (!sender) {
-    sender = (0, import_node_crypto5.createECDH)("prime256v1");
+    sender = (0, import_node_crypto6.createECDH)("prime256v1");
     sender.generateKeys();
   }
   const senderPublic = sender.getPublicKey();
   const receiverPublic = decode(keys.p256dh);
   const secret = sender.computeSecret(receiverPublic);
   const info = Buffer.concat([Buffer.from("WebPush: info\0"), receiverPublic, senderPublic]);
-  const ikm = Buffer.from((0, import_node_crypto5.hkdfSync)("sha256", secret, decode(keys.auth), info, 32));
-  const key = Buffer.from((0, import_node_crypto5.hkdfSync)("sha256", ikm, salt, "Content-Encoding: aes128gcm\0", 16));
-  const nonce = Buffer.from((0, import_node_crypto5.hkdfSync)("sha256", ikm, salt, "Content-Encoding: nonce\0", 12));
-  const cipher = (0, import_node_crypto5.createCipheriv)("aes-128-gcm", key, nonce);
+  const ikm = Buffer.from((0, import_node_crypto6.hkdfSync)("sha256", secret, decode(keys.auth), info, 32));
+  const key = Buffer.from((0, import_node_crypto6.hkdfSync)("sha256", ikm, salt, "Content-Encoding: aes128gcm\0", 16));
+  const nonce = Buffer.from((0, import_node_crypto6.hkdfSync)("sha256", ikm, salt, "Content-Encoding: nonce\0", 12));
+  const cipher = (0, import_node_crypto6.createCipheriv)("aes-128-gcm", key, nonce);
   const record = Buffer.concat([cipher.update(plaintext), cipher.update(Buffer.from([2])), cipher.final(), cipher.getAuthTag()]);
   const header = Buffer.alloc(21);
   salt.copy(header);
@@ -83866,7 +84731,7 @@ function encryptPushPayload(payload, keys, {
 }
 function makeVapidAuthorization(vapid, audience, subject, now = Date.now()) {
   const publicKey = decode(vapid.publicKey);
-  const privateKey = (0, import_node_crypto5.createPrivateKey)({
+  const privateKey = (0, import_node_crypto6.createPrivateKey)({
     key: {
       kty: "EC",
       crv: "P-256",
@@ -83879,7 +84744,7 @@ function makeVapidAuthorization(vapid, audience, subject, now = Date.now()) {
   const header = base64url(JSON.stringify({ typ: "JWT", alg: "ES256" }));
   const claims = base64url(JSON.stringify({ aud: audience, exp: Math.floor(now / 1e3) + 7200, sub: subject }));
   const token = `${header}.${claims}`;
-  const signature = (0, import_node_crypto5.sign)("sha256", Buffer.from(token), { key: privateKey, dsaEncoding: "ieee-p1363" });
+  const signature = (0, import_node_crypto6.sign)("sha256", Buffer.from(token), { key: privateKey, dsaEncoding: "ieee-p1363" });
   return `vapid t=${token}.${base64url(signature)}, k=${vapid.publicKey}`;
 }
 async function sendWebPush(subscription, payload, { vapid, subject, ttl, topic, request = fetch }) {
@@ -83902,7 +84767,7 @@ async function sendWebPush(subscription, payload, { vapid, subject, ttl, topic, 
     "Content-Encoding": "aes128gcm",
     TTL: String(ttl),
     Urgency: "high",
-    Topic: (0, import_node_crypto5.createHash)("sha256").update(topic).digest("base64url").slice(0, 32)
+    Topic: (0, import_node_crypto6.createHash)("sha256").update(topic).digest("base64url").slice(0, 32)
   };
   const response = await request(endpoint, {
     method: "POST",
@@ -83923,7 +84788,7 @@ var ORDER_PUSH_POLL_MS = 5e3;
 var ORDER_PUSH_LEASE_MS = 45e3;
 var DEVICES_PER_CLAIM = 4;
 var QUEUE_INDEX = "order_push_due";
-var hash = (value) => (0, import_node_crypto6.createHash)("sha256").update(value).digest("hex");
+var hash = (value) => (0, import_node_crypto7.createHash)("sha256").update(value).digest("hex");
 var enabled = () => process.env.ORDER_PUSH_ENABLED !== "0";
 var adminName = () => process.env.ADMIN_USERNAME || "admin";
 function orderPushSourceDate(value) {
@@ -84006,7 +84871,7 @@ function mountOrderPushRoutes(app, { auth, getDb, loadOrder, subject, send = sen
     const collection = devices(db);
     const existing = await collection.findOne({ _id: id });
     if (existing?.username === username && existing.subscription.keys.p256dh === subscription.keys.p256dh && existing.subscription.keys.auth === subscription.keys.auth) return res.json({ subscribed: true });
-    const registration = { _id: id, username, subscription, registrationId: (0, import_node_crypto6.randomUUID)(), enabledAt: /* @__PURE__ */ new Date() };
+    const registration = { _id: id, username, subscription, registrationId: (0, import_node_crypto7.randomUUID)(), enabledAt: /* @__PURE__ */ new Date() };
     try {
       await collection.replaceOne({ _id: id }, registration, { upsert: true });
     } catch (err) {
@@ -84061,7 +84926,7 @@ function mountOrderPushRoutes(app, { auth, getDb, loadOrder, subject, send = sen
 }
 async function dispatchNextOrderPush(db, { subject, send = sendWebPush, now = Date.now }) {
   const orders = db.collection("orders");
-  const lease = (0, import_node_crypto6.randomUUID)();
+  const lease = (0, import_node_crypto7.randomUUID)();
   const started2 = now();
   const job = await orders.findOneAndUpdate(
     { "orderPush.dueAt": { $lte: new Date(started2) } },
@@ -84170,76 +85035,6 @@ function startOrderPushWorker({ getDb, subject }) {
 // src/db/mongoStore.ts
 var import_mongoose9 = __toESM(require("mongoose"), 1);
 
-// modules/orders/posOrderEdit.ts
-function posQuantities(items = []) {
-  const sums = /* @__PURE__ */ Object.create(null);
-  for (const item of items) {
-    const id = String(item.productId || "").trim();
-    if (id) sums[id] = (sums[id] || 0) + Math.max(0, Math.round(Number(item.quantity) || 0));
-  }
-  return sums;
-}
-function planPosStockEdit(previous, items) {
-  const before = posQuantities(previous.items);
-  const after = posQuantities(items);
-  const allocations = previous.pos_stock_allocations || (previous.stock_deducted ? before : {});
-  const deltas = Object.entries({ ...before, ...after }).flatMap(([id]) => {
-    const change = (after[id] || 0) - (before[id] || 0);
-    const delta = change < 0 ? -Math.max(0, (allocations[id] || 0) - (after[id] || 0)) : change;
-    return delta === 0 ? [] : [{ id, delta }];
-  });
-  return { allocations, deltas };
-}
-function applyPosStockEdit(products, plan) {
-  const allocations = new Map(Object.entries(plan.allocations));
-  const deltas = new Map(plan.deltas.map(({ id, delta }) => [id, delta]));
-  const stocks = /* @__PURE__ */ Object.create(null);
-  const changed = /* @__PURE__ */ new Map();
-  const stockOf = (product) => Math.max(0, Math.round(Number(product.stock) || 0));
-  const updateStock = (product, stock) => ({
-    ...product,
-    stock,
-    status: product.status === "draft" ? "draft" : stock ? "active" : "out_of_stock",
-    lastSynced: (/* @__PURE__ */ new Date()).toISOString()
-  });
-  const adjust = (row) => {
-    const id = String(row.id || row._id || "").trim();
-    const delta = deltas.get(id);
-    if (delta === void 0) return row;
-    deltas.delete(id);
-    const stock = stockOf(row);
-    const applied = Math.min(stock, delta);
-    allocations.set(id, (allocations.get(id) || 0) + applied);
-    stocks[id] = stock - applied;
-    return applied === 0 ? row : updateStock(row, stocks[id]);
-  };
-  for (const product of products) {
-    const next = adjust(product);
-    if (next !== product) changed.set(String(product.id || product._id), next);
-  }
-  for (const product of products) {
-    if (deltas.size === 0) break;
-    const id = String(product.id || product._id || "");
-    const parent = changed.get(id) || product;
-    const childKey = parent.children?.length ? "children" : "children_models";
-    const children = parent[childKey];
-    if (!Array.isArray(children)) continue;
-    const nextChildren = children.map(adjust);
-    if (nextChildren.every((row, index) => row === children[index])) continue;
-    const stock = nextChildren.reduce((sum, row) => sum + stockOf(row), 0);
-    stocks[id] = stock;
-    changed.set(id, { ...updateStock(parent, stock), [childKey]: nextChildren });
-  }
-  for (const [id, delta] of deltas) {
-    if (delta < 0) allocations.set(id, (allocations.get(id) || 0) + delta);
-  }
-  return {
-    changed,
-    stocks,
-    allocations: Object.fromEntries([...allocations].filter(([, quantity]) => quantity > 0))
-  };
-}
-
 // modules/orders/serialWriteQueue.js
 var import_node_async_hooks3 = require("node:async_hooks");
 function createSerialWriteQueue() {
@@ -84298,639 +85093,6 @@ function createSerialWriteQueue() {
 // src/db/mongoStore.ts
 var import_fs6 = __toESM(require("fs"), 1);
 var import_path7 = __toESM(require("path"), 1);
-init_DonHoanHuy();
-
-// src/db/productsDiskStore.ts
-var import_fs4 = __toESM(require("fs"), 1);
-var import_path5 = __toESM(require("path"), 1);
-
-// utils/posStockEditFiles.js
-var import_node_fs = __toESM(require("node:fs"), 1);
-var import_node_path = __toESM(require("node:path"), 1);
-var import_node_crypto7 = __toESM(require("node:crypto"), 1);
-var JOURNAL = ".pos-stock-edit-journal.json";
-var TARGETS = /* @__PURE__ */ new Set(["products.json", "pos-stock-edits.json"]);
-var digest = (text2) => import_node_crypto7.default.createHash("sha256").update(text2).digest("hex");
-function withPosStockFileLock(dataDir, work) {
-  import_node_fs.default.mkdirSync(dataDir, { recursive: true });
-  const lockPath = import_node_path.default.join(dataDir, ".pos-stock-edit.lock");
-  let descriptor;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      descriptor = import_node_fs.default.openSync(lockPath, "wx");
-      break;
-    } catch (error) {
-      if (error.code !== "EEXIST") throw error;
-      let alive = true;
-      try {
-        const owner = JSON.parse(import_node_fs.default.readFileSync(lockPath, "utf8"));
-        if (!Number.isInteger(owner.pid) || owner.pid <= 0) throw new Error("invalid_lock_owner");
-        try {
-          process.kill(owner.pid, 0);
-        } catch (check) {
-          if (check.code === "ESRCH") alive = false;
-        }
-      } catch {
-        alive = Date.now() - import_node_fs.default.statSync(lockPath).mtimeMs < 3e4;
-      }
-      if (!alive && attempt === 0) {
-        try {
-          import_node_fs.default.unlinkSync(lockPath);
-        } catch (remove) {
-          if (remove.code !== "ENOENT") throw remove;
-        }
-        continue;
-      }
-      throw Object.assign(new Error("pos_stock_edit_busy_retry_same_revision"), { code: "POS_STOCK_COMMIT_PENDING" });
-    }
-  }
-  try {
-    import_node_fs.default.writeFileSync(descriptor, JSON.stringify({ pid: process.pid }));
-    return work();
-  } finally {
-    import_node_fs.default.closeSync(descriptor);
-    import_node_fs.default.unlinkSync(lockPath);
-  }
-}
-function recoverPosStockEditFiles(dataDir) {
-  const journalPath = import_node_path.default.join(dataDir, JOURNAL);
-  if (!import_node_fs.default.existsSync(journalPath)) return false;
-  const journal = JSON.parse(import_node_fs.default.readFileSync(journalPath, "utf8"));
-  if (journal.version !== 1 || !Array.isArray(journal.files) || journal.files.length !== TARGETS.size) {
-    throw new Error("invalid_pos_stock_journal");
-  }
-  const seen = /* @__PURE__ */ new Set();
-  for (const file of journal.files) {
-    if (!TARGETS.has(file.target) || seen.has(file.target) || !new RegExp(`^\\.pos-stock-[a-f0-9-]+-${file.target.replace(".", "\\.")}\\.tmp$`).test(file.staged) || !/^[a-f0-9]{64}$/.test(file.sha256)) {
-      throw new Error("invalid_pos_stock_path");
-    }
-    seen.add(file.target);
-  }
-  for (const file of journal.files) {
-    const staged = import_node_path.default.join(dataDir, file.staged);
-    const target = import_node_path.default.join(dataDir, file.target);
-    if (import_node_fs.default.existsSync(staged)) {
-      if (digest(import_node_fs.default.readFileSync(staged)) !== file.sha256) throw new Error("pos_stock_stage_corrupted");
-      try {
-        import_node_fs.default.renameSync(staged, target);
-      } catch (error) {
-        if (error.code !== "ENOENT" || !import_node_fs.default.existsSync(target) || digest(import_node_fs.default.readFileSync(target)) !== file.sha256) throw error;
-      }
-    } else if (!import_node_fs.default.existsSync(target) || digest(import_node_fs.default.readFileSync(target)) !== file.sha256) {
-      throw new Error("pos_stock_stage_missing");
-    }
-  }
-  try {
-    import_node_fs.default.unlinkSync(journalPath);
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-  }
-  return true;
-}
-function commitPosStockEditFiles(dataDir, values) {
-  import_node_fs.default.mkdirSync(dataDir, { recursive: true });
-  recoverPosStockEditFiles(dataDir);
-  const id = import_node_crypto7.default.randomUUID();
-  const journalPath = import_node_path.default.join(dataDir, JOURNAL);
-  const journalTemp = import_node_path.default.join(dataDir, `.pos-stock-${id}-journal.tmp`);
-  const files = [];
-  let journalWritten = false;
-  try {
-    for (const target of TARGETS) {
-      if (!Array.isArray(values[target])) throw new Error("invalid_pos_stock_data");
-      const text2 = JSON.stringify(values[target]);
-      const staged = `.pos-stock-${id}-${target}.tmp`;
-      files.push({ target, staged, sha256: digest(text2) });
-      import_node_fs.default.writeFileSync(import_node_path.default.join(dataDir, staged), text2, { encoding: "utf8", flush: true });
-    }
-    import_node_fs.default.writeFileSync(journalTemp, JSON.stringify({ version: 1, files }), { encoding: "utf8", flush: true });
-    import_node_fs.default.renameSync(journalTemp, journalPath);
-    journalWritten = true;
-    recoverPosStockEditFiles(dataDir);
-  } catch (error) {
-    if (journalWritten) {
-      try {
-        recoverPosStockEditFiles(dataDir);
-        return;
-      } catch (recoveryError) {
-        const pending = new Error("pos_stock_commit_pending_retry_same_revision", { cause: recoveryError });
-        pending.code = "POS_STOCK_COMMIT_PENDING";
-        throw pending;
-      }
-    }
-    for (const file of [...files.map((f3) => import_node_path.default.join(dataDir, f3.staged)), journalTemp]) {
-      try {
-        import_node_fs.default.unlinkSync(file);
-      } catch (cleanup) {
-        if (cleanup.code !== "ENOENT") console.warn("[POS] Kh\xF4ng x\xF3a \u0111\u01B0\u1EE3c file t\u1EA1m", cleanup.code);
-      }
-    }
-    throw error;
-  }
-}
-
-// src/utils/productSearch.ts
-function normalizeProductSearchText(input) {
-  return String(input ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/gi, "d").toLowerCase().replace(/\s+/g, " ").trim();
-}
-function escapeRegexLiteral(input) {
-  return String(input || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-function buildAccentFlexiblePattern(rawQuery) {
-  const folded = normalizeProductSearchText(rawQuery);
-  if (!folded) return null;
-  const map = {
-    a: "a\xE1\xE0\u1EA3\xE3\u1EA1\u0103\u1EAF\u1EB1\u1EB3\u1EB5\u1EB7\xE2\u1EA5\u1EA7\u1EA9\u1EAB\u1EAD",
-    d: "d\u0111",
-    e: "e\xE9\xE8\u1EBB\u1EBD\u1EB9\xEA\u1EBF\u1EC1\u1EC3\u1EC5\u1EC7",
-    i: "i\xED\xEC\u1EC9\u0129\u1ECB",
-    o: "o\xF3\xF2\u1ECF\xF5\u1ECD\xF4\u1ED1\u1ED3\u1ED5\u1ED7\u1ED9\u01A1\u1EDB\u1EDD\u1EDF\u1EE1\u1EE3",
-    u: "u\xFA\xF9\u1EE7\u0169\u1EE5\u01B0\u1EE9\u1EEB\u1EED\u1EEF\u1EF1",
-    y: "y\xFD\u1EF3\u1EF7\u1EF9\u1EF5"
-  };
-  let pattern = "";
-  for (const ch of folded) {
-    if (ch === " ") {
-      pattern += "\\s+";
-      continue;
-    }
-    const group = map[ch];
-    if (group) {
-      pattern += `[${group}${group.toUpperCase()}]`;
-    } else {
-      pattern += escapeRegexLiteral(ch);
-    }
-  }
-  return pattern;
-}
-function buildAccentFlexiblePrefixRegex(rawQuery) {
-  const pattern = buildAccentFlexiblePattern(rawQuery);
-  if (!pattern) return null;
-  try {
-    return new RegExp(`^${pattern}`, "i");
-  } catch {
-    return new RegExp(`^${escapeRegexLiteral(normalizeProductSearchText(rawQuery))}`, "i");
-  }
-}
-function productRowMatchesSearch(row, rawQuery) {
-  const q = normalizeProductSearchText(rawQuery);
-  if (!q) return true;
-  const parts = [
-    row?.sku,
-    row?.barcode,
-    row?.title,
-    row?.name,
-    row?.modelName,
-    ...Array.isArray(row?.tierLabels) ? row.tierLabels : []
-  ];
-  for (const key of ["children", "children_models"]) {
-    const list = Array.isArray(row?.[key]) ? row[key] : [];
-    for (const c of list) {
-      parts.push(c?.sku, c?.title, c?.name, c?.modelName, c?.barcode);
-    }
-  }
-  const hay = normalizeProductSearchText(parts.map((v) => String(v ?? "")).join(" "));
-  return hay.includes(q);
-}
-
-// src/db/productsDiskStore.ts
-function isProductsDiskMode() {
-  const raw = process.env.PRODUCTS_STORAGE ?? process.env.PRODUCTS_DISK;
-  if (raw == null || String(raw).trim() === "") return true;
-  const v = String(raw).trim().toLowerCase();
-  if (v === "mongo" || v === "atlas" || v === "0" || v === "false" || v === "off") {
-    return false;
-  }
-  return v === "disk" || v === "json" || v === "file" || v === "1" || v === "true" || v === "on";
-}
-var appRootResolved = "";
-var productsCache = null;
-var writeChain = Promise.resolve();
-function setProductsDiskAppRoot(appRoot) {
-  appRootResolved = String(appRoot || "").trim();
-  productsCache = null;
-}
-function resolveAppRoot2() {
-  if (appRootResolved) return appRootResolved;
-  return process.cwd();
-}
-function getProductsDiskPath() {
-  return import_path5.default.join(resolveAppRoot2(), "data", "products.json");
-}
-function ensureDataDir() {
-  const dir = import_path5.default.dirname(getProductsDiskPath());
-  if (!import_fs4.default.existsSync(dir)) import_fs4.default.mkdirSync(dir, { recursive: true });
-}
-function normalizeProduct(p) {
-  if (!p || typeof p !== "object") return null;
-  const id = String(p.id || "").trim();
-  if (!id) return null;
-  return { ...p, id };
-}
-function inheritShopeeLinkFromParent(child, parent) {
-  if (!child || typeof child !== "object") return child;
-  if (!parent || typeof parent !== "object") return child;
-  const next = { ...child };
-  if (!next.shopeeItemId && parent.shopeeItemId) next.shopeeItemId = parent.shopeeItemId;
-  if (!next.shopeeId && parent.shopeeId) next.shopeeId = parent.shopeeId;
-  if (!next.channels?.length && Array.isArray(parent.channels) && parent.channels.length) {
-    next.channels = [...parent.channels];
-  }
-  if (!next.title && parent.title) next.title = parent.title;
-  if (!next.imageUrl && parent.imageUrl) next.imageUrl = parent.imageUrl;
-  if (!next.avatarUrl && parent.avatarUrl) next.avatarUrl = parent.avatarUrl;
-  return next;
-}
-function readProductsFromDisk() {
-  const file = getProductsDiskPath();
-  const dataDir = import_path5.default.dirname(file);
-  if (import_fs4.default.existsSync(import_path5.default.join(dataDir, ".pos-stock-edit-journal.json"))) {
-    withPosStockFileLock(dataDir, () => {
-      if (recoverPosStockEditFiles(dataDir)) productsCache = null;
-    });
-  }
-  if (!import_fs4.default.existsSync(file)) {
-    productsCache = { mtimeMs: 0, products: [] };
-    return [];
-  }
-  const st = import_fs4.default.statSync(file);
-  if (productsCache && productsCache.mtimeMs === st.mtimeMs) {
-    return productsCache.products;
-  }
-  try {
-    const raw = import_fs4.default.readFileSync(file, "utf-8");
-    const parsed = raw.trim() ? JSON.parse(raw) : [];
-    const products = (Array.isArray(parsed) ? parsed : []).map(normalizeProduct).filter(Boolean);
-    productsCache = { mtimeMs: st.mtimeMs, products };
-    return products;
-  } catch (err) {
-    console.error("[Products Disk] \u0110\u1ECDc products.json th\u1EA5t b\u1EA1i:", err?.message || err);
-    throw err instanceof Error ? err : new Error(String(err));
-  }
-}
-function writeProductsToDiskSync(products) {
-  ensureDataDir();
-  const file = getProductsDiskPath();
-  const list = (Array.isArray(products) ? products : []).map(normalizeProduct).filter(Boolean).map((p) => stampInventorySortFields(p));
-  const tmp = `${file}.tmp.${process.pid}`;
-  import_fs4.default.writeFileSync(tmp, JSON.stringify(list), "utf-8");
-  import_fs4.default.renameSync(tmp, file);
-  try {
-    const st = import_fs4.default.statSync(file);
-    productsCache = { mtimeMs: st.mtimeMs, products: list };
-  } catch {
-    productsCache = { mtimeMs: Date.now(), products: list };
-  }
-  console.log(`[Products Disk] WRITE OK \u2014 path=${file} count=${list.length}`);
-}
-async function saveProductsToDisk(products) {
-  const run = writeChain.then(() => {
-    writeProductsToDiskSync(products);
-  });
-  writeChain = run.catch(() => void 0);
-  await run;
-}
-async function upsertProductsToDisk(products) {
-  const incoming = (Array.isArray(products) ? products : []).map(normalizeProduct).filter(Boolean);
-  if (incoming.length === 0) return 0;
-  const current = readProductsFromDisk();
-  const byId = new Map(current.map((p) => [String(p.id), p]));
-  for (const p of incoming) byId.set(String(p.id), { ...byId.get(String(p.id)), ...p, id: p.id });
-  await saveProductsToDisk([...byId.values()]);
-  return incoming.length;
-}
-async function applyPosStockEditOnDisk(orderId, revision, plan) {
-  const dataDir = import_path5.default.dirname(getProductsDiskPath());
-  const run = writeChain.then(() => withPosStockFileLock(dataDir, () => {
-    if (recoverPosStockEditFiles(dataDir)) productsCache = null;
-    const products = readProductsFromDisk();
-    const editFile = import_path5.default.join(dataDir, "pos-stock-edits.json");
-    const edits = new Map(
-      import_fs4.default.existsSync(editFile) ? JSON.parse(import_fs4.default.readFileSync(editFile, "utf8")) : []
-    );
-    const previous = edits.get(orderId);
-    if (previous && previous.revision >= revision) return previous;
-    const { changed, stocks, allocations } = applyPosStockEdit(products, plan);
-    const result = { revision, stocks, allocations };
-    edits.set(orderId, result);
-    try {
-      commitPosStockEditFiles(dataDir, {
-        "products.json": products.map((p) => stampInventorySortFields(changed.get(p.id) || p)),
-        "pos-stock-edits.json": [...edits]
-      });
-    } finally {
-      productsCache = null;
-    }
-    return result;
-  }));
-  writeChain = run.then(() => void 0, () => void 0);
-  return run;
-}
-var SKU_CHILD_KEYS = ["children", "children_models"];
-async function updateProductSkuOnDisk(productId, newSku) {
-  const id = String(productId || "").trim();
-  const sku = String(newSku || "").trim();
-  if (!id || !sku) return { found: false, sku, target: null };
-  const current = readProductsFromDisk();
-  let found = false;
-  let target = null;
-  const next = [];
-  for (const product of current) {
-    if (found) {
-      next.push(product);
-      continue;
-    }
-    if (String(product?.id || "").trim() === id) {
-      found = true;
-      target = "parent";
-      next.push({ ...product, sku });
-      continue;
-    }
-    let childKey = null;
-    let childIdx = -1;
-    for (const key of SKU_CHILD_KEYS) {
-      const list = product?.[key];
-      if (!Array.isArray(list)) continue;
-      const idx = list.findIndex((child) => String(child?.id || "").trim() === id);
-      if (idx >= 0) {
-        childKey = key;
-        childIdx = idx;
-        break;
-      }
-    }
-    if (childKey && childIdx >= 0) {
-      found = true;
-      target = "child";
-      const list = product[childKey];
-      const children = list.map(
-        (child, index) => index === childIdx ? { ...child, sku } : child
-      );
-      next.push({ ...product, [childKey]: children });
-      continue;
-    }
-    next.push(product);
-  }
-  if (!found) return { found: false, sku, target: null };
-  await saveProductsToDisk(next);
-  return { found: true, sku, target };
-}
-async function deleteProductsByIdsFromDisk(ids) {
-  const safe = new Set(ids.map((id) => String(id || "").trim()).filter(Boolean));
-  if (safe.size === 0) return 0;
-  const current = readProductsFromDisk();
-  const kept = current.filter((p) => !safe.has(String(p.id || "").trim()));
-  const deleted = current.length - kept.length;
-  if (deleted > 0) await saveProductsToDisk(kept);
-  return deleted;
-}
-function countProductsOnDisk() {
-  return readProductsFromDisk().length;
-}
-function variationRows(product) {
-  for (const key of ["children", "children_models", "models", "variations"]) {
-    const list = product?.[key];
-    if (Array.isArray(list) && list.length > 0) return list;
-  }
-  return [];
-}
-function readPrice(row) {
-  const n = Number(row?.sellingPrice ?? row?.price ?? row?.original_price);
-  return Number.isFinite(n) ? n : 0;
-}
-function readStock(row) {
-  const n = Number(row?.stock ?? row?.current_stock ?? row?.normal_stock);
-  return Number.isFinite(n) ? n : 0;
-}
-function inventorySortMetrics(product) {
-  const rows = variationRows(product);
-  if (rows.length === 0) {
-    return { min_price: readPrice(product), total_stock: readStock(product) };
-  }
-  let min = Infinity;
-  let stock = 0;
-  for (let i2 = 0; i2 < rows.length; i2++) {
-    const price = readPrice(rows[i2]);
-    if (price < min) min = price;
-    stock += readStock(rows[i2]);
-  }
-  return { min_price: Number.isFinite(min) ? min : 0, total_stock: stock };
-}
-function stampInventorySortFields(product) {
-  if (!product || typeof product !== "object") return product;
-  try {
-    const metrics = inventorySortMetrics(product);
-    product.min_price = metrics.min_price;
-    product.total_stock = metrics.total_stock;
-  } catch (err) {
-    console.warn("[Inventory Sort] stamp failed:", err instanceof Error ? err.message : err);
-  }
-  return product;
-}
-function inventorySortValue(product, sortBy) {
-  const metrics = inventorySortMetrics(product);
-  return sortBy === "stock" ? metrics.total_stock : metrics.min_price;
-}
-function normalizeInventoryListSort(sort) {
-  const sortBy = sort?.sortBy === "stock" || sort?.sortBy === "sellingPrice" ? sort.sortBy : "";
-  const order = sort?.order === "asc" || sort?.order === "desc" ? sort.order : "";
-  if (!sortBy || !order) return null;
-  return { sortBy, order };
-}
-function sortInventoryRows(rows, sort) {
-  const spec = normalizeInventoryListSort(sort);
-  if (!spec) return rows;
-  const dir = spec.order === "asc" ? 1 : -1;
-  return [...rows].sort((a, b) => {
-    const va = inventorySortValue(a, spec.sortBy);
-    const vb = inventorySortValue(b, spec.sortBy);
-    if (va !== vb) return (va - vb) * dir;
-    return String(a?.id ?? "").localeCompare(String(b?.id ?? ""));
-  });
-}
-function loadProductsPageFromDisk(page = 1, pageSize = 50, search = "", sort) {
-  const all3 = readProductsFromDisk();
-  const q = normalizeProductSearchText(search);
-  const filtered = q ? all3.filter((p) => productRowMatchesSearch(p, search)) : all3;
-  const sorted = sortInventoryRows(filtered, sort);
-  const safePage = Math.max(1, Math.floor(Number(page) || 1));
-  const safeSize = Math.min(50, Math.max(1, Math.floor(Number(pageSize) || 50)));
-  const total = sorted.length;
-  const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / safeSize) || 1);
-  const currentPage = Math.min(safePage, totalPages);
-  const start = (currentPage - 1) * safeSize;
-  return {
-    products: sorted.slice(start, start + safeSize),
-    total,
-    page: currentPage,
-    pageSize: safeSize,
-    totalPages,
-    hasMore: currentPage < totalPages
-  };
-}
-function productMatchKeys(p) {
-  const keys = [
-    p?.id,
-    p?.sku,
-    p?.shopeeItemId,
-    p?.shopeeModelId,
-    p?.barcode
-  ];
-  for (const c of Array.isArray(p?.children) ? p.children : []) {
-    keys.push(c?.id, c?.sku, c?.shopeeModelId);
-  }
-  for (const c of Array.isArray(p?.children_models) ? p.children_models : []) {
-    keys.push(c?.id, c?.sku, c?.shopeeModelId);
-  }
-  return keys.map((k) => String(k || "").trim()).filter(Boolean);
-}
-function loadProductByIdFromDisk(productId) {
-  const id = String(productId || "").trim();
-  if (!id) return null;
-  const all3 = readProductsFromDisk();
-  for (const p of all3) {
-    if (String(p.id || "").trim() === id) return p;
-    if (String(p.shopeeItemId || "").trim() === id) return p;
-    if (String(p.shopeeModelId || "").trim() === id) return p;
-    for (const key of ["children", "children_models"]) {
-      const list = Array.isArray(p[key]) ? p[key] : [];
-      const child = list.find(
-        (c) => String(c?.id || "").trim() === id || String(c?.shopeeModelId || "").trim() === id
-      );
-      if (child) {
-        return inheritShopeeLinkFromParent(child, p);
-      }
-    }
-  }
-  return null;
-}
-function loadProductsByIdsFromDisk(productIds, shopeeItemIds = []) {
-  const wanted = new Set(
-    [...productIds, ...shopeeItemIds].map((v) => String(v || "").trim()).filter(Boolean)
-  );
-  if (wanted.size === 0) return [];
-  return readProductsFromDisk().filter(
-    (p) => productMatchKeys(p).some((k) => wanted.has(k) || wanted.has(`shopee-item-${k}`))
-  );
-}
-function searchProductsFromDisk(query, limit = 40) {
-  const q = normalizeProductSearchText(query);
-  const safeLimit = Math.min(100, Math.max(1, Math.floor(Number(limit) || 40)));
-  const all3 = readProductsFromDisk();
-  if (!q) return all3.slice(0, safeLimit);
-  const scored = [];
-  for (const p of all3) {
-    if (!productRowMatchesSearch(p, query)) continue;
-    const sku = normalizeProductSearchText(p.sku);
-    const title = normalizeProductSearchText(p.title);
-    let score = 0;
-    if (sku === q) score = 300;
-    else if (sku.startsWith(q)) score = 200;
-    else if (sku.includes(q)) score = 120;
-    else if (title.includes(q)) score = 80;
-    else score = 90;
-    scored.push({ p, score });
-  }
-  scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, safeLimit).map((x2) => x2.p);
-}
-async function applyImportStockAndPriceOnDisk(productId, quantityDelta, importPrice, opts) {
-  const id = String(productId || "").trim();
-  const skuHint = String(opts?.skuHint || "").trim();
-  if (!id && !skuHint) throw new Error("Thi\u1EBFu productId/sku \u0111\u1EC3 c\u1EADp nh\u1EADt Kho G\u1ED1c");
-  const qty = Math.round(Number(quantityDelta) || 0);
-  const price = Math.max(0, Math.round(Number(importPrice) || 0));
-  const all3 = readProductsFromDisk();
-  let parentIdx = -1;
-  let mode = "parent";
-  let childKey = null;
-  let childIdx = -1;
-  for (let i2 = 0; i2 < all3.length; i2++) {
-    const p = all3[i2];
-    const parentMatch = id && String(p.id || "").trim() === id || skuHint && String(p.sku || "").trim().toLowerCase() === skuHint.toLowerCase();
-    const cKey = Array.isArray(p.children) && p.children.length ? "children" : Array.isArray(p.children_models) && p.children_models.length ? "children_models" : null;
-    if (cKey) {
-      const children = p[cKey];
-      const cIdx = children.findIndex((c) => {
-        const cid = String(c?.id || c?.shopeeModelId || "").trim();
-        const csku = String(c?.sku || "").trim();
-        return id && cid === id || skuHint && csku.toLowerCase() === skuHint.toLowerCase();
-      });
-      if (cIdx >= 0) {
-        parentIdx = i2;
-        mode = "child";
-        childKey = cKey;
-        childIdx = cIdx;
-        break;
-      }
-    }
-    if (parentMatch) {
-      parentIdx = i2;
-      childKey = cKey;
-      break;
-    }
-  }
-  if (parentIdx < 0) {
-    throw new Error(
-      `Kh\xF4ng t\xECm th\u1EA5y s\u1EA3n ph\u1EA9m trong Kho G\u1ED1c (disk). id=${id || "\u2014"} sku=${skuHint || "\u2014"}`
-    );
-  }
-  const parent = { ...all3[parentIdx], id: String(all3[parentIdx].id) };
-  let productOut;
-  let oldStock = 0;
-  let newStock = 0;
-  let oldImportPrice = 0;
-  if (mode === "child" && childKey && childIdx >= 0) {
-    const children = [...parent[childKey]];
-    const before = children[childIdx];
-    oldStock = Math.max(0, Math.round(Number(before.stock) || 0));
-    oldImportPrice = Math.max(0, Math.round(Number(before.importPrice) || 0));
-    newStock = Math.max(0, oldStock + qty);
-    const mergedChild = {
-      ...before,
-      id: before.id || id,
-      stock: newStock,
-      importPrice: price,
-      status: newStock <= 0 && before.status !== "draft" ? "out_of_stock" : before.status === "out_of_stock" ? "active" : before.status,
-      lastSynced: (/* @__PURE__ */ new Date()).toISOString()
-    };
-    children[childIdx] = mergedChild;
-    const totalStock = children.reduce(
-      (s2, c) => s2 + Math.max(0, Math.round(Number(c.stock) || 0)),
-      0
-    );
-    all3[parentIdx] = {
-      ...parent,
-      [childKey]: children,
-      stock: totalStock,
-      lastSynced: (/* @__PURE__ */ new Date()).toISOString()
-    };
-    productOut = mergedChild;
-  } else {
-    oldStock = Math.max(0, Math.round(Number(parent.stock) || 0));
-    oldImportPrice = Math.max(0, Math.round(Number(parent.importPrice) || 0));
-    newStock = Math.max(0, oldStock + qty);
-    productOut = {
-      ...parent,
-      stock: newStock,
-      importPrice: price,
-      status: newStock <= 0 && parent.status !== "draft" ? "out_of_stock" : parent.status === "out_of_stock" ? "active" : parent.status,
-      lastSynced: (/* @__PURE__ */ new Date()).toISOString()
-    };
-    all3[parentIdx] = productOut;
-  }
-  await saveProductsToDisk(all3);
-  return {
-    product: productOut,
-    oldStock,
-    newStock,
-    oldImportPrice,
-    newImportPrice: price,
-    target: mode,
-    parentId: String(parent.id),
-    warehouse: "KhoGoc",
-    collection: "products"
-  };
-}
 
 // src/db/channelListingsDiskStore.ts
 var import_fs5 = __toESM(require("fs"), 1);
@@ -85365,16 +85527,16 @@ function docsToListings(docs) {
   }
   return out;
 }
-function enqueueWrite(task) {
+function enqueueWrite(task, options) {
   assertSyncActive();
   const urgent = Boolean(webhookObservation.getStore());
   return serialWrites.enqueue(async () => {
     assertSyncActive();
     await task();
   }, {
-    priority: urgent ? 10 : 0,
-    waitTimeoutMs: hasShortOrderDeadline() ? 15e3 : 0,
-    executionTimeoutMs: 6e4
+    priority: options?.priority ?? (urgent ? 10 : 0),
+    waitTimeoutMs: options?.waitTimeoutMs ?? (hasShortOrderDeadline() ? 15e3 : 0),
+    executionTimeoutMs: options?.executionTimeoutMs ?? 6e4
   }).catch((err) => {
     console.error("[MongoDB] Write queue error:", err?.code || err?.name || "write_failed");
     throw err;
@@ -88444,6 +88606,10 @@ async function bulkUpdateShippedOrdersBySn(patches, options) {
       $set.isPrepared = Boolean(p.isPrepared);
       $set["data.isPrepared"] = Boolean(p.isPrepared);
     }
+    if (p.is_pending_shopee_check != null) {
+      $set.is_pending_shopee_check = Boolean(p.is_pending_shopee_check);
+      $set["data.is_pending_shopee_check"] = Boolean(p.is_pending_shopee_check);
+    }
     if (p.hasPdf != null) {
       const ready2 = Boolean(p.hasPdf);
       $set.hasPdf = ready2;
@@ -88472,7 +88638,7 @@ async function bulkUpdateShippedOrdersBySn(patches, options) {
     }
     return {
       updateOne: {
-        filter: buildOrderCompoundFilter(sn, _id, shopIdStr || null),
+        filter: options?.matchByOrderIdentityOnly ? { $or: [{ orderSn: sn }, { _id }, { "data.orderSn": sn }, { "data.order_sn": sn }] } : buildOrderCompoundFilter(sn, _id, shopIdStr || null),
         update: { $set },
         upsert: false
       }
@@ -88490,8 +88656,13 @@ async function bulkUpdateShippedOrdersBySn(patches, options) {
       console.log(
         `[Ship Persist] bulkWrite ONE shot \u2014 ops=${ops.length} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0}`
       );
+    }, {
+      priority: options?.priority ?? (options?.requireAllMatched ? 10 : 0),
+      waitTimeoutMs: options?.timeoutMs ?? (options?.requireAllMatched ? 25e3 : 15e3),
+      executionTimeoutMs: Math.max(6e4, (options?.timeoutMs ?? 25e3) + 35e3)
     }),
-    "ship_persist"
+    "ship_persist",
+    options?.timeoutMs ?? (options?.requireAllMatched ? 25e3 : 1e4)
   );
   invalidateTabCountCache();
   return ops.length;
@@ -88504,7 +88675,7 @@ function shopIdTypeVariants(shopId) {
   return variants;
 }
 function buildOrderCompoundFilter(sn, _id, shopId) {
-  const identity = { $or: [{ orderSn: sn }, { _id }, { "data.orderSn": sn }] };
+  const identity = { $or: [{ orderSn: sn }, { _id }, { "data.orderSn": sn }, { "data.order_sn": sn }] };
   const shopIdStr = shopId != null ? String(shopId).trim() : "";
   if (!shopIdStr) return identity;
   const shopVariants = [
@@ -89054,6 +89225,7 @@ async function updateOrderPendingShopeeCheckInStore(orderSn, isPending, patch, s
   console.log(
     `[MongoDB] findOneAndUpdate is_pending_shopee_check=${isPending} order_sn=${sn} shopId=${shopIdStr || "-"} ok=${Boolean(result)}`
   );
+  invalidateTabCountCache();
   return Boolean(result);
 }
 var LAGGING_PENDING_RAW = [
@@ -89199,6 +89371,27 @@ async function updateOrderTrackingInStore(orderSn, trackingNo, extra) {
     { $set, $setOnInsert },
     { new: true, upsert: true }
   );
+  if (hasOutboundTn && (result?.is_pending_shopee_check === true || result?.data?.is_pending_shopee_check === true)) {
+    const recovered = hydrateOrderFromMongoDoc(result);
+    if (recovered?.status === "unprocessed" && recovered.is_pending_shopee_check === false) {
+      await OrderModel.updateOne({ $and: [
+        identity,
+        { $or: [{ is_pending_shopee_check: true }, { "data.is_pending_shopee_check": true }] },
+        { shopee_order_status: { $nin: [...TERMINAL_SHOPEE_RAW] } },
+        { status: { $nin: ["shipping", "completed", "cancelled", "return_pending", "return_received"] } },
+        { is_handed_over: { $ne: true } },
+        { is_return: { $ne: true } }
+      ] }, { $set: {
+        ...LAGGING_PENDING_PROMOTE_SET,
+        isPrepared: false,
+        "data.isPrepared": false,
+        isPrinted: false,
+        "data.isPrinted": false,
+        shopee_order_status: recovered.shopee_order_status,
+        "data.shopee_order_status": recovered.shopee_order_status
+      } });
+    }
+  }
   if (hasOutboundTn && result) {
     try {
       await OrderModel.updateOne(
@@ -89638,6 +89831,61 @@ async function updateOrderPackageNumberInStore(orderSn, packageNumber, extra) {
     `[MongoDB] findOneAndUpdate packageNumber=${pkg} order_sn=${sn} shopId=${shopIdStr || "-"} ok=${Boolean(result)}`
   );
   return Boolean(result);
+}
+async function deleteReceivedCancelReturnOrdersFromStore(idsOrSns) {
+  if (!isMongoReady()) {
+    return { mongoDeleted: 0, donHoanHuyDeleted: 0, deletedOrderSns: [], rejectedOrderSns: [] };
+  }
+  requireMongo();
+  const keys = [...new Set((idsOrSns || []).map((k) => String(k || "").trim()).filter(Boolean))];
+  const snList = keys.map((k) => k.replace(/^shopee-/i, "")).filter(Boolean);
+  if (snList.length === 0) {
+    return { mongoDeleted: 0, donHoanHuyDeleted: 0, deletedOrderSns: [], rejectedOrderSns: [] };
+  }
+  const dhhDocs = await DonHoanHuyModel.find({ orderSn: { $in: snList } }).select({ orderSn: 1 }).maxTimeMS(5e3).lean();
+  const allowed = new Set(
+    (dhhDocs || []).map((doc) => String(doc?.orderSn || "").trim()).filter(Boolean)
+  );
+  const receivedFilter = {
+    $or: [
+      { local_status: { $in: ["CANCELLED_STORED", "RETURN_RECEIVED"] } },
+      { "data.local_status": { $in: ["CANCELLED_STORED", "RETURN_RECEIVED"] } },
+      { "data.localStatus": { $in: ["CANCELLED_STORED", "RETURN_RECEIVED"] } },
+      { status: "return_received" },
+      { "data.status": "return_received" }
+    ]
+  };
+  const orderDocs = await OrderModel.find({
+    $and: [
+      { $or: [{ orderSn: { $in: snList } }, { "data.orderSn": { $in: snList } }] },
+      receivedFilter
+    ]
+  }).select({ orderSn: 1, "data.orderSn": 1 }).maxTimeMS(5e3).lean();
+  for (const doc of orderDocs || []) {
+    const sn = String(doc?.orderSn || doc?.data?.orderSn || "").trim();
+    if (sn) allowed.add(sn.replace(/^shopee-/i, ""));
+  }
+  const allowedSns = snList.filter((sn) => allowed.has(sn));
+  const rejectedOrderSns = snList.filter((sn) => !allowed.has(sn));
+  if (allowedSns.length === 0) {
+    return { mongoDeleted: 0, donHoanHuyDeleted: 0, deletedOrderSns: [], rejectedOrderSns };
+  }
+  const orderResult = await OrderModel.deleteMany({
+    $and: [
+      { $or: [{ orderSn: { $in: allowedSns } }, { "data.orderSn": { $in: allowedSns } }] },
+      receivedFilter
+    ]
+  }).maxTimeMS(8e3);
+  const dhhResult = await DonHoanHuyModel.deleteMany({ orderSn: { $in: allowedSns } }).maxTimeMS(8e3);
+  invalidateTabCountCache();
+  dhhCountCache.key = "";
+  dhhCountCache.n = 0;
+  return {
+    mongoDeleted: Number(orderResult.deletedCount || 0),
+    donHoanHuyDeleted: Number(dhhResult.deletedCount || 0),
+    deletedOrderSns: allowedSns,
+    rejectedOrderSns
+  };
 }
 async function deleteOrdersFromStore(idsOrSns) {
   if (!isMongoReady()) return 0;
@@ -90109,7 +90357,17 @@ function buildFlexibleScanOrFilter(rawCode) {
 var SCAN_LOOKUP_MAX_MS = 800;
 var SCAN_LOOKUP_LEAN_MAX_MS = 800;
 var SCANNER_LOOKUP_SELECT = {
+  is_pending_shopee_check: 1,
+  "data.is_pending_shopee_check": 1,
   _id: 1,
+  channel: 1,
+  isPrinted: 1,
+  hasPdf: 1,
+  readyToPrint: 1,
+  waybill_url: 1,
+  labelUrl: 1,
+  pdfUrl: 1,
+  pdfFilename: 1,
   orderSn: 1,
   shopId: 1,
   status: 1,
@@ -90132,6 +90390,31 @@ var SCANNER_LOOKUP_SELECT = {
   local_status: 1,
   "data.orderSn": 1,
   "data.order_sn": 1,
+  "data.id": 1,
+  "data.channel": 1,
+  "data.shop_id": 1,
+  "data.isPrepared": 1,
+  "data.isPrinted": 1,
+  "data.hasPdf": 1,
+  "data.readyToPrint": 1,
+  "data.waybill_url": 1,
+  "data.labelUrl": 1,
+  "data.pdfUrl": 1,
+  "data.pdfFilename": 1,
+  "data.order_status": 1,
+  "data.return_status": 1,
+  "data.cancel_reason": 1,
+  "data.buyer_cancel_reason": 1,
+  "data.cancel_by": 1,
+  "data.return_refund_request_type": 1,
+  "data.is_local_return_archived": 1,
+  "data.don_hoan_huy": 1,
+  "data.is_handed_over_to_carrier": 1,
+  "data.is_handed_over_to_courier": 1,
+  "data.shopee_tracking_number": 1,
+  "data.package_list.tracking_number": 1,
+  "data.package_list.tracking_no": 1,
+  "data.package_list.trackingNumber": 1,
   "data.status": 1,
   "data.shopee_order_status": 1,
   "data.tracking_no": 1,
@@ -90397,6 +90680,7 @@ function hydrateOrderFromMongoDoc(d) {
     hydrated.isPrepared = true;
     hydrated.is_pending_shopee_check = false;
   }
+  reconcileShipmentReview(hydrated);
   return hydrated;
 }
 async function findOrderByScanCodeInStore(rawCode, opts) {
@@ -91066,6 +91350,10 @@ async function loadMissingReturnTrackingBackfillFromStore(opts) {
     limit: HARD_LIMIT
   });
 }
+function isReceivedCancelReturnsTab(tab) {
+  const key = String(tab || "").trim().toLowerCase();
+  return key === "received_cancel_returns" || key === "received-cancel-returns" || key === "da_nhan_huy_hoan";
+}
 var DEFAULT_ORDER_DATE_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1e3;
 var RETURN_TAB_DATE_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1e3;
 var MAX_ORDER_DATE_SPAN_MS = 3 * 365 * 24 * 60 * 60 * 1e3;
@@ -91185,9 +91473,16 @@ var ORDER_TAB_CLOSED_LOCAL = [
   "return_pending",
   "return_received"
 ];
+var ORDER_TAB_AWAITING_SHOPEE_REVIEW = {
+  $and: [
+    { $or: [{ is_pending_shopee_check: true }, { "data.is_pending_shopee_check": true }] },
+    { $nor: ORDER_TAB_TRACKING_PATHS.map((path27) => orderTabTrackingOn(path27)) }
+  ]
+};
 function orderTabUnprocessedMatch() {
   return {
     $and: [
+      { $nor: [ORDER_TAB_AWAITING_SHOPEE_REVIEW] },
       // Khớp giao diện: chỉ còn ở đây khi shop chưa in và chưa chuẩn bị.
       { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
       ORDER_TAB_SHOP_NOT_PACKED,
@@ -91204,6 +91499,7 @@ function orderTabUnprocessedMatch() {
 function orderTabProcessedMatch() {
   return {
     $and: [
+      { $nor: [ORDER_TAB_AWAITING_SHOPEE_REVIEW] },
       { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
       ORDER_TAB_SHOP_PACKED,
       { is_handed_over: { $ne: true } },
@@ -91218,7 +91514,14 @@ function orderTabProcessedMatch() {
 function orderTabPendingConfirmMatch() {
   return {
     $and: [
-      { shopee_order_status: { $in: [...ORDER_TAB_PENDING_RAW] } },
+      { $or: [
+        { shopee_order_status: { $in: [...ORDER_TAB_PENDING_RAW] } },
+        { $and: [
+          ORDER_TAB_AWAITING_SHOPEE_REVIEW,
+          { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
+          { is_handed_over: { $ne: true } }
+        ] }
+      ] },
       { status: { $nin: [...ORDER_TAB_CLOSED_LOCAL] } },
       { is_return: { $ne: true } },
       {
@@ -91390,6 +91693,52 @@ var EMPTY_CANCEL_RETURN_COUNTERS = {
   cancelled: 0,
   rts: 0
 };
+function cancelReturnRtsInner() {
+  return {
+    $or: [
+      { is_rts: true },
+      { sub_status: "RTS" },
+      { shopee_cancel_return_kind: "failed_delivery" }
+    ]
+  };
+}
+function cancelReturnReturnedInner() {
+  return {
+    $or: [
+      { is_return: true },
+      { shopee_cancel_return_kind: "refund_return" },
+      { return_sn: { $type: "string", $nin: [""] } }
+    ]
+  };
+}
+function cancelReturnCancelledStatusInner() {
+  return {
+    $or: [
+      { status: "cancelled" },
+      { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL"] } },
+      { shopee_cancel_return_kind: "cancelled" }
+    ]
+  };
+}
+function orderCancelReturnKindFilter(kind) {
+  const base = orderTabFilter("cancel_returns");
+  const k = String(kind || "").trim().toLowerCase();
+  if (!k || k === "all") return base;
+  const rts = cancelReturnRtsInner();
+  const returned = cancelReturnReturnedInner();
+  if (k === "refund_return" || k === "returned" || k === "return") {
+    return { $and: [base, returned] };
+  }
+  if (k === "failed_delivery" || k === "rts") {
+    return { $and: [base, rts] };
+  }
+  if (k === "cancelled" || k === "cancel") {
+    return {
+      $and: [base, cancelReturnCancelledStatusInner(), { $nor: [returned, rts] }]
+    };
+  }
+  return base;
+}
 function parseCancelReturnKindParam(raw) {
   const k = String(raw || "").trim().toLowerCase();
   if (k === "refund_return" || k === "returned" || k === "return") return "refund_return";
@@ -91443,33 +91792,17 @@ var FACET_TO_SHIP = ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"];
 var FACET_SHIPPED = ["SHIPPED", "TO_CONFIRM_RECEIVE"];
 var FACET_PENDING = ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"];
 var FACET_CANCEL = ["CANCELLED", "IN_CANCEL", "TO_RETURN", "RETURN"];
-var FULFILLMENT_LOCAL_STATUSES = [
-  "pending_confirm",
-  "pending_verification",
-  "unprocessed",
-  "processed"
-];
-var FULFILLMENT_SHOPEE_STATUSES = [...FACET_PENDING, ...FACET_TO_SHIP];
-var FULFILLMENT_EXCLUDE_LOCAL = [
-  "cancelled",
-  "return_pending",
-  "return_received",
-  "shipping",
-  "completed"
-];
-var FULFILLMENT_EXCLUDE_SHOPEE = [...FACET_SHIPPED, ...FACET_CANCEL, "COMPLETED"];
 function fulfillmentProductsMatch() {
   return {
     $and: [
       {
         $or: [
-          { status: { $in: [...FULFILLMENT_LOCAL_STATUSES] } },
-          { shopee_order_status: { $in: [...FULFILLMENT_SHOPEE_STATUSES] } }
+          orderTabFilter("pending_confirm"),
+          orderTabFilter("unprocessed"),
+          orderTabFilter("processed")
         ]
       },
-      { status: { $nin: [...FULFILLMENT_EXCLUDE_LOCAL] } },
-      { shopee_order_status: { $nin: [...FULFILLMENT_EXCLUDE_SHOPEE] } },
-      { is_handed_over: { $ne: true } },
+      { $nor: [ORDER_TAB_IS_HANDED_OVER] },
       { is_rts: { $ne: true } }
     ]
   };
@@ -91566,16 +91899,7 @@ function tabIndexFilter(tab, kind) {
     case "don-huy-hoan":
     case "cancelled_returned":
     case "huy-hoan":
-      if (k === "refund_return" || k === "returned") {
-        return { shopee_cancel_return_kind: "refund_return" };
-      }
-      if (k === "cancelled" || k === "cancel") {
-        return { shopee_cancel_return_kind: "cancelled" };
-      }
-      if (k === "failed_delivery" || k === "rts") {
-        return { shopee_cancel_return_kind: "failed_delivery" };
-      }
-      return { shopee_order_status: { $in: [...FACET_CANCEL] } };
+      return orderCancelReturnKindFilter(k);
     default:
       return {};
   }
@@ -91601,6 +91925,35 @@ var ORDER_LIST_UI_PROJECTION = {
   packageNumber: 1,
   package_number: 1,
   internalTrackingCode: 1,
+  local_status: 1,
+  isReturnReceived: 1,
+  returnReceivedAt: 1,
+  "internal_flags.isReturnReceived": 1,
+  "internal_flags.returnReceivedAt": 1,
+  logistics_status: 1,
+  is_pending_shopee_check: 1,
+  "data.local_status": 1,
+  "data.localStatus": 1,
+  "data.internal_status": 1,
+  "data.scanFlag": 1,
+  "data.isReturnReceived": 1,
+  "data.returnReceivedAt": 1,
+  "data.internal_flags.isReturnReceived": 1,
+  "data.internal_flags.returnReceivedAt": 1,
+  "data.logistics_status": 1,
+  "data.cancel_reason": 1,
+  "data.return_status": 1,
+  "data.refund_amount": 1,
+  "data.text_reason": 1,
+  "data.return_reason": 1,
+  "data.is_pending_shopee_check": 1,
+  "data.shopee_fees": 1,
+  "data.finance_source": 1,
+  "data.escrow_synced": 1,
+  "data.item_amount": 1,
+  "data.seller_voucher": 1,
+  "data.custom_costs": 1,
+  "data.custom_cost_items": 1,
   is_handed_over: 1,
   isPrinted: 1,
   printedAt: 1,
@@ -92100,60 +92453,6 @@ async function bulkHealTerminalStatusesFromShopee(patches) {
 async function recalculateOrderTabCountsFromStore(opts) {
   return countOrdersByTabsFromStore(opts);
 }
-async function loadPriorityTabOrdersFromStore(opts) {
-  try {
-    requireMongo();
-    const perTab = Math.max(
-      2e3,
-      Math.min(5e3, Math.floor(Number(opts?.perTabLimit) || 2e3))
-    );
-    const tabs = [
-      "unprocessed",
-      "processed",
-      "pending_confirm",
-      "handed_over_carrier",
-      "shipping"
-    ];
-    const tabRowCounts = [];
-    const byId = /* @__PURE__ */ new Map();
-    for (const tab of tabs) {
-      try {
-        const page = await queryOrdersPageFromStore({
-          page: 1,
-          pageSize: perTab,
-          tab,
-          shopId: opts?.shopId || "",
-          shopIds: opts?.shopIds,
-          skipCounts: true
-        });
-        const rows = page?.rows || [];
-        tabRowCounts.push(rows.length);
-        for (const row of rows) {
-          const id = String(row?.id || row?.orderSn || "").trim();
-          if (id) byId.set(id, row);
-        }
-      } catch (err) {
-        tabRowCounts.push(0);
-        console.warn(
-          `[MongoDB] loadPriorityTabOrders tab=${tab} failed:`,
-          err?.message || err
-        );
-      }
-      await new Promise((r2) => setTimeout(r2, 30));
-    }
-    const merged = [...byId.values()];
-    console.log(
-      `[MongoDB] loadPriorityTabOrders merged=${merged.length} tabs=${tabs.map((t2, i2) => `${t2}:${tabRowCounts[i2] || 0}`).join(",")}`
-    );
-    return merged;
-  } catch (err) {
-    console.error(
-      "[MongoDB] loadPriorityTabOrders FATAL:",
-      err?.message || err
-    );
-    return [];
-  }
-}
 async function safeCountDocuments(filter2, maxTimeMS = 4e3, hint) {
   try {
     let q = OrderModel.countDocuments(filter2).maxTimeMS(maxTimeMS);
@@ -92359,11 +92658,17 @@ async function countOrdersByTabsFromStore(opts) {
         if (dateRange) Object.assign(extMatch, buildExternalOrderDateFilter(dateRange));
         return Number(await OrderModel.countDocuments(extMatch).maxTimeMS(3e3)) || 0;
       } catch (extErr) {
-        console.warn("[MongoDB] external_orders count:", extErr instanceof Error ? extErr.message : extErr);
+        console.warn("[MongoDB] external_orders count:", extErr?.message || extErr);
         return null;
       }
     })();
-    const [aggRows, opCounts, extN] = await Promise.all([aggTask, opTask, extTask]);
+    const [aggRows, opCounts, extN, dhhN, cancelCounts] = await Promise.all([
+      aggTask,
+      opTask,
+      extTask,
+      DonHoanHuyModel.countDocuments(buildDonHoanHuyPageFilter(opts)).maxTimeMS(3e3),
+      Promise.all(["", "refund_return", "cancelled", "failed_delivery"].map((kind) => OrderModel.countDocuments(mergeOrdersListFilters(match2, orderCancelReturnKindFilter(kind))).maxTimeMS(4e3)))
+    ]);
     const row = aggRows?.[0] || {};
     const counts = { ...empty };
     counts.all = facetN(row, "all");
@@ -92375,14 +92680,14 @@ async function countOrdersByTabsFromStore(opts) {
     counts.return_pending = facetN(row, "return_pending");
     counts.return_requests = facetN(row, "return_requests");
     counts.web_orders = facetN(row, "web_orders");
-    counts.cancel_returns = facetN(row, "cancel_returns");
-    counts.cancel_returns_returned = facetN(row, "cancel_returns_returned");
-    counts.cancel_returns_cancelled = facetN(row, "cancel_returns_cancelled");
-    counts.cancel_returns_rts = facetN(row, "cancel_returns_rts");
+    counts.cancel_returns = Number(cancelCounts[0]) || 0;
+    counts.cancel_returns_returned = Number(cancelCounts[1]) || 0;
+    counts.cancel_returns_cancelled = Number(cancelCounts[2]) || 0;
+    counts.cancel_returns_rts = Number(cancelCounts[3]) || 0;
     counts.refund_return = counts.cancel_returns_returned;
     counts.cancelled = counts.cancel_returns_cancelled;
     counts.failed_delivery = counts.cancel_returns_rts;
-    counts.received_cancel_returns = dhhCountCache.key === cacheKey ? dhhCountCache.n : dhhCountCache.n;
+    counts.received_cancel_returns = Number(dhhN) || 0;
     if (opCounts) {
       Object.assign(counts, opCounts);
     } else {
@@ -92394,12 +92699,6 @@ async function countOrdersByTabsFromStore(opts) {
     if (countVersion === tabCountVersion) {
       tabCountCache = { key: cacheKey, expiresAt: now + TAB_COUNT_CACHE_MS, value: counts };
     }
-    const dhhShop = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds) || {};
-    void DonHoanHuyModel.countDocuments(dhhShop).maxTimeMS(2e3).then((n) => {
-      dhhCountCache.key = cacheKey;
-      dhhCountCache.n = Number(n) || 0;
-    }).catch(() => {
-    });
     return counts;
   } catch (err) {
     console.error(
@@ -92411,30 +92710,31 @@ async function countOrdersByTabsFromStore(opts) {
 }
 function buildOrdersListSearchFilter(search) {
   const q = String(search || "").trim();
-  if (q.length < 2) return null;
+  if (!q) return null;
   const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const startsWith = { $regex: `^${escaped}` };
-  const $or = [
-    { orderSn: q },
-    { "data.orderSn": q },
-    { tracking_no: q },
-    { trackingNumber: q },
-    { packageNumber: q },
-    { return_tracking_no: q },
-    { returnTrackingNumber: q }
+  const contains = { $regex: escaped, $options: "i" };
+  const codeFields = [
+    "orderSn",
+    "tracking_no",
+    "trackingNumber",
+    "packageNumber",
+    "return_tracking_no",
+    "returnTrackingNumber",
+    "return_sn",
+    "internalTrackingCode",
+    "items.modelSku",
+    "items.sku",
+    "items.model_sku",
+    "items.item_sku",
+    "item_list.model_sku",
+    "item_list.item_sku"
   ];
-  if (q.length >= 4) {
-    $or.push(
-      { orderSn: startsWith },
-      { "data.orderSn": startsWith },
-      { tracking_no: startsWith },
-      { trackingNumber: startsWith },
-      { packageNumber: startsWith },
-      { return_tracking_no: startsWith },
-      { returnTrackingNumber: startsWith }
-    );
-  }
-  return { $or };
+  return {
+    $or: [...codeFields.flatMap((field) => [
+      { [field]: contains },
+      { [`data.${field}`]: contains }
+    ]), ...buildOrderCustomerSearchClauses(q)]
+  };
 }
 var GROUP_PICKING_SCAN_CAP = 3e3;
 var GROUP_PICKING_LINES_EXPR = {
@@ -92543,6 +92843,9 @@ async function queryOrdersPageFromStore(opts) {
       Math.min(5e3, Math.floor(Number(opts?.pageSize) || 50))
     );
     const skipCounts = Boolean(opts?.skipCounts);
+    if (isReceivedCancelReturnsTab(requestedTab)) {
+      return await queryDonHoanHuyPageFromStore({ ...opts, page, pageSize });
+    }
     const search = String(opts?.query || "").trim();
     const kind = parseCancelReturnKindParam(opts?.kind);
     const isCancelReturnsTab = requestedTab === "cancel_returns" || requestedTab === "cancel-returns" || requestedTab === "cancelled_returned" || requestedTab === "huy-hoan" || requestedTab === "don-huy-hoan";
@@ -92628,7 +92931,7 @@ async function queryOrdersPageFromStore(opts) {
       if (isExternalOrdersTab) throw findErr;
       return { ...empty, page, pageSize };
     }
-    const cachedTotal = isExternalOrdersTab && search ? 0 : peekCachedTabTotal(
+    const cachedTotal = search || carrierFilter || printFilter ? 0 : peekCachedTabTotal(
       {
         shopId: opts?.shopId,
         shopIds: opts?.shopIds,
@@ -93008,6 +93311,86 @@ function donHoanHuyDocToOrder(doc) {
     scannedAt,
     shopee_cancel_return_kind: local === "RETURN_RECEIVED" ? "refund_return" : base.shopee_cancel_return_kind || "cancelled"
   };
+}
+function buildDonHoanHuyPageFilter(opts) {
+  const parts = [];
+  const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
+  if (shopFilter) parts.push(shopFilter);
+  parts.push({
+    $or: [
+      { orderSn: { $type: "string", $nin: [""], $not: /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i } },
+      { "data.orderSn": { $type: "string", $nin: [""], $not: /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i } },
+      { "data.order_sn": { $type: "string", $nin: [""], $not: /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i } }
+    ]
+  });
+  const startDate = parseDateBound(opts?.startDate, false);
+  const endDate = parseDateBound(opts?.endDate, true);
+  if (startDate || endDate) {
+    parts.push({ scannedAt: { ...startDate ? { $gte: startDate } : {}, ...endDate ? { $lte: endDate } : {} } });
+  }
+  const carrier = String(opts?.carrier || "").trim();
+  if (carrier && carrier !== "all") {
+    const carrierRe = { $regex: carrier.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&"), $options: "i" };
+    parts.push({ $or: [{ shipping_carrier: carrierRe }, { carrier: carrierRe }, { "data.shipping_carrier": carrierRe }, { "data.carrier": carrierRe }] });
+  }
+  const query = String(opts?.query || "").trim();
+  if (query) {
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = { $regex: escaped, $options: "i" };
+    parts.push({
+      $or: [
+        { orderSn: re },
+        { tracking_no: re },
+        { return_tracking_no: re },
+        { scan_code: re },
+        { "data.orderSn": re },
+        { "data.order_sn": re },
+        { "data.packageNumber": re },
+        { "data.items.sku": re },
+        { "data.items.modelSku": re },
+        { "data.items.model_sku": re }
+      ]
+    });
+  }
+  const printStatus = String(opts?.printStatus || "").trim().toLowerCase();
+  if (printStatus === "printed" || printStatus === "da-in" || printStatus === "true") {
+    parts.push({ $or: [{ isPrinted: { $in: [true, 1, "true", "1", "yes"] } }, { "data.isPrinted": { $in: [true, 1, "true", "1", "yes"] } }] });
+  } else if (printStatus === "unprinted" || printStatus === "chua-in" || printStatus === "false" || printStatus === "not_printed") {
+    parts.push({
+      $and: [
+        { isPrinted: { $nin: [true, 1, "true", "1", "yes"] } },
+        { "data.isPrinted": { $nin: [true, 1, "true", "1", "yes"] } }
+      ]
+    });
+  }
+  const kind = String(opts?.kind || "").trim().toLowerCase();
+  if (kind === "refund_return" || kind === "returned" || kind === "return") {
+    parts.push({ $or: [{ local_status: "RETURN_RECEIVED" }, { status: "return_received" }, { type: "return" }] });
+  } else if (kind === "cancelled" || kind === "cancel") {
+    parts.push({ $nor: [{ local_status: "RETURN_RECEIVED" }, { status: "return_received" }, { type: "return" }] });
+  }
+  return parts.length === 1 ? parts[0] : { $and: parts };
+}
+async function queryDonHoanHuyPageFromStore(opts) {
+  const page = Math.max(1, Math.floor(Number(opts?.page) || 1));
+  const pageSize = Math.max(1, Math.min(200, Math.floor(Number(opts?.pageSize) || 50)));
+  const empty = { rows: [], total: 0, page, pageSize, totalPages: 1, hasMore: false, counts: {}, counters: { ...EMPTY_CANCEL_RETURN_COUNTERS } };
+  if (!isMongoReady()) return empty;
+  requireMongo();
+  const filter2 = buildDonHoanHuyPageFilter(opts);
+  const skip = (page - 1) * pageSize;
+  try {
+    const total = await DonHoanHuyModel.countDocuments(filter2).maxTimeMS(3e3);
+    const n = Number(total) || 0;
+    const totalPages = Math.max(1, Math.ceil(n / pageSize) || 1);
+    const effectivePage = Math.min(page, totalPages);
+    const docs = await DonHoanHuyModel.find(filter2).sort({ scannedAt: -1, _id: -1 }).skip((effectivePage - 1) * pageSize).limit(pageSize).maxTimeMS(5e3).lean();
+    const rows = (docs || []).map(donHoanHuyDocToOrder).filter((o) => Boolean(o?.orderSn || o?.id));
+    return { rows, total: n, page: effectivePage, pageSize, totalPages, hasMore: effectivePage < totalPages, counts: {}, counters: { ...EMPTY_CANCEL_RETURN_COUNTERS, total: n } };
+  } catch (error) {
+    console.warn("[MongoDB] queryDonHoanHuyPageFromStore failed:", error?.message || error);
+    return empty;
+  }
 }
 async function loadDonHoanHuyAsOrders(limit = 500) {
   if (!isMongoReady()) return [];
@@ -93919,61 +94302,6 @@ async function findOrdersByScanCodesInStore(rawCodes) {
   );
   return result;
 }
-async function mergeDonHoanHuyIntoOrders(orders) {
-  if (!isMongoReady()) return orders;
-  try {
-    requireMongo();
-    const dhh = await loadDonHoanHuyAsOrders(3e3);
-    if (!dhh.length) return orders;
-    const list = Array.isArray(orders) ? [...orders] : [];
-    const bySn = /* @__PURE__ */ new Map();
-    list.forEach((o, i2) => {
-      const sn = String(o?.orderSn || "").replace(/^shopee-/i, "").trim();
-      if (sn) bySn.set(sn, i2);
-    });
-    const pickTn = (...vals) => {
-      for (const v of vals) {
-        const t2 = String(v || "").trim();
-        if (t2 && !isShopeeInternalTrackingCode(t2)) return t2;
-      }
-      return "";
-    };
-    for (const row of dhh) {
-      const sn = String(row.orderSn || "").replace(/^shopee-/i, "").trim();
-      if (!sn) continue;
-      const idx = bySn.get(sn);
-      if (idx !== void 0) {
-        const cur = list[idx];
-        const tn = pickTn(
-          row.tracking_no,
-          row.trackingNumber,
-          cur.tracking_no,
-          cur.trackingNumber
-        );
-        const rtn = pickTn(row.return_tracking_no, cur.return_tracking_no);
-        list[idx] = {
-          ...cur,
-          ...row,
-          items: cur.items?.length ? cur.items : row.items,
-          tracking_no: tn || cur.tracking_no || row.tracking_no,
-          trackingNumber: tn || cur.trackingNumber || row.trackingNumber,
-          return_tracking_no: rtn || cur.return_tracking_no || row.return_tracking_no,
-          local_status: row.local_status,
-          localStatus: row.local_status,
-          internal_status: row.local_status,
-          is_local_return_archived: false
-        };
-      } else {
-        bySn.set(sn, list.length);
-        list.unshift(row);
-      }
-    }
-    return list;
-  } catch (err) {
-    console.warn("[MongoDB] mergeDonHoanHuyIntoOrders:", err?.message || err);
-    return orders;
-  }
-}
 async function ensureRetentionTtlIndexes() {
   requireMongo();
   const recreated = [];
@@ -94820,7 +95148,7 @@ var import_express5 = __toESM(require_express2(), 1);
 var import_fs7 = __toESM(require("fs"), 1);
 var import_path8 = __toESM(require("path"), 1);
 init_appPaths();
-var APP_ROOT2 = resolveAppRoot();
+var APP_ROOT2 = resolveAppRoot2();
 var APP_BASE_URL2 = resolveAppBaseUrl();
 function resolveShopeeCallbackUrl2() {
   const explicit = String(process.env.SHOPEE_CALLBACK_URL || "").trim().replace(/\/$/, "");
@@ -95238,7 +95566,7 @@ var import_express7 = __toESM(require_express2(), 1);
 var import_fs8 = __toESM(require("fs"), 1);
 var import_path9 = __toESM(require("path"), 1);
 init_appPaths();
-var APP_ROOT3 = resolveAppRoot();
+var APP_ROOT3 = resolveAppRoot2();
 var SUPPLIERS_DB_PATH = import_path9.default.join(APP_ROOT3, "data", "suppliers.json");
 function normalizeSupplier(raw) {
   const totalOrderValue = Number(raw?.totalOrderValue) || 0;
@@ -95253,14 +95581,17 @@ function normalizeSupplier(raw) {
     status: raw?.status === "inactive" ? "inactive" : "active"
   };
 }
-function loadSuppliers() {
+function loadSuppliers({ strict = false } = {}) {
   try {
+    recoverImportBatchFiles(import_path9.default.dirname(SUPPLIERS_DB_PATH));
     if (!import_fs8.default.existsSync(SUPPLIERS_DB_PATH)) return [];
     const raw = import_fs8.default.readFileSync(SUPPLIERS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.map(normalizeSupplier) : [];
+    if (!Array.isArray(parsed)) throw new Error("invalid_suppliers_file");
+    return parsed.map(normalizeSupplier);
   } catch (error) {
     console.error("[Suppliers DB] Failed to read suppliers.json:", error);
+    if (strict) throw error;
     return [];
   }
 }
@@ -95359,7 +95690,7 @@ var import_fs9 = __toESM(require("fs"), 1);
 var import_fs10 = require("fs");
 var import_path10 = __toESM(require("path"), 1);
 init_appPaths();
-var APP_ROOT4 = resolveAppRoot();
+var APP_ROOT4 = resolveAppRoot2();
 var EXPENSES_DB_PATH = import_path10.default.join(APP_ROOT4, "data", "expenses.json");
 var EXPENSES_CLEAR_MARKER = import_path10.default.join(APP_ROOT4, "data", ".expenses-cleared-v2");
 async function loadExpenses() {
@@ -95528,7 +95859,7 @@ function parseVnDayEnd(ymd) {
 function loadShopNameMap() {
   const map = /* @__PURE__ */ new Map();
   try {
-    const file = import_path11.default.join(resolveAppRoot(), "data", "channel_settings.json");
+    const file = import_path11.default.join(resolveAppRoot2(), "data", "channel_settings.json");
     if (!import_fs11.default.existsSync(file)) return map;
     const parsed = JSON.parse(import_fs11.default.readFileSync(file, "utf-8"));
     const shops = Array.isArray(parsed?.shops) ? parsed.shops : [];
@@ -96169,7 +96500,7 @@ function mergePosSkuPrices(existing, sku, price, cap = POS_CUSTOMER_SKU_CAP) {
 }
 
 // services/addressBook.js
-var FILE_PATH = import_path12.default.join(resolveAppRoot(), "data", "address_book.json");
+var FILE_PATH = import_path12.default.join(resolveAppRoot2(), "data", "address_book.json");
 var MAX_ENTRIES = 200;
 var RANKING_MAX = 500;
 function readBook() {
@@ -97412,11 +97743,166 @@ var import_express13 = __toESM(require_express2(), 1);
 var import_fs13 = __toESM(require("fs"), 1);
 var import_path13 = __toESM(require("path"), 1);
 init_appPaths();
-var APP_ROOT5 = resolveAppRoot();
+
+// services/importBatch.js
+var import_node_crypto8 = __toESM(require("node:crypto"), 1);
+function importBatchError(message, status = 400) {
+  return Object.assign(new Error(message), { status });
+}
+function money(value, name, fallback) {
+  const n = Number(value ?? fallback);
+  if (!Number.isSafeInteger(n) || n < 0) throw importBatchError(`invalid_${name}`);
+  return n;
+}
+function normalizeImportBatch(body) {
+  const batchId = String(body?.batchId || "").trim();
+  if (!/^[a-zA-Z0-9_-]{8,100}$/.test(batchId)) throw importBatchError("invalid_import_batch_id");
+  if (!Array.isArray(body.items) || body.items.length < 1 || body.items.length > 200) {
+    throw importBatchError("import_batch_requires_1_to_200_items");
+  }
+  const supplierId = String(body.supplierId || body.items[0]?.supplierId || "").trim();
+  if (!supplierId) throw importBatchError("supplier_required");
+  const items = body.items.map((row, i2) => {
+    if (!row || typeof row !== "object") throw importBatchError(`invalid_import_line_${i2 + 1}`);
+    const productId = String(row.productId || "").trim();
+    if (!productId || String(row.supplierId || supplierId) !== supplierId) {
+      throw importBatchError(`invalid_import_line_${i2 + 1}`);
+    }
+    const quantity = money(row.quantity, "quantity");
+    if (quantity === 0) throw importBatchError("invalid_quantity");
+    const newImportPrice = money(row.newImportPrice, "import_price");
+    const importCost = money(row.importCost, "import_cost", 0);
+    const totalAmount = money(quantity * newImportPrice + importCost, "total_amount");
+    const paidAmount = money(row.paidAmount, "paid_amount", 0);
+    if (paidAmount > totalAmount) throw importBatchError("paid_amount_exceeds_total");
+    const date = String(row.date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date))) {
+      throw importBatchError("invalid_import_date");
+    }
+    return {
+      productId,
+      productSku: String(row.productSku || row.sku || "").trim(),
+      quantity,
+      newImportPrice,
+      importCost,
+      totalAmount,
+      paidAmount,
+      date,
+      notes: String(row.notes || "").slice(0, 4e3)
+    };
+  });
+  const fingerprint = import_node_crypto8.default.createHash("sha256").update(JSON.stringify({ supplierId, items })).digest("hex");
+  return { batchId, supplierId, items, fingerprint };
+}
+function productIndex(products) {
+  const ids = /* @__PURE__ */ new Map();
+  const skus = /* @__PURE__ */ new Map();
+  const add = (map, key, hit) => {
+    if (!key) return;
+    const list = map.get(key) || [];
+    if (!list.some((x2) => x2.key === hit.key)) list.push(hit);
+    map.set(key, list);
+  };
+  products.forEach((parent, parentIdx) => {
+    const hit = { parentIdx, key: `${parentIdx}`, childKey: null, childIdx: -1 };
+    add(ids, String(parent.id || "").trim(), hit);
+    add(skus, String(parent.sku || "").trim().toLowerCase(), hit);
+    const childKey = parent.children?.length ? "children" : parent.children_models?.length ? "children_models" : null;
+    if (!childKey) return;
+    parent[childKey].forEach((child, childIdx) => {
+      const childHit = { parentIdx, childKey, childIdx, key: `${parentIdx}/${childKey}/${childIdx}` };
+      for (const id of [child.id, child.shopeeModelId]) add(ids, String(id || "").trim(), childHit);
+      add(skus, String(child.sku || "").trim().toLowerCase(), childHit);
+    });
+  });
+  return { ids, skus };
+}
+function prepareImportProducts(products, items) {
+  const index = productIndex(products);
+  const used = /* @__PURE__ */ new Set();
+  const hits = items.map((item) => {
+    const matches = index.ids.get(item.productId) || index.skus.get(item.productSku.toLowerCase()) || [];
+    if (matches.length !== 1) throw importBatchError(matches.length ? "ambiguous_import_product" : "import_product_not_found");
+    const hit = matches[0];
+    if (used.has(hit.key)) throw importBatchError("duplicate_import_product");
+    used.add(hit.key);
+    return hit;
+  });
+  for (const hit of hits) {
+    if (hit.childKey && used.has(String(hit.parentIdx))) throw importBatchError("import_parent_and_child_conflict");
+  }
+  const next = [...products];
+  const updatedParents = /* @__PURE__ */ new Map();
+  const results = hits.map((hit, i2) => {
+    const item = items[i2];
+    const parent = next[hit.parentIdx];
+    const before = hit.childKey ? parent[hit.childKey][hit.childIdx] : parent;
+    const oldStock = Math.max(0, Math.round(Number(before.stock) || 0));
+    const oldImportPrice = Math.max(0, Math.round(Number(before.importPrice) || 0));
+    const stock = oldStock + item.quantity;
+    if (!Number.isSafeInteger(stock)) throw importBatchError("invalid_stock_total");
+    const product = {
+      ...before,
+      id: String(before.id || item.productId),
+      stock,
+      importPrice: item.newImportPrice,
+      status: before.status === "out_of_stock" ? "active" : before.status,
+      lastSynced: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    if (hit.childKey) {
+      const children = [...parent[hit.childKey]];
+      children[hit.childIdx] = product;
+      next[hit.parentIdx] = {
+        ...parent,
+        [hit.childKey]: children,
+        stock: children.reduce((sum, c) => sum + Math.max(0, Math.round(Number(c.stock) || 0)), 0),
+        lastSynced: product.lastSynced
+      };
+    } else {
+      next[hit.parentIdx] = product;
+    }
+    updatedParents.set(hit.parentIdx, next[hit.parentIdx]);
+    return { product, oldStock, oldImportPrice };
+  });
+  return { products: next, results, updatedProducts: [...updatedParents.values()] };
+}
+function replayImportProducts(products, entries) {
+  const ids = new Set(entries.map((entry) => entry.productId));
+  return products.filter((p) => ids.has(p.id) || [...p.children || [], ...p.children_models || []].some((c) => ids.has(c.id)));
+}
+function buildImportBatchEntries(batch, supplier, results) {
+  const createdAt = (/* @__PURE__ */ new Date()).toISOString();
+  return batch.items.map((item, i2) => {
+    const { product, oldImportPrice } = results[i2];
+    return {
+      ...item,
+      id: `${batch.batchId}-${i2}`,
+      batchId: batch.batchId,
+      batchFingerprint: batch.fingerprint,
+      supplierId: supplier.id,
+      supplierName: supplier.name,
+      productId: product.id,
+      productSku: product.sku || item.productSku,
+      productTitle: product.title || product.name || "",
+      oldImportPrice,
+      status: item.paidAmount === item.totalAmount ? "fully_paid" : item.paidAmount > 0 ? "partial" : "unpaid",
+      warehouseId: "KhoGoc",
+      createdAt,
+      priceChangePercent: oldImportPrice > 0 ? Math.round((item.newImportPrice - oldImportPrice) / oldImportPrice * 1e3) / 10 : null
+    };
+  });
+}
+
+// controllers/importsController.js
+var APP_ROOT5 = resolveAppRoot2();
 var IMPORTS_DB_PATH = import_path13.default.join(APP_ROOT5, "data", "imports.json");
 var deps5 = {
   loadProductById: async () => null,
   loadProducts: async () => [],
+  isProductsDiskMode: () => false,
+  withProductsDiskImportBatch: async () => {
+    throw new Error("import_batch_not_initialized");
+  },
   applyImportStockAndPriceToMainWarehouse: async () => {
     throw new Error("applyImportStockAndPriceToMainWarehouse_not_initialized");
   }
@@ -97424,23 +97910,87 @@ var deps5 = {
 function initImportsController(partial) {
   deps5 = { ...deps5, ...partial };
 }
-function loadImports() {
+function loadImports({ strict = false } = {}) {
   try {
+    recoverImportBatchFiles(import_path13.default.dirname(IMPORTS_DB_PATH));
     if (!import_fs13.default.existsSync(IMPORTS_DB_PATH)) return [];
     const raw = import_fs13.default.readFileSync(IMPORTS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) throw new Error("invalid_imports_file");
+    return parsed;
   } catch (error) {
     console.error("[Imports DB] Failed to read imports.json:", error);
+    if (strict) throw error;
     return [];
   }
 }
 function saveImports(imports) {
+  const temp = `${IMPORTS_DB_PATH}.${process.pid}.tmp`;
   try {
     import_fs13.default.mkdirSync(import_path13.default.dirname(IMPORTS_DB_PATH), { recursive: true });
-    import_fs13.default.writeFileSync(IMPORTS_DB_PATH, JSON.stringify(imports, null, 2), "utf-8");
+    recoverImportBatchFiles(import_path13.default.dirname(IMPORTS_DB_PATH));
+    import_fs13.default.writeFileSync(temp, JSON.stringify(imports, null, 2), "utf-8");
+    import_fs13.default.renameSync(temp, IMPORTS_DB_PATH);
   } catch (error) {
     console.error("[Imports DB] Failed to write imports.json:", error);
+    try {
+      import_fs13.default.unlinkSync(temp);
+    } catch {
+    }
+    throw error;
+  }
+}
+async function createImportBatch(req, res) {
+  const started2 = Date.now();
+  try {
+    const batch = normalizeImportBatch(req.body);
+    if (!deps5.isProductsDiskMode()) throw importBatchError("import_batch_requires_disk_storage", 409);
+    const result = await deps5.withProductsDiskImportBatch((products, commit) => {
+      const imports = loadImports({ strict: true });
+      const suppliers = loadSuppliers({ strict: true });
+      const previous = imports.filter((entry) => entry.batchId === batch.batchId);
+      if (previous.length) {
+        if (previous.length !== batch.items.length || previous.some((entry) => entry.batchFingerprint !== batch.fingerprint)) {
+          throw importBatchError("import_batch_id_conflict", 409);
+        }
+        return {
+          entries: previous,
+          updatedProducts: replayImportProducts(products, previous),
+          supplier: suppliers.find((s2) => s2.id === batch.supplierId) || null,
+          replayed: true
+        };
+      }
+      const supplierIndex = suppliers.findIndex((s2) => s2.id === batch.supplierId);
+      if (supplierIndex < 0) throw importBatchError("supplier_not_found", 404);
+      const supplier = suppliers[supplierIndex];
+      const applied = prepareImportProducts(products, batch.items);
+      const entries = buildImportBatchEntries(batch, supplier, applied.results);
+      const total = entries.reduce((sum, entry) => sum + entry.totalAmount, 0);
+      const paid = entries.reduce((sum, entry) => sum + entry.paidAmount, 0);
+      const updatedSupplier = {
+        ...supplier,
+        totalOrderValue: supplier.totalOrderValue + total,
+        totalPaid: supplier.totalPaid + paid,
+        totalDebt: supplier.totalDebt + total - paid
+      };
+      if (![total, paid, updatedSupplier.totalOrderValue, updatedSupplier.totalPaid, updatedSupplier.totalDebt].every(Number.isSafeInteger)) {
+        throw importBatchError("invalid_supplier_totals");
+      }
+      const nextSuppliers = [...suppliers];
+      nextSuppliers[supplierIndex] = updatedSupplier;
+      commit(applied.products, [...entries].reverse().concat(imports), nextSuppliers);
+      return { entries, updatedProducts: applied.updatedProducts, supplier: updatedSupplier, replayed: false };
+    });
+    console.log("[Imports] batch committed", { batchId: batch.batchId, count: result.entries.length, replayed: result.replayed, elapsedMs: Date.now() - started2 });
+    return res.status(result.replayed ? 200 : 201).json({ success: true, batchId: batch.batchId, ...result });
+  } catch (error) {
+    const pending = error?.code === "IMPORT_COMMIT_PENDING";
+    console.error("[Imports] batch failed:", error);
+    return res.status(pending ? 503 : error?.status || 500).json({
+      success: false,
+      error: error?.message || "import_batch_failed",
+      retrySameBatch: pending
+    });
   }
 }
 async function listImports(_req, res) {
@@ -97588,7 +98138,11 @@ async function createImport(req, res) {
   }
 }
 async function clearAllImports(_req, res) {
-  saveImports([]);
+  try {
+    saveImports([]);
+  } catch {
+    return res.status(500).json({ success: false, error: "clear_imports_failed" });
+  }
   console.log("[Imports] \u0110\xE3 x\xF3a s\u1EA1ch to\xE0n b\u1ED9 l\u1ECBch s\u1EED nh\u1EADp h\xE0ng.");
   return res.json({ success: true, cleared: true, imports: [] });
 }
@@ -97707,6 +98261,7 @@ router11.get("/supplier-report", getSupplierReport);
 router11.get("/history/:productId", getImportHistory);
 router11.get("/product-context/:productId", getImportProductContext);
 router11.post("/", createImport);
+router11.post("/batch", createImportBatch);
 router11.post("/clear-all", clearAllImports);
 var importsRoutes_default = router11;
 
@@ -97717,7 +98272,7 @@ var import_express14 = __toESM(require_express2(), 1);
 var import_fs14 = __toESM(require("fs"), 1);
 var import_path14 = __toESM(require("path"), 1);
 init_appPaths();
-var APP_ROOT6 = resolveAppRoot();
+var APP_ROOT6 = resolveAppRoot2();
 var MATERIALS_DB_PATH = import_path14.default.join(APP_ROOT6, "data", "materials.json");
 function loadMaterials() {
   try {
@@ -97874,7 +98429,7 @@ var import_express15 = __toESM(require_express2(), 1);
 var import_fs15 = __toESM(require("fs"), 1);
 var import_path15 = __toESM(require("path"), 1);
 init_appPaths();
-var APP_ROOT7 = resolveAppRoot();
+var APP_ROOT7 = resolveAppRoot2();
 var MATERIAL_IMPORTS_DB_PATH = import_path15.default.join(APP_ROOT7, "data", "material_imports.json");
 function loadMaterialImports() {
   try {
@@ -118987,7 +119542,7 @@ function getApiKeyFromEnv() {
 var import_fs17 = __toESM(require("fs"), 1);
 var import_path16 = __toESM(require("path"), 1);
 init_appPaths();
-var APP_ROOT8 = resolveAppRoot();
+var APP_ROOT8 = resolveAppRoot2();
 var ENV_PATH = import_path16.default.join(APP_ROOT8, ".env");
 function updateEnvVar(key, value) {
   let content = "";
@@ -119013,7 +119568,7 @@ function maskApiKey(key) {
 var import_fs18 = __toESM(require("fs"), 1);
 var import_path17 = __toESM(require("path"), 1);
 init_appPaths();
-var CONFIG_PATH = import_path17.default.join(resolveAppRoot(), "data", "logistics_config.json");
+var CONFIG_PATH = import_path17.default.join(resolveAppRoot2(), "data", "logistics_config.json");
 function readJsonFile() {
   try {
     if (!import_fs18.default.existsSync(CONFIG_PATH)) return {};
@@ -126563,7 +127118,7 @@ var import_ip_address = __toESM(require_ip_address(), 1);
 var import_node_net3 = require("node:net");
 var import_debug = __toESM(require_src5(), 1);
 var import_node_buffer3 = require("node:buffer");
-var import_node_crypto8 = require("node:crypto");
+var import_node_crypto9 = require("node:crypto");
 var import_node_net4 = require("node:net");
 var ipv4CompatibleSubnet = new import_ip_address.Address6("::/96");
 function ipKeyGenerator(ip, ipv6Subnet = 56) {
@@ -126745,7 +127300,7 @@ var getResetSeconds = (windowMs, resetTime) => {
   return resetSeconds;
 };
 var getPartitionKey = (key) => {
-  const hash2 = (0, import_node_crypto8.createHash)("sha256");
+  const hash2 = (0, import_node_crypto9.createHash)("sha256");
   hash2.update(key);
   const partitionKey = hash2.digest("hex").slice(0, 12);
   return import_node_buffer3.Buffer.from(partitionKey).toString("base64");
@@ -128665,7 +129220,7 @@ var import_fs20 = __toESM(require("fs"), 1);
 var import_path20 = __toESM(require("path"), 1);
 init_appPaths();
 init_concurrency();
-var APP_ROOT10 = resolveAppRoot();
+var APP_ROOT10 = resolveAppRoot2();
 var SCAN_BG_QUEUE_PATH = import_path20.default.join(APP_ROOT10, "data", "scan-bg-queue.json");
 var SCAN_BG_ENQUEUE_CHUNK_SIZE = 50;
 var SCAN_BG_ENQUEUE_PAUSE_MS = 20;
@@ -132660,7 +133215,7 @@ function createCoalescedTask(work, { minIntervalMs = 3e4, initialDelayMs = 1e3, 
 var import_fs22 = __toESM(require("fs"), 1);
 var import_path22 = __toESM(require("path"), 1);
 init_appPaths();
-var APP_ROOT11 = resolveAppRoot();
+var APP_ROOT11 = resolveAppRoot2();
 var ORDERS_DB_PATH = import_path22.default.join(APP_ROOT11, "data", "orders.json");
 var HANDED_OVER_CLEANUP_MARKER = import_path22.default.join(APP_ROOT11, "data", ".cleanup-handed-over-v2");
 var deps14 = {
@@ -132714,17 +133269,26 @@ function mirrorTrackingFieldsForRead(order) {
   }
   return order;
 }
+async function writeOrdersJsonMirrorFile(orders) {
+  const sanitized = (Array.isArray(orders) ? orders : []).map(deps14.repairMisassignedTracking);
+  await import_fs22.default.promises.mkdir(import_path22.default.dirname(ORDERS_DB_PATH), { recursive: true });
+  const tempPath = `${ORDERS_DB_PATH}.tmp`;
+  await import_fs22.default.promises.writeFile(tempPath, JSON.stringify(sanitized), "utf-8");
+  await import_fs22.default.promises.rename(tempPath, ORDERS_DB_PATH);
+  getOrderLookupIndex(sanitized);
+}
 function queueOrdersJsonMirror(orders) {
   ordersJsonMirrorSnapshot = Array.isArray(orders) ? orders : [];
   if (ordersJsonMirrorQueued) return;
   ordersJsonMirrorQueued = true;
-  setImmediate(() => {
+  setImmediate(async () => {
     const snapshot = ordersJsonMirrorSnapshot;
     ordersJsonMirrorSnapshot = null;
     ordersJsonMirrorQueued = false;
     if (!snapshot) return;
     try {
-      saveOrders(snapshot);
+      await writeOrdersJsonMirrorFile(snapshot);
+      console.log(`[Orders JSON Mirror] WRITE OK \u2014 count=${snapshot.length}`);
     } catch (err) {
       console.warn("[Orders JSON Mirror] skipped:", err?.message || err);
     }
@@ -133162,7 +133726,7 @@ async function handOverOrderToCarrierByIndex(orders, index, opts) {
 }
 
 // controllers/ordersController.js
-var APP_ROOT12 = resolveAppRoot();
+var APP_ROOT12 = resolveAppRoot2();
 function parseShopIdsParam(rawShopIds, rawShopId) {
   const out = [];
   const seen = /* @__PURE__ */ new Set();
@@ -133322,7 +133886,6 @@ async function persistExternalLogistics(order) {
   invalidateExternalOrders();
   return updated;
 }
-var ordersRefreshInFlight = null;
 var ordersRefreshCache = null;
 var ordersRefreshCoalesce = /* @__PURE__ */ new Map();
 var ordersCounterCoalesce = /* @__PURE__ */ new Map();
@@ -133370,115 +133933,6 @@ function initOrdersController(partial) {
 }
 function invalidateOrdersRefreshCache() {
   ordersRefreshCache = null;
-}
-async function readOrdersForRefresh(limit, opts = {}) {
-  const tab = String(opts.tab || "").trim().toLowerCase();
-  const shopId = String(opts.shopId || "").trim();
-  const shopIds = Array.isArray(opts.shopIds) ? opts.shopIds : [];
-  if (tab) {
-    if (tab === "received_cancel_returns" || tab === "received-cancel-returns" || tab === "da_nhan_huy_hoan") {
-      const pageSize2 = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(Math.floor(Number(limit)), 5e3) : 50;
-      const dhh = await loadDonHoanHuyAsOrders(pageSize2);
-      console.log(
-        `[GET /api/orders/refresh] tab=${tab} source=don_hoan_huy \u2192 ${dhh.length} \u0111\u01A1n`
-      );
-      return dhh.filter((order) => Boolean(order?.orderSn || order?.id));
-    }
-    const tabFilter = orderTabFilter(tab);
-    console.log(
-      `[GET /api/orders/refresh] tab=${tab} shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} filter=`,
-      JSON.stringify(tabFilter)
-    );
-    const pageSize = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(Math.floor(Number(limit)), 5e3) : 50;
-    const page = await queryOrdersPageFromStore({
-      page: 1,
-      pageSize,
-      tab,
-      shopId,
-      shopIds: shopIds.length ? shopIds : void 0,
-      printStatus: String(opts.printStatus || ""),
-      skipCounts: true
-    });
-    console.log(
-      `[GET /api/orders/refresh] tab=${tab} \u2192 rows=${page.rows.length} total=${page.total} counts=`,
-      page.counts
-    );
-    return page.rows.filter((order) => Boolean(order?.orderSn || order?.id));
-  }
-  const now = Date.now();
-  if (ordersRefreshCache && ordersRefreshCache.expiresAt > now && !shopId) {
-    const cached = ordersRefreshCache.orders;
-    if (limit && limit > 0) {
-      try {
-        const priority = await loadPriorityTabOrdersFromStore({
-          perTabLimit: Math.min(500, Math.max(50, limit))
-        });
-        const byId = /* @__PURE__ */ new Map();
-        for (const o of priority) {
-          const id = String(o?.id || o?.orderSn || "").trim();
-          if (id) byId.set(id, o);
-        }
-        for (const o of cached.slice(0, limit)) {
-          const id = String(o?.id || o?.orderSn || "").trim();
-          if (id && !byId.has(id)) byId.set(id, o);
-        }
-        return [...byId.values()];
-      } catch (prioErr) {
-        console.warn(
-          "[GET /api/orders/refresh] priority merge (cache) skipped:",
-          prioErr?.message || prioErr
-        );
-        return cached.slice(0, limit);
-      }
-    }
-    return cached;
-  }
-  if (limit && limit > 0) {
-    const recent = await loadOrdersFromStore({ limit });
-    let priority = [];
-    try {
-      priority = await loadPriorityTabOrdersFromStore({
-        perTabLimit: Math.min(500, Math.max(50, limit)),
-        shopId: shopId || void 0,
-        shopIds: shopIds.length > 1 ? shopIds : void 0
-      });
-    } catch (prioErr) {
-      console.warn(
-        "[GET /api/orders/refresh] priority merge skipped:",
-        prioErr?.message || prioErr
-      );
-    }
-    const byId = /* @__PURE__ */ new Map();
-    for (const o of priority) {
-      const id = String(o?.id || o?.orderSn || "").trim();
-      if (id) byId.set(id, o);
-    }
-    for (const o of recent) {
-      const id = String(o?.id || o?.orderSn || "").trim();
-      if (id && !byId.has(id)) byId.set(id, o);
-    }
-    const merged = [...byId.values()].filter(
-      (order) => Boolean(order?.orderSn || order?.id)
-    );
-    console.log(
-      `[GET /api/orders/refresh] shallow limit=${limit} recent=${recent.length} priority=${priority.length} merged=${merged.length}`
-    );
-    return merged;
-  }
-  if (!ordersRefreshInFlight) {
-    ordersRefreshInFlight = loadOrdersFromStore({ limit: 2e3, lookbackDays: 90 }).then((orders) => {
-      const validOrders = orders.filter((order) => Boolean(order?.orderSn || order?.id));
-      ordersRefreshCache = {
-        orders: validOrders,
-        expiresAt: Date.now() + 3e4
-        // Tăng từ 1.5s → 30s để giảm tải MongoDB
-      };
-      return validOrders;
-    }).finally(() => {
-      ordersRefreshInFlight = null;
-    });
-  }
-  return ordersRefreshInFlight;
 }
 function isOrderPrintedFlag(order) {
   if (!order || typeof order !== "object") return false;
@@ -133565,32 +134019,17 @@ async function refreshOrders(req, res) {
           error: "client_aborted"
         };
       }
-      if (!searchQ && (tabLc === "received_cancel_returns" || tabLc === "received-cancel-returns" || tabLc === "da_nhan_huy_hoan")) {
-        const allReceived = await deps15.withLocalDbTimeout(
-          readOrdersForRefresh(5e3, {
-            tab,
-            shopId,
-            shopIds,
-            printStatus
-          }),
-          1e4,
-          "orders_refresh_received"
-        );
-        await new Promise((resolve) => setTimeout(resolve, 20));
-        total = allReceived.length;
-        const start = (page - 1) * limit;
-        mergedOrders = allReceived.slice(start, start + limit);
-        hasMore = page * limit < total;
-      } else {
+      {
         const pageResult = await deps15.withLocalDbTimeout(
           queryOrdersPageFromStore({
             page,
             pageSize: limit,
-            tab: searchQ && tabLc !== "external_orders" ? "" : tab,
-            kind: searchQ ? "" : kind,
+            tab: tabLc === "external_orders" || tabLc === "received_cancel_returns" || tabLc === "received-cancel-returns" || tabLc === "da_nhan_huy_hoan" ? tab : searchQ ? "" : tab,
+            kind: searchQ && !tabLc.includes("received_cancel") ? "" : kind,
             shopId,
             shopIds: shopIds.length ? shopIds : void 0,
             query: searchQ,
+            carrier: String(req.query.carrier || "").trim(),
             printStatus,
             skipCounts: true,
             groupPicking,
@@ -133606,16 +134045,6 @@ async function refreshOrders(req, res) {
         total = pageResult.total || mergedOrders.length;
         hasMore = Boolean(pageResult.hasMore);
         if (pageResult.counters) counters = pageResult.counters;
-        if (!tab) {
-          try {
-            mergedOrders = await mergeDonHoanHuyIntoOrders(mergedOrders);
-          } catch (mergeErr) {
-            console.warn(
-              "[GET /api/orders/refresh] mergeDonHoanHuy skipped:",
-              mergeErr?.message || mergeErr
-            );
-          }
-        }
       }
       if (req.aborted || req.destroyed) {
         return {
@@ -134203,6 +134632,14 @@ async function recalculateOrderCounts(req, res) {
 }
 async function batchDeleteOrders(req, res) {
   try {
+    const requestedTab = String(req.body?.tab || "").trim().toLowerCase();
+    if (requestedTab && !["received_cancel_returns", "received-cancel-returns", "da_nhan_huy_hoan"].includes(requestedTab)) {
+      return res.status(403).json({
+        success: false,
+        error: "batch_delete_forbidden_tab",
+        message: "Ch\u1EC9 cho ph\xE9p x\xF3a h\xE0ng lo\u1EA1t trong m\u1EE5c \u0110\xE3 nh\u1EADn \u0111\u01A1n h\u1EE7y, \u0111\u01A1n ho\xE0n."
+      });
+    }
     const idsOrSns = req.body?.ids ?? req.body?.orderSns ?? req.body?.order_sns ?? [];
     const normalized = [...new Set(
       (Array.isArray(idsOrSns) ? idsOrSns : []).map((k) => String(k || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
@@ -134210,50 +134647,50 @@ async function batchDeleteOrders(req, res) {
     if (normalized.length === 0) {
       return res.status(400).json({ success: false, error: "Thi\u1EBFu danh s\xE1ch id/orderSn." });
     }
+    if (normalized.length > 200) {
+      return res.status(413).json({
+        success: false,
+        error: "batch_delete_limit_exceeded",
+        message: "M\u1ED7i l\u1EA7n ch\u1EC9 \u0111\u01B0\u1EE3c x\xF3a t\u1ED1i \u0111a 200 \u0111\u01A1n."
+      });
+    }
     let mongoDeleted = 0;
     let donHoanHuyDeleted = 0;
     let jsonRemoved = 0;
+    let deletedOrderSns = [];
+    let rejectedOrderSns = [];
     if (isMongoReady()) {
-      try {
-        mongoDeleted = await deleteOrdersFromStore(normalized);
-      } catch (err) {
-        console.warn("[Orders batch-delete] orders Mongo:", err?.message || err);
-      }
-      try {
-        const DonHoanHuy2 = (await Promise.resolve().then(() => (init_DonHoanHuy(), DonHoanHuy_exports))).default;
-        const dhhResult = await DonHoanHuy2.deleteMany({ orderSn: { $in: normalized } });
-        donHoanHuyDeleted = Number(dhhResult.deletedCount || 0);
-        if (donHoanHuyDeleted > 0) {
-          console.log(`[Orders batch-delete] don_hoan_huy deleted=${donHoanHuyDeleted}`);
-        }
-      } catch (err) {
-        console.warn("[Orders batch-delete] don_hoan_huy Mongo:", err?.message || err);
-      }
-    }
-    try {
-      const orders = loadOrders();
-      const snSet = new Set(normalized);
-      const before = orders.length;
-      const kept = orders.filter((o) => {
-        const sn = String(o?.orderSn || o?.id || "").replace(/^shopee-/i, "").trim();
-        return !snSet.has(sn);
+      const result = await deleteReceivedCancelReturnOrdersFromStore(normalized);
+      mongoDeleted = result.mongoDeleted;
+      donHoanHuyDeleted = result.donHoanHuyDeleted;
+      deletedOrderSns = result.deletedOrderSns;
+      rejectedOrderSns = result.rejectedOrderSns;
+      invalidateOrdersRefreshCache();
+      invalidateTabCountCache();
+      orderCounterMemCache.clear();
+    } else {
+      return res.status(503).json({
+        success: false,
+        error: "mongodb_not_ready",
+        message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng; d\u1EEF li\u1EC7u ch\u01B0a b\u1ECB x\xF3a."
       });
-      jsonRemoved = before - kept.length;
-      if (jsonRemoved > 0) saveOrders(kept);
-    } catch (err) {
-      console.warn("[Orders batch-delete] JSON:", err?.message || err);
     }
     if (mongoDeleted === 0 && jsonRemoved === 0 && donHoanHuyDeleted === 0) {
-      return res.status(404).json({ success: false, error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n \u0111\u1EC3 x\xF3a." });
+      return res.status(404).json({
+        success: false,
+        error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n \u0111\xE3 nh\u1EADn h\u1EE7y/ho\xE0n \u0111\u1EC3 x\xF3a.",
+        rejectedOrderSns
+      });
     }
-    console.log(`[Orders batch-delete] ids=${normalized.length} orders=${mongoDeleted} don_hoan_huy=${donHoanHuyDeleted} json=${jsonRemoved}`);
+    console.log(`[Orders batch-delete] ids=${normalized.length} orders=${mongoDeleted} don_hoan_huy=${donHoanHuyDeleted}`);
     return res.json({
       success: true,
       deleted: mongoDeleted + donHoanHuyDeleted + jsonRemoved,
       mongoDeleted,
       donHoanHuyDeleted,
       jsonRemoved,
-      orderSns: normalized.slice(0, 100)
+      orderSns: (deletedOrderSns.length ? deletedOrderSns : normalized).slice(0, 100),
+      rejectedOrderSns: rejectedOrderSns.slice(0, 100)
     });
   } catch (error) {
     console.error("[Orders batch-delete] error:", error);
@@ -134478,7 +134915,7 @@ async function lookupOrder(req, res) {
     let foundRaw = null;
     try {
       foundRaw = await findOrderByScanCodeInStore(code, { lean: leanScanner });
-      if (foundRaw && !deps15.isValidOrder(foundRaw)) foundRaw = null;
+      if (foundRaw && (leanScanner ? !String(foundRaw.orderSn || "").trim() || !foundRaw.id : !deps15.isValidOrder(foundRaw))) foundRaw = null;
       if (foundRaw) foundRaw = mirrorTrackingFieldsForRead(foundRaw);
     } catch (err) {
       console.warn("[Orders Lookup] mongo failed:", err?.message || err);
@@ -134493,6 +134930,8 @@ async function lookupOrder(req, res) {
     }
     const ms = Date.now() - t0;
     if (leanScanner) {
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Server-Timing", `scannerLookup;dur=${ms}`);
       if (ms > 300) {
         console.warn(`[Orders Lookup] lean scanner slow: ${ms}ms code=${code}`);
       }
@@ -139394,7 +139833,7 @@ async function parseOrderAddress(req, res) {
 }
 
 // controllers/orderDraftsController.js
-var import_node_crypto9 = require("node:crypto");
+var import_node_crypto10 = require("node:crypto");
 var import_mongoose19 = __toESM(require("mongoose"), 1);
 
 // models/OrderDraft.js
@@ -139426,7 +139865,7 @@ function vietnamDateBoundary(value, end = false) {
   if (end) localDate.setUTCDate(localDate.getUTCDate() + 1);
   return new Date(localDate.getTime() - 7 * 60 * 60 * 1e3);
 }
-var money = (v) => {
+var money2 = (v) => {
   const n = Number(v ?? 0);
   if (!Number.isFinite(n) || n < 0 || n > 1e12) throw new Error("S\u1ED1 ti\u1EC1n kh\xF4ng h\u1EE3p l\u1EC7.");
   return Math.round(n);
@@ -139452,7 +139891,7 @@ function normalizeDraft(body) {
     if (p[k] != null) payload[k] = text(p[k]);
   }
   for (const k of ["shippingFee", "prepaidAmount", "orderDiscount", "packageWeight", "packageLength", "packageWidth", "packageHeight"]) {
-    if (p[k] != null) payload[k] = money(p[k]);
+    if (p[k] != null) payload[k] = money2(p[k]);
   }
   for (const k of ["walk_in", "save_to_address_book", "allowInspect", "partialDelivery"]) {
     if (p[k] != null) payload[k] = p[k] === true;
@@ -139473,10 +139912,10 @@ function normalizeDraft(body) {
       sku: text(it.sku),
       productImage: text(it.productImage, 4e3),
       quantity,
-      price: money(it.price ?? it.sellingPrice),
-      sellingPrice: money(it.price ?? it.sellingPrice),
-      importPrice: money(it.importPrice),
-      weightGrams: money(it.weightGrams ?? 100),
+      price: money2(it.price ?? it.sellingPrice),
+      sellingPrice: money2(it.price ?? it.sellingPrice),
+      importPrice: money2(it.importPrice),
+      weightGrams: money2(it.weightGrams ?? 100),
       isCustom: it.isCustom === true
     };
   });
@@ -139535,7 +139974,7 @@ async function saveOrderDraft(req, res) {
   } catch (error) {
     return res.status(400).json({ success: false, error: error.message });
   }
-  const id = text(req.params.id || req.body.id || (0, import_node_crypto9.randomUUID)(), 100);
+  const id = text(req.params.id || req.body.id || (0, import_node_crypto10.randomUUID)(), 100);
   if (!/^[a-zA-Z0-9-]{10,100}$/.test(id)) return res.status(400).json({ success: false, error: "M\xE3 nh\xE1p kh\xF4ng h\u1EE3p l\u1EC7." });
   try {
     if (!req.params.id) {
@@ -139690,7 +140129,7 @@ init_auth();
 
 // controllers/shopeeAuthController.js
 init_appPaths();
-var APP_ROOT13 = resolveAppRoot();
+var APP_ROOT13 = resolveAppRoot2();
 var deps18 = {
   logOAuthSaveError: (ctx, err) => console.error(ctx, err)
 };
@@ -141053,7 +141492,7 @@ function validateShopeeLeafCategoryId(categoryIdRaw, cache) {
 init_wooCommerce();
 
 // services/wooCommerceOrderSync.js
-var import_node_crypto10 = __toESM(require("node:crypto"), 1);
+var import_node_crypto11 = __toESM(require("node:crypto"), 1);
 init_wooCommerce();
 init_concurrency();
 var WOO_SYNC_INTERVAL_MS = 6e4;
@@ -141071,7 +141510,7 @@ function wooSyncIntervalMs(env2 = process.env) {
 }
 function wooShopSyncKey(shop) {
   const url2 = String(shop.wooUrl || "").trim().replace(/\/+$/, "").toLowerCase();
-  return `woo-orders:${import_node_crypto10.default.createHash("sha256").update(url2).digest("hex")}`;
+  return `woo-orders:${import_node_crypto11.default.createHash("sha256").update(url2).digest("hex")}`;
 }
 function createWooCommerceOrderSync(deps23) {
   const fetchOrders = deps23.fetchOrders || fetchWooCommerceOrders;
@@ -141096,7 +141535,7 @@ function createWooCommerceOrderSync(deps23) {
       let totalOrdersImported = 0;
       for (const shop of shops) {
         const key = wooShopSyncKey(shop);
-        const token = import_node_crypto10.default.randomUUID();
+        const token = import_node_crypto11.default.randomUUID();
         let claimed = false;
         let imported = 0;
         try {
@@ -141394,7 +141833,7 @@ async function updateWooCommerceOrderStatus(req, res) {
 init_wooCommerce();
 
 // modules/orders/orderWorkLock.js
-var import_node_crypto11 = __toESM(require("node:crypto"), 1);
+var import_node_crypto12 = __toESM(require("node:crypto"), 1);
 var import_mongoose21 = __toESM(require("mongoose"), 1);
 var import_node_os4 = __toESM(require("node:os"), 1);
 var completedOwners = /* @__PURE__ */ new Map();
@@ -141406,7 +141845,7 @@ async function withOrderWorkLock(shopId, orderSn, work) {
   if (import_mongoose21.default.connection.readyState !== 1 || !db) throw new Error("mongodb_not_ready");
   const locks = db.collection("shopee_order_work_locks");
   const key = `${shopId}:${orderSn}`;
-  const owner = import_node_crypto11.default.randomUUID();
+  const owner = import_node_crypto12.default.randomUUID();
   if (completedOwners.has(key)) {
     await locks.deleteOne({ _id: key, owner: completedOwners.get(key) });
     completedOwners.delete(key);
@@ -142609,7 +143048,7 @@ process.on("unhandledRejection", (err) => {
   } catch {
   }
 });
-var APP_ROOT14 = resolveAppRoot();
+var APP_ROOT14 = resolveAppRoot2();
 var isCpanelPassengerRuntime = Boolean(
   String(
     process.env.PASSENGER_APP_ROOT || process.env.PASSENGER_APP_ENV || process.env.CPANEL_APP_NAME || process.env.CPANEL_RUNTIME || ""
@@ -148118,7 +148557,7 @@ async function backfillMissingReturnTracking30d(opts) {
     returnTrackingBackfill30dInFlight = false;
   }
 }
-async function shopeeGetOrderDetail(shopId, accessToken, orderSnList) {
+async function shopeeGetOrderDetail(shopId, accessToken, orderSnList, options) {
   if (orderSnList.length === 0 || orderSnList.length > SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS) {
     throw new Error(
       `get_order_detail requires 1\u2013${SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS} order_sn values; received ${orderSnList.length}`
@@ -148156,7 +148595,8 @@ async function shopeeGetOrderDetail(shopId, accessToken, orderSnList) {
   try {
     const { json: json2, httpStatus } = await shopeeFetchJsonWithRetry(
       url2,
-      `get_order_detail shop_id=${apiShopId} (${orderSnList.length} orders)`
+      `get_order_detail shop_id=${apiShopId} (${orderSnList.length} orders)`,
+      options ? { ...options, maxAttempts: 1 } : void 0
     );
     const returned = Array.isArray(json2?.response?.order_list) ? json2.response.order_list.length : Array.isArray(json2?.order_list) ? json2.order_list.length : 0;
     console.log(
@@ -151129,12 +151569,16 @@ function arrangeShipmentLocal(order, method) {
 }
 async function arrangeShipment(order, method, signal, opts) {
   if (order.channel === "shopee") {
-    return shipShopeeOrderReal(order, method, signal, opts);
+    const result = await shipShopeeOrderReal(order, method, signal, opts);
+    if (!result.success && !isAlreadyShippedError(result)) {
+      await persistPendingShopeeCheckFlag([order], 0, result.message || result.error || "Shopee rejected shipment");
+    }
+    return result;
   }
   return arrangeShipmentLocal(order, method);
 }
 var SHOPEE_SHIPPING_DOCUMENT_TYPE = "NORMAL_AIR_WAYBILL";
-async function shopeeGetTrackingNumber(shopId, accessToken, orderSn, packageNumber) {
+async function shopeeGetTrackingNumber(shopId, accessToken, orderSn, packageNumber, options) {
   const apiPath = "/api/v2/logistics/get_tracking_number";
   try {
     const timestamp2 = Math.floor(Date.now() / 1e3);
@@ -151150,7 +151594,7 @@ async function shopeeGetTrackingNumber(shopId, accessToken, orderSn, packageNumb
     });
     if (packageNumber) params.set("package_number", packageNumber);
     const url2 = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
-    const res = await fetchWithTimeout(url2);
+    const res = await fetchWithTimeout(url2, { signal: options?.signal }, options?.timeoutMs);
     const json2 = await res.json();
     console.log(
       `[Shopee API] GET ${apiPath} FULL PAYLOAD order_sn=${orderSn} HTTP=${res.status}:`,
@@ -151163,7 +151607,7 @@ async function shopeeGetTrackingNumber(shopId, accessToken, orderSn, packageNumb
     return { error: "get_tracking_number_exception", message, order_sn: orderSn };
   }
 }
-async function shopeeGetShippingDocumentDataInfo(shopId, accessToken, orderSn, packageNumber) {
+async function shopeeGetShippingDocumentDataInfo(shopId, accessToken, orderSn, packageNumber, options) {
   const apiPath = "/api/v2/logistics/get_shipping_document_data_info";
   const timestamp2 = Math.floor(Date.now() / 1e3);
   const sign2 = shopeeSign(apiPath, timestamp2, accessToken, shopId);
@@ -151179,8 +151623,9 @@ async function shopeeGetShippingDocumentDataInfo(shopId, accessToken, orderSn, p
   const res = await fetchWithTimeout(url2, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
+    body: JSON.stringify(body),
+    signal: options?.signal
+  }, options?.timeoutMs);
   const json2 = await res.json();
   console.log(
     `[Shopee API] POST ${apiPath} FULL PAYLOAD order_sn=${orderSn} HTTP=${res.status}:`,
@@ -151260,17 +151705,17 @@ async function shopeeCreateShippingDocument(shopId, accessToken, orderList, sign
       JSON.stringify(json2)
     );
     if (!res.ok) {
-      throw new Error(
+      throw Object.assign(new Error(
         `create_shipping_document HTTP ${res.status}: ${String(json2?.message || json2?.error || "Shopee request failed")}`
-      );
+      ), { code: String(json2?.error || ""), httpStatus: res.status, orderResults: resultList });
     }
     if (json2?.error) {
       const failSummary = failedResultList.map(
         (item) => `${item?.order_sn || "?"}/${item?.package_number || "?"}: ${item?.fail_error || ""} \u2014 ${item?.fail_message || ""}`
       ).join(" | ");
-      throw new Error(
+      throw Object.assign(new Error(
         `${String(json2.error)}: ${String(json2?.message || "Shopee t\u1EEB ch\u1ED1i create_shipping_document")}${failSummary ? ` | result_list: ${failSummary}` : ""}`
-      );
+      ), { code: String(json2.error), httpStatus: res.status, orderResults: resultList });
     }
     if (failedResultList.length > 0) {
       console.error(
@@ -151503,6 +151948,7 @@ function toShippingDocApiItems(rows) {
 }
 function isBenignCreateShippingFail(failError, failMessage) {
   const text2 = `${String(failError || "")} ${String(failMessage || "")}`.toLowerCase();
+  if (/not[_.\s-]*(exist|found)|does not exist|invalid|reject|denied|cannot|can not/i.test(text2)) return false;
   return /already|created|exist|duplicate|processing/i.test(text2);
 }
 async function cacheOrderWaybillPdf(orderSn, buffer) {
@@ -151703,29 +152149,17 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
     }).filter(
       (r2) => Boolean(String(r2.order_sn || "").trim() && String(r2.package_number || "").trim())
     );
-    if (enriched.length !== orderList.length) {
-      const missing = orderList.filter((row) => !String(row?.package_number || "").trim()).map((row) => String(row?.order_sn || "(missing_order_sn)"));
-      return {
-        success: false,
-        readyOrderSns: [],
-        skippedOrders: missing.map((orderSn) => ({
-          orderSn,
-          error: "missing_package_number",
-          message: "Thi\u1EBFu ki\u1EC7n h\xE0ng"
-        })),
-        error: "missing_package_number",
-        message: `Thi\u1EBFu ki\u1EC7n h\xE0ng: ${missing.join(", ")}`
-      };
-    }
+    const invalidSns = new Set(orderList.filter((row) => !String(row?.order_sn || "").trim() || !String(row?.package_number || "").trim()).map((row) => String(row?.order_sn || "(missing_order_sn)").trim()));
+    const skippedOrders = [...invalidSns].map((orderSn) => ({ orderSn, error: "missing_package_number", message: "Thi\u1EBFu ki\u1EC7n h\xE0ng" }));
     const byOrder = /* @__PURE__ */ new Map();
     for (const row of enriched) {
+      if (invalidSns.has(row.order_sn)) continue;
       const list = byOrder.get(row.order_sn) || [];
       list.push(row);
       byOrder.set(row.order_sn, list);
     }
     const readyOrderSns = [];
     const readyOrderRows = [];
-    const skippedOrders = [];
     let lastOk = null;
     const pendingByOrder = /* @__PURE__ */ new Map();
     for (const [sn, rows] of byOrder) {
@@ -151755,8 +152189,27 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
       console.log(
         `[Shopee Batch Waybill] BULK n=${pendingByOrder.size} \u0111\u01A1n / ${pendingRows.length} package \u2014 1 create + poll \u2264${PRINT_WAYBILL_BATCH_POLL_MAX_ATTEMPTS}\xD7${PRINT_WAYBILL_BATCH_POLL_INTERVAL_MS}ms + 1 download`
       );
-      for (let i2 = 0; i2 < pendingRows.length; i2 += SHOPEE_SHIPPING_DOC_BULK_MAX) {
-        const chunk = pendingRows.slice(i2, i2 + SHOPEE_SHIPPING_DOC_BULK_MAX);
+      let createCalls = 0;
+      const isSharedPrintError = (err) => {
+        if (/token|auth|signature|partner|permission|rate.?limit|too many|\b(401|403|429)\b|timeout|abort|network|fetch failed|ECONN|ENOTFOUND|shipping_document_type/i.test(`${err?.code || ""} ${err?.message || ""}`)) return true;
+        const identifiedOrderError = /order|package|param/i.test(String(err?.code || "")) || Array.isArray(err?.orderResults) && err.orderResults.some((item) => item?.order_sn && item?.fail_error);
+        return Number(err?.httpStatus) >= 500 && !identifiedOrderError;
+      };
+      const failCreateRows = (rows, error, message) => {
+        for (const sn of new Set(rows.map((row) => row.order_sn))) {
+          if (!pendingByOrder.has(sn)) continue;
+          if (!skippedOrders.some((item) => item.orderSn === sn)) skippedOrders.push({ orderSn: sn, error, message });
+          pendingByOrder.delete(sn);
+        }
+      };
+      const createChunk = async (input) => {
+        const chunk = input.filter((row) => pendingByOrder.has(row.order_sn));
+        if (!chunk.length) return;
+        if (opts?.signal?.aborted || opts?.deadlineAt && Date.now() >= opts.deadlineAt || createCalls >= 16) {
+          failCreateRows(chunk, "document_not_ready", "Ch\u01B0a chu\u1EA9n b\u1ECB xong PDF trong th\u1EDDi gian ch\u1EDD. Vui l\xF2ng th\u1EED in l\u1EA1i.");
+          return;
+        }
+        createCalls++;
         try {
           const createResult = await shopeeCreateShippingDocument(
             shopId,
@@ -151780,35 +152233,76 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
           }
         } catch (createErr) {
           console.error(`[Shopee Batch Waybill] BULK create fail:`, createErr?.message || createErr);
-          for (const [sn] of [...pendingByOrder]) {
-            if (!chunk.some((r2) => r2.order_sn === sn)) continue;
-            skippedOrders.push({
-              orderSn: sn,
-              error: "fatal_error",
-              message: "Shopee t\u1EEB ch\u1ED1i t\u1EA1o file. Vui l\xF2ng ki\u1EC3m tra l\u1EA1i tr\u1EA1ng th\xE1i \u0111\u01A1n tr\xEAn Shopee."
-            });
-            pendingByOrder.delete(sn);
+          const text2 = `${createErr?.code || ""} ${createErr?.message || ""}`;
+          const sharedFailure = isSharedPrintError(createErr);
+          const namedFailures = Array.isArray(createErr?.orderResults) ? createErr.orderResults.filter((item) => chunk.some((row) => row.order_sn === String(item?.order_sn || "").trim()) && String(item?.fail_error || "").trim() && !isBenignCreateShippingFail(item.fail_error, item.fail_message)) : [];
+          if (!sharedFailure && namedFailures.length) {
+            for (const item of namedFailures) failCreateRows(
+              chunk.filter((row) => row.order_sn === String(item.order_sn).trim()),
+              String(item.fail_error),
+              String(item.fail_message || "Shopee t\u1EEB ch\u1ED1i t\u1EA1o PDF cho \u0111\u01A1n n\xE0y.")
+            );
+            await sleepMs2(PRINT_WAYBILL_DOWNLOAD_PAUSE_MS);
+            await createChunk(chunk);
+            return;
           }
+          const sns = uniquePreserveOrder(chunk.map((row) => row.order_sn));
+          if (!sharedFailure && sns.length > 1 && /order|package|param|logistics|document|invalid|not.?found/i.test(text2)) {
+            const left = new Set(sns.slice(0, Math.ceil(sns.length / 2)));
+            await createChunk(chunk.filter((row) => left.has(row.order_sn)));
+            await sleepMs2(PRINT_WAYBILL_DOWNLOAD_PAUSE_MS);
+            await createChunk(chunk.filter((row) => !left.has(row.order_sn)));
+            return;
+          }
+          failCreateRows(
+            chunk,
+            sharedFailure ? "document_not_ready" : "create_failed",
+            sharedFailure ? "Kh\xF4ng k\u1EBFt n\u1ED1i ho\u1EB7c ch\u01B0a t\u1EA1o xong PDF. Vui l\xF2ng th\u1EED in l\u1EA1i." : "Shopee t\u1EEB ch\u1ED1i t\u1EA1o PDF cho \u0111\u01A1n n\xE0y. C\xE1c \u0111\u01A1n kh\xE1c v\u1EABn ti\u1EBFp t\u1EE5c."
+          );
         }
+      };
+      for (let i2 = 0; i2 < pendingRows.length; i2 += SHOPEE_SHIPPING_DOC_BULK_MAX) {
+        await createChunk(pendingRows.slice(i2, i2 + SHOPEE_SHIPPING_DOC_BULK_MAX));
         if (i2 + SHOPEE_SHIPPING_DOC_BULK_MAX < pendingRows.length) {
           await sleepMs2(PRINT_WAYBILL_DOWNLOAD_PAUSE_MS);
         }
       }
       let pollRows = [...pendingByOrder.values()].flat();
       const readyRowKeys = /* @__PURE__ */ new Set();
+      let firstReadyAttempt = 0;
+      let pollIsolationCalls = 0;
+      const pollChunk = async (rows, isolated = false) => {
+        if (!rows.length) return [];
+        if (opts?.signal?.aborted || opts?.deadlineAt && Date.now() >= opts.deadlineAt) throw new Error("batch_deadline:poll");
+        if (isolated && ++pollIsolationCalls > 16) throw new Error("poll_isolation_budget_exhausted");
+        try {
+          const result = await shopeeGetShippingDocumentResult(shopId, accessToken, toShippingDocApiItems(rows), opts?.signal);
+          const items = result?.response?.result_list || result?.result_list || [];
+          if (!result?.error || items.length) return items;
+          throw Object.assign(new Error(String(result?.message || result.error)), { code: result.error, httpStatus: result.httpStatus });
+        } catch (err) {
+          const text2 = `${err?.code || ""} ${err?.message || ""}`;
+          if (isSharedPrintError(err) || !/order|package|param|logistics|document|invalid|not.?found/i.test(text2)) throw err;
+          const sns = uniquePreserveOrder(rows.map((row) => row.order_sn));
+          if (sns.length === 1) return rows.map((row) => ({
+            ...row,
+            status: "FAILED",
+            fail_error: "document_failed",
+            fail_message: "Shopee kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c PDF cho \u0111\u01A1n n\xE0y."
+          }));
+          const left = new Set(sns.slice(0, Math.ceil(sns.length / 2)));
+          const first = await pollChunk(rows.filter((row) => left.has(row.order_sn)), true);
+          await sleepMs2(PRINT_WAYBILL_DOWNLOAD_PAUSE_MS);
+          return [...first, ...await pollChunk(rows.filter((row) => !left.has(row.order_sn)), true)];
+        }
+      };
       if (pollRows.length > 0) {
         const pollStopAt = opts?.deadlineAt ? opts.deadlineAt - PRINT_WAYBILL_DOWNLOAD_TIMEOUT_CAP_MS : 0;
         for (let attempt = 1; attempt <= PRINT_WAYBILL_BATCH_POLL_MAX_ATTEMPTS; attempt++) {
           if (pollStopAt && Date.now() >= pollStopAt) break;
           if (opts?.signal?.aborted) break;
           try {
-            const pollResult = await shopeeGetShippingDocumentResult(
-              shopId,
-              accessToken,
-              toShippingDocApiItems(pollRows),
-              opts?.signal
-            );
-            const items = pollResult?.response?.result_list || pollResult?.result_list || [];
+            const items = await pollChunk(pollRows);
             const byKey = new Map(items.map((it) => [shippingDocRowKey(it), it]));
             const stillPending = [];
             for (const row of pollRows) {
@@ -151818,9 +152312,17 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
               const it = byKey.get(shippingDocRowKey(row)) || (sameOrderItems.length === 1 ? sameOrderItems[0] : void 0);
               const st = String(it?.status || "").toUpperCase();
               if (st === "READY") readyRowKeys.add(shippingDocRowKey(row));
-              else stillPending.push(row);
+              else if (/^(FAILED|FAIL|ERROR)$/.test(st) || String(it?.fail_error || "").trim()) {
+                if (!skippedOrders.some((item) => item.orderSn === row.order_sn)) skippedOrders.push({
+                  orderSn: row.order_sn,
+                  error: String(it?.fail_error || "document_failed"),
+                  message: String(it?.fail_message || "Shopee kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c PDF cho \u0111\u01A1n n\xE0y.")
+                });
+                pendingByOrder.delete(row.order_sn);
+              } else stillPending.push(row);
             }
-            pollRows = stillPending;
+            pollRows = stillPending.filter((row) => pendingByOrder.has(row.order_sn));
+            if (!firstReadyAttempt && [...pendingByOrder.values()].some((rows) => rows.every((row) => readyRowKeys.has(shippingDocRowKey(row))))) firstReadyAttempt = attempt;
             if (pollRows.length === 0) {
               console.log(`[Shopee Batch Waybill] BULK POLL READY l\u1EA7n ${attempt}`);
               break;
@@ -151832,6 +152334,7 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
             console.warn(`[Shopee Batch Waybill] BULK POLL:`, pollErr?.message || pollErr);
           }
           if (pollRows.length === 0) break;
+          if (firstReadyAttempt && attempt - firstReadyAttempt >= 3) break;
           if (attempt < PRINT_WAYBILL_BATCH_POLL_MAX_ATTEMPTS) {
             const remaining = pollStopAt ? pollStopAt - Date.now() : PRINT_WAYBILL_BATCH_POLL_INTERVAL_MS;
             if (remaining <= 0) break;
@@ -151870,8 +152373,9 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
           };
           pendingByOrder.delete(sn);
         };
-        const readyRows = readySns.flatMap((sn) => pendingByOrder.get(sn) || []);
-        const downloadFilename = readySns.length === 1 ? `order_${readySns[0]}.pdf` : buildCachedLabelFilename(readySns);
+        const singleSns = readySns.filter((sn) => pendingByOrder.get(sn)?.length === 1);
+        const readyRows = singleSns.flatMap((sn) => pendingByOrder.get(sn) || []);
+        const downloadFilename = singleSns.length === 1 ? `order_${singleSns[0]}.pdf` : buildCachedLabelFilename(singleSns);
         if (readySns.length > 0 && readyRows.length > 0) {
           try {
             const downloadResult = await shopeeDownloadShippingDocument(
@@ -151886,9 +152390,9 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
               const mergedBuf = await import_fs25.default.promises.readFile(downloadResult.filePath);
               if (mergedBuf.length && isPdfBuffer(mergedBuf)) {
                 putLabelMem(downloadResult.filename, mergedBuf, "application/pdf");
-                const splitMap = await splitMergedWaybillPdfToOrders(mergedBuf, readySns);
-                if (splitMap.size === readySns.length) {
-                  for (const sn of readySns) {
+                const splitMap = await splitMergedWaybillPdfToOrders(mergedBuf, singleSns);
+                if (splitMap.size === singleSns.length) {
+                  for (const sn of singleSns) {
                     const buf = splitMap.get(sn);
                     if (!buf) continue;
                     try {
@@ -151903,8 +152407,8 @@ async function batchDownloadShopeeWaybillPdf(shopId, orderList, opts) {
                       size: buf.length
                     });
                   }
-                } else if (readySns.length === 1) {
-                  const sn = readySns[0];
+                } else if (singleSns.length === 1) {
+                  const sn = singleSns[0];
                   try {
                     await cacheOrderWaybillPdf(sn, mergedBuf);
                     commitReady(sn, {
@@ -153120,6 +153624,7 @@ async function persistOrderTrackingToDb(order) {
   }
   order.trackingNumber = tn;
   order.tracking_no = tn;
+  reconcileShipmentReview(order);
   if (isMongoReady()) {
     try {
       await updateOrderTrackingInStore(String(order.orderSn), tn, {
@@ -153401,6 +153906,7 @@ function forceHealPickupOrderIfHasTracking(order) {
     order.tracking_no = tn;
   }
   if (enforceShopeeTerminalLocalStatus(order)) return true;
+  if (reconcileShipmentReview(order)) return true;
   const raw = String(order.shopee_order_status || "").toUpperCase();
   const fulfillment = String(
     order.fulfillment_type || order.ship_method || order.shipping_method || ""
@@ -153435,6 +153941,7 @@ function forceHealPickupOrderIfHasTracking(order) {
 }
 function repairFalseProcessedReadyToShip(order) {
   if (!order || String(order.channel || "") !== "shopee") return false;
+  if (reconcileShipmentReview(order)) return true;
   const raw = String(order.shopee_order_status || "").toUpperCase();
   if (raw !== "READY_TO_SHIP" && raw !== "RETRY_SHIP") return false;
   if (order.status === "shipping" || order.status === "completed" || order.status === "cancelled") {
@@ -153537,7 +154044,7 @@ async function forceResyncStuckOrdersWithoutTracking(opts) {
         results.push(item);
         continue;
       }
-      order.is_pending_shopee_check = false;
+      if (hasShipmentWaybill(order)) order.is_pending_shopee_check = false;
       item.steps.push("clear_pending_flag");
       const shopId = String(order.shopId || resolveOrderShopId(order) || "").trim();
       if (!shopId) {
@@ -153567,7 +154074,7 @@ async function forceResyncStuckOrdersWithoutTracking(opts) {
             skipTracking: true
           });
           order = orders.find((o) => normalizeSn(o?.orderSn) === orderSn) || normalized[0] || order;
-          order.is_pending_shopee_check = false;
+          if (hasShipmentWaybill(order)) order.is_pending_shopee_check = false;
           item.steps.push("get_order_detail");
         } else {
           item.steps.push(
@@ -153585,7 +154092,7 @@ async function forceResyncStuckOrdersWithoutTracking(opts) {
             const shipResult = await arrangeShipment(order, method);
             if (shipResult.success || isAlreadyShippedError(shipResult)) {
               order.isPrepared = true;
-              order.is_pending_shopee_check = false;
+              if (hasShipmentWaybill(order)) order.is_pending_shopee_check = false;
               if (!order.shopee_order_status || String(order.shopee_order_status).toUpperCase() === "READY_TO_SHIP" || String(order.shopee_order_status).toUpperCase() === "RETRY_SHIP") {
                 order.shopee_order_status = "PROCESSED";
               }
@@ -153617,7 +154124,7 @@ async function forceResyncStuckOrdersWithoutTracking(opts) {
       forceHealPickupOrderIfHasTracking(order);
       promoteOrderStatusWhenTrackingReady(order);
       enforceShopeeTerminalLocalStatus(order);
-      order.is_pending_shopee_check = false;
+      if (hasShipmentWaybill(order)) order.is_pending_shopee_check = false;
       if (isMongoReady()) {
         try {
           await bulkUpsertOrdersToStore([order]);
@@ -153705,6 +154212,7 @@ function promoteOrderStatusWhenTrackingReady(order) {
   if (status === "completed" || status === "cancelled" || status === "return_pending" || status === "return_received") {
     return false;
   }
+  if (reconcileShipmentReview(order)) return true;
   const raw = String(order.shopee_order_status || "").toUpperCase();
   if (raw === "COMPLETED") {
     order.status = "completed";
@@ -153831,17 +154339,25 @@ function buildShopeeShippingDocOrderRows(order) {
     ...tn ? { tracking_number: tn } : {}
   }));
 }
-async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, orders) {
-  if (!orders.length) return;
+async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, orders, options) {
+  const stopped2 = () => Boolean(options?.signal?.aborted || options?.deadlineAt && Date.now() >= options.deadlineAt);
+  const httpOptions = () => options ? {
+    signal: options.signal,
+    timeoutMs: Math.max(1, Math.min(8e3, (options.deadlineAt || Date.now() + 8e3) - Date.now()))
+  } : void 0;
+  if (!orders.length || stopped2()) return;
   const needDetail = orders;
   if (needDetail.length > 0) {
     const sns = [
       ...new Set(needDetail.map((o) => String(o.orderSn || "").trim()).filter(Boolean))
     ];
-    for (let i2 = 0; i2 < sns.length; i2 += SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS) {
-      const chunk = sns.slice(i2, i2 + SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS);
+    let detailCalls = 0;
+    const loadDetailChunk = async (chunk) => {
+      if (stopped2() || !chunk.length || detailCalls >= 16) return;
+      detailCalls++;
       try {
-        const detailResult = await shopeeGetOrderDetail(shopId, accessToken, chunk);
+        const detailResult = await shopeeGetOrderDetail(shopId, accessToken, chunk, httpOptions());
+        if (stopped2()) return;
         console.log(
           `[Shopee Print Enrich] get_order_detail shop=${shopId} n=${chunk.length} response=`,
           JSON.stringify(detailResult)
@@ -153850,11 +154366,15 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
           console.warn(
             `[Shopee Print Enrich] get_order_detail NOT FOUND shop=${shopId} sns=${chunk.join(",")}`
           );
-          for (const sn of chunk) {
-            const order = orders.find((o) => String(o.orderSn) === sn);
+          if (chunk.length > 1) {
+            const mid = Math.ceil(chunk.length / 2);
+            await loadDetailChunk(chunk.slice(0, mid));
+            await loadDetailChunk(chunk.slice(mid));
+          } else {
+            const order = orders.find((o) => String(o.orderSn) === chunk[0]);
             if (order) order.__shopeeOrderNotFound = true;
           }
-          continue;
+          return;
         }
         const detailList = detailResult?.response?.order_list || detailResult?.order_list || [];
         for (const detail of detailList) {
@@ -153877,8 +154397,12 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
         }
       } catch (err) {
         if (isShopeeOrderNotFoundError(err?.code || err?.error, err?.message || err)) {
-          for (const sn of chunk) {
-            const order = orders.find((o) => String(o.orderSn) === sn);
+          if (chunk.length > 1) {
+            const mid = Math.ceil(chunk.length / 2);
+            await loadDetailChunk(chunk.slice(0, mid));
+            await loadDetailChunk(chunk.slice(mid));
+          } else {
+            const order = orders.find((o) => String(o.orderSn) === chunk[0]);
             if (order) order.__shopeeOrderNotFound = true;
           }
           console.warn(
@@ -153892,12 +154416,16 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
           );
         }
       }
+    };
+    for (let i2 = 0; i2 < sns.length; i2 += SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS) {
+      await loadDetailChunk(sns.slice(i2, i2 + SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS));
       if (i2 + SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS < sns.length) await sleep(PRINT_API_DELAY_MS);
     }
   }
   let nextOrderIndex = 0;
   const enrichWorker = async () => {
     while (nextOrderIndex < orders.length) {
+      if (stopped2()) return;
       const i2 = nextOrderIndex++;
       const order = orders[i2];
       const sn = String(order?.orderSn || "").trim();
@@ -153915,28 +154443,33 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
           shopId,
           accessToken,
           sn,
-          String(order.packageNumber || order.package_number || "").trim() || void 0
+          String(order.packageNumber || order.package_number || "").trim() || void 0,
+          httpOptions()
         );
         console.log(
           `[Shopee Print Enrich] get_tracking_number order_sn=${sn} response=`,
           JSON.stringify(tnRes)
         );
+        if (stopped2()) return;
         applyShopeeGetTrackingResponse(order, tnRes);
       } catch (err) {
         console.warn(`[Shopee Print Enrich] get_tracking_number ${sn}:`, err?.message || err);
       }
+      if (stopped2()) return;
       if (!String(order.packageNumber || order.package_number || "").trim()) {
         try {
           const docInfo = await shopeeGetShippingDocumentDataInfo(
             shopId,
             accessToken,
             sn,
-            String(order.packageNumber || order.package_number || "").trim() || void 0
+            String(order.packageNumber || order.package_number || "").trim() || void 0,
+            httpOptions()
           );
           console.log(
             `[Shopee Print Enrich] get_shipping_document_data_info order_sn=${sn} response=`,
             JSON.stringify(docInfo)
           );
+          if (stopped2()) return;
           applyDeepShopeeTrackingPayload(order, docInfo, "get_shipping_document_data_info");
           applyShopeePackageNumbers(order, extractShopeePackageNumbersFromPayload(docInfo, sn));
           const list = docInfo?.response?.shipping_document_info_list || docInfo?.response?.order_list || docInfo?.response?.result_list || [];
@@ -153959,7 +154492,8 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
       }
       if (!String(order.packageNumber || order.package_number || "").trim()) {
         try {
-          const detailResult = await shopeeGetOrderDetail(shopId, accessToken, [sn]);
+          const detailResult = await shopeeGetOrderDetail(shopId, accessToken, [sn], httpOptions());
+          if (stopped2()) return;
           if (isShopeeOrderNotFoundError(detailResult?.error, detailResult?.message)) {
             order.__shopeeOrderNotFound = true;
             console.warn(`[Shopee Print Enrich] get_order_detail retry NOT FOUND ${sn}`);
@@ -153980,6 +154514,7 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
           console.warn(`[Shopee Print Enrich] get_order_detail retry ${sn}:`, err?.message || err);
         }
       }
+      if (stopped2()) return;
       await persistOrderTrackingToDb(order).catch((err) => {
         console.warn(`[Shopee Print Enrich] persist ${sn}:`, err?.message || err);
       });
@@ -155571,6 +156106,8 @@ function mergeShopeeOrderOnSync(existing, incoming) {
     delete merged.customerAddress;
   }
   enforceShopeeTerminalLocalStatus(merged);
+  if (existing.is_pending_shopee_check === true) merged.is_pending_shopee_check = true;
+  reconcileShipmentReview(merged);
   return merged;
 }
 var SHIPPING_CARRIER_BACKFILL_COOLDOWN_MS = 60 * 1e3;
@@ -156247,7 +156784,8 @@ function buildConfirmedShipMongoPatches(orders, shipMethod) {
       ship_method: o.ship_method || shipMethod,
       fulfillment_type: o.fulfillment_type || shipMethod,
       tracking_no: String(o.tracking_no || o.trackingNumber || "").trim() || void 0,
-      isPrepared: true
+      isPrepared: true,
+      is_pending_shopee_check: false
     };
   }).filter((p) => p.orderSn);
 }
@@ -156255,7 +156793,10 @@ async function persistConfirmedShipOrdersToMongo(orders, shipMethod, options) {
   const patches = buildConfirmedShipMongoPatches(orders, shipMethod);
   if (!patches.length) return 0;
   try {
-    const n = await bulkUpdateShippedOrdersBySn(patches, { requireAllMatched: options?.strict });
+    const n = await bulkUpdateShippedOrdersBySn(patches, {
+      requireAllMatched: options?.strict,
+      matchByOrderIdentityOnly: options?.strict
+    });
     console.log(
       `[Confirm Persist] bulkUpdateShippedOrdersBySn n=${n} sns=${patches.map((p) => p.orderSn).join(",")}`
     );
@@ -158054,22 +158595,15 @@ function isShopeePendingVerificationError(result) {
   return blob.includes("pending verification") || blob.includes("pending_verification") || blob.includes("order_is_under_status") || blob.includes("order status is not ready") || blob.includes("order is pending") || blob.includes("order not ready") || blob.includes("not ready to ship") || blob.includes("not ready for shipment") || blob.includes("system_pending") || blob.includes("kyc_pending") || blob.includes("arrange_shipment_pending") || blob.includes("under shopee") || blob.includes("being processed by shopee") || blob.includes("processed by shopee") || blob.includes("shopee is reviewing") || blob.includes("under review") || blob.includes("fraud") || blob.includes("unpaid") || blob.includes("\u0111ang \u0111\u01B0\u1EE3c ki\u1EC3m tra") || blob.includes("\u0111ang ki\u1EC3m tra") || blob.includes("ch\u01B0a s\u1EB5n s\xE0ng") || blob.includes("chua san sang") || blob.includes("pending") && (blob.includes("order") || blob.includes("status") || blob.includes("ship") || blob.includes("logistic"));
 }
 function markOrderPendingShopeeCheck(order, reason) {
-  const next = {
-    ...order,
-    is_pending_shopee_check: true,
-    status: "unprocessed",
-    isPrepared: false,
-    shopeeSyncPending: false,
-    shopeeSyncError: reason || "\u0110\u01A1n ch\u01B0a s\u1EB5n s\xE0ng / l\u1ED7i Shopee khi ship_order"
-  };
-  console.log(
-    `[Shopee Trap] SET is_pending_shopee_check=true | order_sn=${order?.orderSn || "?"} | status\u2192unprocessed (skip bulk) | reason=${reason || ""}`
-  );
+  const next = { ...order };
+  markShipmentReview(next, reason || "Shopee ch\u01B0a c\u1EA5p m\xE3 v\u1EADn \u0111\u01A1n / t\u1EEB ch\u1ED1i x\xE1c nh\u1EADn");
   return next;
 }
 async function persistPendingShopeeCheckFlag(orders, index, reason) {
   if (index < 0 || index >= orders.length) return null;
-  orders[index] = markOrderPendingShopeeCheck(orders[index], reason);
+  const next = markOrderPendingShopeeCheck(orders[index], reason);
+  if (next.is_pending_shopee_check !== true) return orders[index];
+  Object.assign(orders[index], next);
   const orderSn = String(orders[index].orderSn || "");
   console.log(
     `[Shopee Trap] Mongo updateOne | order_sn=${orderSn} | is_pending_shopee_check=${orders[index].is_pending_shopee_check}`
@@ -158080,8 +158614,10 @@ async function persistPendingShopeeCheckFlag(orders, index, reason) {
         orderSn,
         true,
         {
-          status: "unprocessed",
+          status: "pending_confirm",
           isPrepared: false,
+          isPrinted: false,
+          has_tracking: hasShipmentWaybill(orders[index]),
           shopeeSyncPending: false,
           shopeeSyncError: reason || "\u0110\u01A1n ch\u01B0a s\u1EB5n s\xE0ng / l\u1ED7i Shopee khi ship_order"
         },
@@ -158092,6 +158628,19 @@ async function persistPendingShopeeCheckFlag(orders, index, reason) {
     }
   }
   return orders[index];
+}
+async function persistMissingWaybillFailures(orders, failures) {
+  const reasons = new Map(failures.map((row) => [String(row.orderSn || "").replace(/^shopee-/i, ""), row]));
+  for (let index = 0; index < orders.length; index += 1) {
+    const order = orders[index];
+    const failure = reasons.get(String(order?.orderSn || "").replace(/^shopee-/i, ""));
+    if (!failure || hasShipmentWaybill(order) || order.isPrinted === true) continue;
+    await persistPendingShopeeCheckFlag(
+      orders,
+      index,
+      failure.message || failure.error || "Shopee ch\u01B0a c\u1EA5p m\xE3 v\u1EADn \u0111\u01A1n"
+    );
+  }
 }
 function buildShipConfirmSummaryPayload(total, batch) {
   const results = Array.isArray(batch.results) ? batch.results : [];
@@ -158385,6 +158934,7 @@ function applyShopeePushFieldsToOrder(order, parsed) {
     repairMisassignedTracking(order);
     return;
   }
+  if (reconcileShipmentReview(order)) return;
   const rtsLike = raw === "READY_TO_SHIP" || raw === "RETRY_SHIP";
   const shopAlreadyWorked = order.isPrepared === true || order.isPrinted === true || order.is_handed_over === true;
   if (hasTn && rtsLike && !shopAlreadyWorked) {
@@ -159006,7 +159556,9 @@ async function startServer() {
   initImportsController({
     loadProductById,
     loadProducts,
-    applyImportStockAndPriceToMainWarehouse
+    applyImportStockAndPriceToMainWarehouse,
+    isProductsDiskMode,
+    withProductsDiskImportBatch
   });
   app.use("/api/imports", authMiddleware, importsRoutes);
   app.use("/api/materials", authMiddleware, materialsRoutes);
@@ -159708,7 +160260,11 @@ async function startServer() {
           await sleep(CONFIRM_ASYNC_BATCH_PAUSE_MS);
         }
       }
-      const failedOrders = results.filter((result) => !result?.success).map((result) => ({
+      const orderedResults = reorderOrdersByRequestedSns(
+        results,
+        toShip.map(({ order }) => normalizePrintOrderSn(order.orderSn || order.order_sn))
+      );
+      const failedOrders = orderedResults.filter((result) => !result?.success).map((result) => ({
         orderId: String(result.orderId || ""),
         orderSn: String(result.orderSn || ""),
         error: String(result.error || "confirm_failed"),
@@ -159719,25 +160275,47 @@ async function startServer() {
         successCount: successSns.length,
         failedCount: failedOrders.length,
         failedOrders,
-        results
+        results: orderedResults
       });
-      job.phase = "persisting";
-      job.message = `\u0110ang l\u01B0u tr\u1EA1ng th\xE1i ${confirmedRows.length} \u0111\u01A1n \u0111\xE3 x\xE1c nh\u1EADn...`;
-      job.updatedAt = Date.now();
-      try {
-        await withOperationTimeout(
-          () => persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod, { strict: true }),
-          CONFIRM_ASYNC_DB_TIMEOUT_MS,
-          "Persist confirmed async orders"
-        );
-      } catch (persistErr) {
-        console.error(
-          "[Confirm Async] persistConfirmedShipOrdersToMongo:",
-          persistErr?.stack || persistErr
-        );
-        throw new Error("Shopee \u0111\xE3 tr\u1EA3 k\u1EBFt qu\u1EA3 x\xE1c nh\u1EADn nh\u01B0ng ch\u01B0a l\u01B0u xong tr\u1EA1ng th\xE1i \u0111\u01A1n. Ch\u01B0a chuy\u1EC3n sang in. H\xE3y t\u1EA3i l\u1EA1i danh s\xE1ch \u0111\u1EC3 ki\u1EC3m tra tr\u01B0\u1EDBc khi x\xE1c nh\u1EADn l\u1EA1i.");
+      job.results = orderedResults;
+      job.successCount = summary.successCount;
+      job.failedCount = summary.failCount;
+      job.failCount = summary.failCount;
+      job.failedOrders = summary.failedOrderDetails;
+      job.failedOrderDetails = summary.failedOrderDetails;
+      job.successfulOrderIds = summary.successfulOrderIds;
+      job.completed = toShip.length;
+      job.total = toShip.length;
+      if (confirmedRows.length > 0) {
+        job.phase = "persisting";
+        job.message = `\u0110ang l\u01B0u tr\u1EA1ng th\xE1i ${confirmedRows.length} \u0111\u01A1n \u0111\xE3 x\xE1c nh\u1EADn...`;
+        job.updatedAt = Date.now();
+        try {
+          await withOperationTimeout(
+            () => persistConfirmedShipOrdersToMongo(confirmedRows, shipMethod, {
+              strict: true,
+              matchByOrderIdentityOnly: true,
+              timeoutMs: CONFIRM_ASYNC_DB_TIMEOUT_MS
+            }),
+            CONFIRM_ASYNC_DB_TIMEOUT_MS + 5e3,
+            "Persist confirmed async orders"
+          );
+        } catch (persistErr) {
+          console.error(
+            "[Confirm Async] persistConfirmedShipOrdersToMongo:",
+            persistErr?.stack || persistErr
+          );
+          job.phase = "persist_failed";
+          job.status = "failed";
+          job.error = "confirm_persist_failed";
+          job.persistencePending = true;
+          job.orders = null;
+          job.message = "Shopee \u0111\xE3 tr\u1EA3 k\u1EBFt qu\u1EA3 x\xE1c nh\u1EADn nh\u01B0ng ch\u01B0a l\u01B0u xong tr\u1EA1ng th\xE1i \u0111\u01A1n. Ch\u01B0a chuy\u1EC3n sang in. H\xE3y t\u1EA3i l\u1EA1i danh s\xE1ch \u0111\u1EC3 ki\u1EC3m tra tr\u01B0\u1EDBc khi x\xE1c nh\u1EADn l\u1EA1i.";
+          job.updatedAt = Date.now();
+          return;
+        }
       }
-      job.results = results;
+      job.results = orderedResults;
       job.successCount = summary.successCount;
       job.failedCount = summary.failCount;
       job.failCount = summary.failCount;
@@ -160000,6 +160578,7 @@ async function startServer() {
           }
         })
       );
+      await persistMissingWaybillFailures(rows, pdfResults.filter((r2) => !r2.success));
       const successCount = pdfResults.filter((r2) => r2.success).length;
       return res.json({
         success: successCount > 0,
@@ -160209,7 +160788,38 @@ async function startServer() {
     );
     return mergedPdf;
   }
+  const sharedPrintPdfWork = createKeyedBatchWork(labelBatchGate);
   async function fetchBatchPdfDocumentsByShop(orders, orderSns, deadlineAt, logPrefix, options) {
+    const sns = uniquePreserveOrder(orderSns.map(normalizePrintOrderSn).filter(Boolean));
+    const workDeadlineAt = Date.now() + WAYBILL_BATCH_DEADLINE_MS - 1e4;
+    const rows = await runBeforeBatchDeadline(
+      deadlineAt,
+      "shared_pdf_wait",
+      () => sharedPrintPdfWork(sns, async (owned) => {
+        const result = await fetchBatchPdfDocumentsByShopUnshared(
+          orders,
+          owned,
+          workDeadlineAt,
+          logPrefix
+        );
+        const bySn = /* @__PURE__ */ new Map();
+        for (const doc of result.documents) for (const sn of doc.orderSns) bySn.set(sn, { document: doc });
+        for (const failure of result.failedOrders) if (!bySn.has(failure.orderSn)) bySn.set(failure.orderSn, { failure });
+        for (const sn of owned) if (!bySn.has(sn)) bySn.set(sn, { failure: {
+          orderSn: sn,
+          error: "document_not_ready",
+          message: "Ch\u01B0a chu\u1EA9n b\u1ECB xong PDF. Vui l\xF2ng th\u1EED in l\u1EA1i."
+        } });
+        return bySn;
+      }, options?.signal)
+    );
+    return sortBatchPdfResultByRequestedOrder(
+      sns,
+      rows.flatMap((row) => row.document ? [row.document] : []),
+      rows.flatMap((row) => row.failure ? [row.failure] : [])
+    );
+  }
+  async function fetchBatchPdfDocumentsByShopUnshared(orders, orderSns, deadlineAt, logPrefix, options) {
     const startedAt = Date.now();
     const failedBySn = /* @__PURE__ */ new Map();
     const documents = [];
@@ -160263,8 +160873,20 @@ async function startServer() {
       group.orders.push(order);
       groups.set(storedShopId, group);
     }
-    await Promise.all(
-      [...groups.entries()].map(async ([storedShopId, group]) => {
+    const readyGroups = [];
+    const missingGroups = [];
+    for (const [shop, group] of groups) {
+      for (const [target, rows] of [
+        [readyGroups, group.orders.filter((order) => buildShopeeShippingDocOrderRows(order).length > 0)],
+        [missingGroups, group.orders.filter((order) => buildShopeeShippingDocOrderRows(order).length === 0)]
+      ]) {
+        if (rows.length) target.push([shop, { orders: rows, sns: rows.map((order) => normalizePrintOrderSn(order.orderSn || order.order_sn)) }]);
+      }
+    }
+    await mapWithConcurrency(
+      [...readyGroups, ...missingGroups],
+      1,
+      async ([storedShopId, group]) => {
         const deadlineController = new AbortController();
         const deadlineTimer = setTimeout(
           () => deadlineController.abort(new Error("batch_deadline:shopee_pdf")),
@@ -160285,11 +160907,25 @@ async function startServer() {
             }
             return;
           }
-          await runBeforeBatchDeadline(
-            deadlineAt,
-            `enrich_shop:${storedShopId}`,
-            () => enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, group.orders)
-          );
+          const enrichDeadline = Math.min(deadlineAt, Date.now() + 15e3);
+          const enrichController = new AbortController();
+          const enrichTimer = setTimeout(() => enrichController.abort(new Error("enrich_timeout")), Math.max(1, enrichDeadline - Date.now()));
+          try {
+            await runBeforeBatchDeadline(
+              enrichDeadline,
+              `enrich_shop:${storedShopId}`,
+              () => enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, group.orders, {
+                deadlineAt: enrichDeadline,
+                signal: AbortSignal.any([operationSignal, enrichController.signal])
+              })
+            );
+          } catch (err) {
+            enrichController.abort(err);
+            if (!group.orders.some((order) => buildShopeeShippingDocOrderRows(order).length)) throw err;
+            console.warn(`[${logPrefix}] Enrich h\u1EBFt ng\xE2n s\xE1ch; ti\u1EBFp t\u1EE5c c\xE1c \u0111\u01A1n \u0111\xE3 c\xF3 ki\u1EC7n.`);
+          } finally {
+            clearTimeout(enrichTimer);
+          }
           const allRows = [];
           for (const order of group.orders) {
             const orderSn = String(order?.orderSn || order?.order_sn || "").replace(/^shopee-/i, "").trim();
@@ -160388,11 +161024,16 @@ async function startServer() {
         } finally {
           clearTimeout(deadlineTimer);
         }
-      })
+      }
     );
     console.log(
       `[${logPrefix}] timing total=${Date.now() - startedAt}ms ok=${documents.length} failed=${failedBySn.size}`
     );
+    await runBeforeBatchDeadline(
+      Date.now() + 5e3,
+      "persist_pdf_failures",
+      () => persistMissingWaybillFailures(orders, [...failedBySn.values()])
+    ).catch((err) => console.warn(`[${logPrefix}] Ch\u01B0a l\u01B0u xong tr\u1EA1ng th\xE1i PDF:`, err?.message));
     return sortBatchPdfResultByRequestedOrder(
       orderSns,
       documents,
@@ -161158,6 +161799,7 @@ async function startServer() {
       if (!Array.isArray(orders) || orders.length === 0) return 0;
       if (!isMongoReady()) throw new Error("mongodb_not_ready");
       const n = await bulkUpsertOrdersToStore(orders);
+      invalidateTabCountCache();
       try {
         queueOrdersJsonMirrorFromMongo();
       } catch {

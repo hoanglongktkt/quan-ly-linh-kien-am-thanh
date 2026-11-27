@@ -4,7 +4,7 @@
  */
 import fs from "fs";
 import path from "path";
-import { commitPosStockEditFiles, recoverPosStockEditFiles, withPosStockFileLock } from "../../utils/posStockEditFiles.js";
+import { commitImportBatchFiles, commitPosStockEditFiles, recoverImportBatchFiles, withImportBatchFileLock } from "../../utils/importBatchFiles.js";
 import { applyPosStockEdit, planPosStockEdit } from "../../modules/orders/posOrderEdit.ts";
 import {
   normalizeProductSearchText,
@@ -77,12 +77,7 @@ export function inheritShopeeLinkFromParent(child: any, parent: any): any {
 
 export function readProductsFromDisk(): any[] {
   const file = getProductsDiskPath();
-  const dataDir = path.dirname(file);
-  if (fs.existsSync(path.join(dataDir, ".pos-stock-edit-journal.json"))) {
-    withPosStockFileLock(dataDir, () => {
-      if (recoverPosStockEditFiles(dataDir)) productsCache = null;
-    });
-  }
+  if (recoverImportBatchFiles(path.dirname(file))) productsCache = null;
   if (!fs.existsSync(file)) {
     productsCache = { mtimeMs: 0, products: [] };
     return [];
@@ -132,15 +127,38 @@ export async function saveProductsToDisk(products: any[]): Promise<void> {
   await run;
 }
 
+/** Serialize the whole import read/modify/commit, not just the final file write. */
+export async function withProductsDiskImportBatch<T>(
+  work: (products: any[], commit: (products: any[], imports: any[], suppliers: any[]) => void) => T,
+): Promise<T> {
+  const run = writeChain.then(() => withImportBatchFileLock(path.dirname(getProductsDiskPath()), () => work(readProductsFromDisk(), (products, imports, suppliers) => {
+    const list = products.map(normalizeProduct).filter(Boolean).map(stampInventorySortFields);
+    try {
+      commitImportBatchFiles(path.dirname(getProductsDiskPath()), {
+        "products.json": list,
+        "imports.json": imports,
+        "suppliers.json": suppliers,
+      });
+    } finally {
+      productsCache = null;
+    }
+  })));
+  writeChain = run.then(() => undefined, () => undefined);
+  return run;
+}
+
 export async function upsertProductsToDisk(products: any[]): Promise<number> {
   const incoming = (Array.isArray(products) ? products : [])
     .map(normalizeProduct)
     .filter(Boolean) as any[];
   if (incoming.length === 0) return 0;
-  const current = readProductsFromDisk();
-  const byId = new Map(current.map((p) => [String(p.id), p]));
-  for (const p of incoming) byId.set(String(p.id), { ...byId.get(String(p.id)), ...p, id: p.id });
-  await saveProductsToDisk([...byId.values()]);
+  const run = writeChain.then(() => withImportBatchFileLock(path.dirname(getProductsDiskPath()), () => {
+    const byId = new Map(readProductsFromDisk().map((p) => [String(p.id), p]));
+    for (const p of incoming) byId.set(String(p.id), { ...byId.get(String(p.id)), ...p, id: p.id });
+    writeProductsToDiskSync([...byId.values()]);
+  }));
+  writeChain = run.catch(() => undefined);
+  await run;
   return incoming.length;
 }
 
@@ -148,8 +166,7 @@ export async function applyPosStockEditOnDisk(
   orderId: string, revision: number, plan: ReturnType<typeof planPosStockEdit>,
 ) {
   const dataDir = path.dirname(getProductsDiskPath());
-  const run = writeChain.then(() => withPosStockFileLock(dataDir, () => {
-    if (recoverPosStockEditFiles(dataDir)) productsCache = null;
+  const run = writeChain.then(() => withImportBatchFileLock(dataDir, () => {
     const products = readProductsFromDisk();
     const editFile = path.join(dataDir, "pos-stock-edits.json");
     const edits = new Map<string, { revision: number; allocations: Record<string, number>; stocks: Record<string, number> }>(
