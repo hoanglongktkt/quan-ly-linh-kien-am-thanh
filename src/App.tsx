@@ -64,6 +64,7 @@ import {
   ScanLine,
   ClipboardCheck,
   PackageCheck,
+  PackageX,
   CheckCircle2,
   Loader2,
   Layers,
@@ -2755,6 +2756,8 @@ export default function App() {
         : 'hover:bg-slate-800 hover:text-slate-200 text-slate-500'
     }`;
 
+  const isOrdersReturnSidebarTab =
+    ordersSubTabHint === 'cancel_returns' || ordersSubTabHint === 'received_cancel_returns';
   const isOrdersChildTab = ordersSubTabHint === 'quick_pos' || ordersSubTabHint === 'create_external' ||
     ordersSubTabHint === 'external_orders' || ordersSubTabHint === 'drafts' || ordersSubTabHint === 'web_orders';
   const hideDesktopOrdersHeader = activeTab === 'orders' && ordersSubTabHint !== 'received_cancel_returns';
@@ -2764,7 +2767,7 @@ export default function App() {
       navigateTab('orders', { ordersSubTab });
       return;
     }
-    if (isOrdersChildTab) {
+    if (isOrdersChildTab || isOrdersReturnSidebarTab) {
       navigateTab('orders', { ordersSubTab: 'all' });
       return;
     }
@@ -2904,7 +2907,7 @@ export default function App() {
           <button
             onClick={() => goOrdersTab()}
             className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
-              activeTab === 'orders' && !isOrdersChildTab
+              activeTab === 'orders' && !isOrdersChildTab && !isOrdersReturnSidebarTab
                 ? 'bg-blue-600 text-white font-extrabold shadow-sm'
                 : 'hover:bg-slate-800 hover:text-white text-slate-400'
             }`}
@@ -2913,6 +2916,17 @@ export default function App() {
           </button>
 
           {ordersChildNavigation}
+
+          <button
+            onClick={() => navigateTab('orders', { ordersSubTab: 'cancel_returns' })}
+            className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
+              activeTab === 'orders' && ordersSubTabHint === 'cancel_returns'
+                ? 'bg-orange-600 text-white font-extrabold shadow-sm'
+                : 'hover:bg-slate-800 hover:text-white text-slate-400'
+            }`}
+          >
+            <PackageX className="w-4 h-4 shrink-0" /> Đơn hủy, đơn hoàn
+          </button>
 
           <button
             onClick={() => navigateTab('orders', { ordersSubTab: 'received_cancel_returns' })}
@@ -3053,7 +3067,7 @@ export default function App() {
               <button
                 onClick={() => goOrdersTab()}
                 className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
-                  activeTab === 'orders' && !isOrdersChildTab
+                  activeTab === 'orders' && !isOrdersChildTab && !isOrdersReturnSidebarTab
                     ? 'bg-blue-600 text-white font-extrabold shadow-sm'
                     : 'hover:bg-slate-800 hover:text-white text-slate-400'
                 }`}
@@ -3061,6 +3075,16 @@ export default function App() {
                 <ClipboardList className="w-4 h-4 shrink-0" /> Quản lý đơn hàng
               </button>
               {ordersChildNavigation}
+              <button
+                onClick={() => navigateTab('orders', { ordersSubTab: 'cancel_returns' })}
+                className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                  activeTab === 'orders' && ordersSubTabHint === 'cancel_returns'
+                    ? 'bg-orange-600 text-white font-extrabold shadow-sm'
+                    : 'hover:bg-slate-800 hover:text-white text-slate-400'
+                }`}
+              >
+                <PackageX className="w-4 h-4 shrink-0" /> Đơn hủy, đơn hoàn
+              </button>
               <button
                 onClick={() => navigateTab('orders', { ordersSubTab: 'received_cancel_returns' })}
                 className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${

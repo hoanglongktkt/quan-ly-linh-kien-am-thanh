@@ -669,10 +669,8 @@ const MOBILE_ORDER_TABS: readonly { id: OrderTab; label: string }[] = [
   { id: 'unprocessed', label: 'Chưa xử lý' },
   { id: 'processed', label: 'Chờ lấy hàng' },
   { id: 'shipping', label: 'Đang giao' },
-  { id: 'cancel_returns', label: 'Hoàn/Hủy' },
   { id: 'pending_confirm', label: 'Chờ xác nhận' },
   { id: 'handed_over_carrier', label: 'Đã giao ĐVVC' },
-  { id: 'received_cancel_returns', label: 'Đã nhận hoàn/hủy' },
   { id: 'order_products', label: 'Sản phẩm trong đơn' },
   { id: 'web_orders', label: 'Đơn trên web' },
 ];
@@ -2291,6 +2289,13 @@ export default function OrderManager({
     if (next === 'web_orders') {
       setSelectedPlatform('woocommerce');
       setSelectedShopId('all');
+    } else if (next !== 'external_orders') {
+      setSelectedPlatform('all');
+      setSelectedShopId('all');
+    }
+    if (next === 'cancel_returns') {
+      setCancelReturnTab('all');
+      setCurrentPage(1);
     }
     if (next === 'quick_pos') {
       setShowQuickPosPage(true);
@@ -9798,13 +9803,13 @@ export default function OrderManager({
 
       {!isMobileViewport && (
       <div
-        className="om-orders-sub-tabs flex flex-col gap-1.5 rounded-xl border border-blue-200 bg-blue-50/70 p-1.5 whitespace-normal scrollbar-hide md:flex-row md:flex-wrap md:items-center md:overflow-x-visible"
+        className="om-orders-sub-tabs flex flex-col gap-1.5 rounded-xl border border-blue-950 bg-blue-900 p-1.5 whitespace-normal scrollbar-hide md:flex-row md:flex-wrap md:items-center md:overflow-x-visible shadow-sm"
       >        <button
           onClick={() => selectOrdersSubTab('all')}
           className={`om-orders-mobile-hide-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer ${
             activeSubTab === 'all' 
-              ? 'border-emerald-700 bg-emerald-600 text-white font-extrabold shadow-sm'
-: 'border-blue-200 bg-white/90 text-blue-800 hover:border-blue-300 hover:bg-blue-100/80'
+              ? 'border-white bg-white text-blue-950 font-extrabold shadow-sm'
+              : 'border-blue-700/80 bg-blue-800/80 text-white hover:border-blue-500 hover:bg-blue-700'
           }`}
         >
           Tất cả đơn hàng ({getCount('all')})
@@ -9814,8 +9819,8 @@ export default function OrderManager({
           onClick={() => selectOrdersSubTab('pending_confirm')}
           className={`om-orders-mobile-hide-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'pending_confirm' || activeSubTab === 'pending_verification'
-              ? 'border-emerald-700 bg-emerald-600 text-white font-extrabold shadow-sm'
-: 'border-blue-200 bg-white/90 text-blue-800 hover:border-blue-300 hover:bg-blue-100/80'
+              ? 'border-white bg-white text-blue-950 font-extrabold shadow-sm'
+              : 'border-blue-700/80 bg-blue-800/80 text-white hover:border-blue-500 hover:bg-blue-700'
           }`}
         >
           <span>Chờ xác nhận</span>
@@ -9828,8 +9833,8 @@ export default function OrderManager({
           onClick={() => selectOrdersSubTab('unprocessed')}
           className={`om-orders-mobile-show-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer ${
             activeSubTab === 'unprocessed' 
-              ? 'border-emerald-700 bg-emerald-600 text-white font-extrabold shadow-sm'
-: 'border-blue-200 bg-white/90 text-blue-800 hover:border-blue-300 hover:bg-blue-100/80'
+              ? 'border-white bg-white text-blue-950 font-extrabold shadow-sm'
+              : 'border-blue-700/80 bg-blue-800/80 text-white hover:border-blue-500 hover:bg-blue-700'
           }`}
         >
           <span className="uppercase text-left">Đơn chưa xử lý</span>
@@ -9842,8 +9847,8 @@ export default function OrderManager({
           onClick={() => selectOrdersSubTab('processed')}
           className={`om-orders-mobile-show-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer ${
             activeSubTab === 'processed' 
-              ? 'border-emerald-700 bg-emerald-600 text-white font-extrabold shadow-sm'
-: 'border-blue-200 bg-white/90 text-blue-800 hover:border-blue-300 hover:bg-blue-100/80'
+              ? 'border-white bg-white text-blue-950 font-extrabold shadow-sm'
+              : 'border-blue-700/80 bg-blue-800/80 text-white hover:border-blue-500 hover:bg-blue-700'
           }`}
         >
           <span className="uppercase text-left">Chờ lấy hàng (Đã xử lý)</span>
@@ -9856,8 +9861,8 @@ export default function OrderManager({
           onClick={() => openHandedOverCarrierTab({ skipFetch: false })}
           className={`om-orders-mobile-show-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer ${
             activeSubTab === 'handed_over_carrier' 
-              ? 'border-emerald-700 bg-emerald-600 text-white font-extrabold shadow-sm'
-: 'border-blue-200 bg-white/90 text-blue-800 hover:border-blue-300 hover:bg-blue-100/80'
+              ? 'border-white bg-white text-blue-950 font-extrabold shadow-sm'
+              : 'border-blue-700/80 bg-blue-800/80 text-white hover:border-blue-500 hover:bg-blue-700'
           }`}
         >
           <span className="uppercase text-left">Đã giao cho ĐVVC</span>
@@ -9870,8 +9875,8 @@ export default function OrderManager({
           onClick={() => selectOrdersSubTab('shipping')}
           className={`om-orders-mobile-hide-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'shipping' 
-              ? 'border-emerald-700 bg-emerald-600 text-white font-extrabold shadow-sm'
-: 'border-blue-200 bg-white/90 text-blue-800 hover:border-blue-300 hover:bg-blue-100/80'
+              ? 'border-white bg-white text-blue-950 font-extrabold shadow-sm'
+              : 'border-blue-700/80 bg-blue-800/80 text-white hover:border-blue-500 hover:bg-blue-700'
           }`}
         >
           <span>Đang giao</span>
@@ -9881,39 +9886,11 @@ export default function OrderManager({
         </button>
 
         <button
-          onClick={() => selectOrdersSubTab('cancel_returns', 'all')}
-          className={`om-orders-mobile-show-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer ${
-            activeSubTab === 'cancel_returns' 
-              ? 'border-emerald-700 bg-emerald-600 text-white font-extrabold shadow-sm'
-: 'border-blue-200 bg-white/90 text-blue-800 hover:border-blue-300 hover:bg-blue-100/80'
-          }`}
-        >
-          <span className="uppercase text-left">ĐƠN HỦY, ĐƠN HOÀN</span>
-          <span className="px-1.5 py-0.5 text-[10px] leading-none tabular-nums font-semibold rounded-full bg-orange-100 text-orange-700 border border-orange-200">
-            {getCount('cancel_returns')}
-          </span>
-        </button>
-
-        <button
-          onClick={() => selectOrdersSubTab('received_cancel_returns')}
-          className={`om-orders-mobile-show-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer ${
-            activeSubTab === 'received_cancel_returns'
-              ? 'border-emerald-700 bg-emerald-600 text-white font-extrabold shadow-sm'
-: 'border-blue-200 bg-white/90 text-blue-800 hover:border-blue-300 hover:bg-blue-100/80'
-          }`}
-        >
-          <span className="uppercase text-left">Đã nhận đơn hủy, đơn hoàn</span>
-          <span className="px-1.5 py-0.5 text-[10px] leading-none tabular-nums font-bold rounded-full bg-teal-100 text-teal-800 border border-teal-200">
-            {getCount('received_cancel_returns')}
-          </span>
-        </button>
-
-        <button
           onClick={() => selectOrdersSubTab('order_products')}
           className={`om-orders-mobile-show-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer ${
             activeSubTab === 'order_products'
-              ? 'border-emerald-700 bg-emerald-600 text-white font-extrabold shadow-sm'
-: 'border-blue-200 bg-white/90 text-blue-800 hover:border-blue-300 hover:bg-blue-100/80'
+              ? 'border-white bg-white text-blue-950 font-extrabold shadow-sm'
+              : 'border-blue-700/80 bg-blue-800/80 text-white hover:border-blue-500 hover:bg-blue-700'
           }`}
         >
           <span className="uppercase text-left">Những sản phẩm có trong đơn</span>
