@@ -2611,6 +2611,8 @@ export default function OrderManager({
   /** Instance scanner sống — dùng để await stop/clear trước khi unmount. */
   const liveScannerRef = React.useRef<LiveQrScannerHandle | null>(null);
   const isTearingDownScannerRef = React.useRef(false);
+  const isFlushingQueueRef = React.useRef(isFlushingQueue);
+  isFlushingQueueRef.current = isFlushingQueue;
   const orderScanIndex = useMemo(
     () => (focusScanner ? buildOrderScanIndex([]) : buildOrderScanIndex(orders)),
     [focusScanner, orders],
@@ -2787,6 +2789,7 @@ export default function OrderManager({
     setCameraError('');
     setCameraScanSuccess(false);
     setCameraScanError(false);
+    setIsCameraScanCovered(false);
     setCameraScanResult('Chọn chế độ quét để bắt đầu');
   }, [clearScannerSessionData]);
 
@@ -4242,6 +4245,7 @@ export default function OrderManager({
 
       setCameraScanSuccess(false);
       setCameraScanError(false);
+      setIsCameraScanCovered(false);
       setCameraError('');
       lastQrScanRef.current = { key: '', at: 0 };
       pendingScanQueueRef.current = [];
@@ -4260,6 +4264,7 @@ export default function OrderManager({
             : 'Quét hàng hoàn — quét mã kiện trả về',
       );
 
+      let coverTimer: number | null = null;
       const timer = setTimeout(() => {
         if (!isMounted || isTearingDownScannerRef.current) return;
 
@@ -4272,20 +4277,34 @@ export default function OrderManager({
 
         const qrCodeSuccessCallback = (decodedText: string): false | Promise<void> => {
           if (
-            !isMounted || isTearingDownScannerRef.current || isScanBusyRef.current ||
+            !isMounted ||
+            isTearingDownScannerRef.current ||
+            isFlushingQueueRef.current ||
+            isScanBusyRef.current ||
             !normalizeOrderScanKey(decodedText)
           ) {
             return false;
           }
 
           setIsCameraScanCovered(true);
-          // Giữ phản hồi đủ lâu để nhìn thấy, kể cả khi phân loại trả về ngay.
-          return Promise.all([
-            verifyScanRef.current(decodedText),
-            new Promise<void>((resolve) => window.setTimeout(resolve, 350)),
-          ]).then(() => undefined).finally(() => {
-            if (isMounted) setIsCameraScanCovered(false);
+          // Giữ lớp phủ đủ lâu để người dùng nhận biết, kể cả khi tra cứu lỗi sớm.
+          const minimumCover = new Promise<void>((resolve) => {
+            coverTimer = window.setTimeout(() => {
+              coverTimer = null;
+              resolve();
+            }, 600);
           });
+          const verification = Promise.resolve().then(() => verifyScanRef.current(decodedText));
+
+          return Promise.allSettled([verification, minimumCover])
+            .then(([verificationResult]) => {
+              if (verificationResult.status === 'rejected') {
+                throw verificationResult.reason;
+              }
+            })
+            .finally(() => {
+              if (isMounted) setIsCameraScanCovered(false);
+            });
         };
 
         void startLiveQrScanner({
@@ -4325,6 +4344,7 @@ export default function OrderManager({
             console.error('Camera scanner start failed:', err);
             const msg =
               err instanceof Error ? err.message : 'Không thể khởi động camera.';
+            setIsCameraScanCovered(false);
             setCameraError(
               msg === HTTPS_CAMERA_MESSAGE
                 ? msg
@@ -4336,6 +4356,11 @@ export default function OrderManager({
       return () => {
         isMounted = false;
         clearTimeout(timer);
+        if (coverTimer !== null) {
+          window.clearTimeout(coverTimer);
+          coverTimer = null;
+        }
+        setIsCameraScanCovered(false);
         // Nếu finish handler đã/đang teardown — không stop lần 2 (tránh race removeChild).
         if (isTearingDownScannerRef.current) return;
         stopTapToFocusAssist(CAMERA_TAP_LAYER_ID);
@@ -8267,6 +8292,7 @@ export default function OrderManager({
     setScannerMode(null);
     setCameraScanResult('Chọn chế độ quét để bắt đầu');
     setCameraScanSuccess(false);
+    setIsCameraScanCovered(false);
     setScanToast(null);
     setShowEndConfirm(false);
     setIsFlushingQueue(false);
@@ -8973,7 +8999,7 @@ export default function OrderManager({
         {/* Camera */}
         <div className="flex-1 min-h-0 px-3 flex flex-col gap-2 pb-2">
           <div
-            className={`flex-1 min-h-[220px] relative rounded-2xl overflow-hidden bg-black transition-colors duration-300 ${
+            className={`flex-1 min-h-[220px] relative isolate rounded-2xl overflow-hidden bg-black transition-colors duration-300 ${
               cameraScanSuccess
                 ? 'border-2 border-emerald-400 shadow-[0_0_24px_rgba(52,211,153,0.35)]'
                 : cameraScanError
@@ -8981,7 +9007,7 @@ export default function OrderManager({
                   : 'border border-zinc-800'
             }`}
           >
-            <div id="camera-reader" className="w-full h-full object-cover" />
+            <div id="camera-reader" className="relative z-0 w-full h-full object-cover" />
             <button
               type="button"
               id={CAMERA_TAP_LAYER_ID}
@@ -9101,7 +9127,7 @@ export default function OrderManager({
               </div>
             )}
             {isCameraScanCovered ? (
-              <div role="status" className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 bg-emerald-700 px-4 text-center text-white">
+              <div role="status" aria-live="assertive" className="absolute inset-0 z-30 flex touch-none select-none transform-gpu flex-col items-center justify-center gap-2 bg-emerald-700 px-4 text-center text-white">
                 <CheckCircle2 className="h-12 w-12" aria-hidden="true" />
                 <p className="text-lg font-extrabold">Đã nhận mã</p>
                 {isVerifyingScan && <p className="text-sm text-emerald-50">Đang phân loại đơn…</p>}

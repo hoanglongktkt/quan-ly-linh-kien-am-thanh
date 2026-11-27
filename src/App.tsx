@@ -29,7 +29,7 @@ import BrandLogo, { BrandHeader } from './components/BrandLogo';
 import { APP_TITLE } from './config/brand';
 import { purgeLegacyCatalogCache } from './utils/catalogStorage';
 import { sanitizeOrders, sortOrdersByCreatedAtDesc, orderCreatedAtMs } from './utils/sanitizeOrder';
-import { safeGetJson, safeRemoveItem, safeSetItem } from './utils/safeStorage';
+import { safeGetItem, safeGetJson, safeRemoveItem, safeSetItem } from './utils/safeStorage';
 import { parseJsonResponse } from './utils/apiClient';
 import { saveImportBatchRequest, ImportBatchSaveError } from './utils/importBatch';
 import { decodeJwtPayload, isJwtLocallyValid } from './utils/jwtClient';
@@ -61,6 +61,8 @@ import {
   Barcode,
   Menu,
   X,
+  PanelLeftOpen,
+  PanelLeftClose,
   ScanLine,
   ClipboardCheck,
   PackageCheck,
@@ -800,6 +802,19 @@ export default function App() {
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+  const [desktopSidebarPinned, setDesktopSidebarPinned] = useState(
+    () => safeGetItem('omni_desktop_sidebar_pinned') === '1',
+  );
+  const [desktopSidebarHovered, setDesktopSidebarHovered] = useState(false);
+  const [desktopSidebarFocused, setDesktopSidebarFocused] = useState(false);
+  const desktopSidebarExpanded = desktopSidebarPinned || desktopSidebarHovered || desktopSidebarFocused;
+  const toggleDesktopSidebarPinned = () => {
+    setDesktopSidebarPinned((prev) => {
+      const next = !prev;
+      safeSetItem('omni_desktop_sidebar_pinned', next ? '1' : '0');
+      return next;
+    });
+  };
   const [pushOrderId, setPushOrderId] = useState(() => new URLSearchParams(window.location.search).get('pushOrder'));
   const dismissPushOrder = useCallback(() => {
     setPushOrderId(null);
@@ -2739,18 +2754,20 @@ export default function App() {
     navigateTab('imports');
   };
 
-  const navButtonClass = (tab: string) =>
-    `w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
+  const navButtonClass = (tab: string, compact = false) =>
+    `w-full flex items-center ${compact ? 'justify-center gap-0 px-0' : 'gap-3 px-4'} py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
       activeTab === tab
         ? 'bg-blue-600 text-white font-extrabold shadow-sm'
         : 'hover:bg-slate-800 hover:text-white text-slate-400'
     }`;
 
+  const navLabelClass = (compact: boolean) => compact ? 'sidebar-label sr-only' : 'sidebar-label truncate whitespace-nowrap';
+
   const isOrdersChildNav = (id: OrdersSubTabId) =>
     activeTab === 'orders' && ordersSubTabHint === id;
 
-  const ordersChildNavClass = (id: OrdersSubTabId, activeBg: string) =>
-    `w-full flex items-center gap-2.5 pl-8 pr-3 py-2 min-h-9 rounded-lg text-left text-[11px] font-semibold uppercase tracking-wide transition-all cursor-pointer ${
+  const ordersChildNavClass = (id: OrdersSubTabId, activeBg: string, compact = false) =>
+    `relative w-full flex items-center ${compact ? 'justify-center gap-0 px-0' : 'gap-2.5 pl-8 pr-3'} py-2 min-h-9 rounded-lg text-left text-[11px] font-semibold uppercase tracking-wide transition-all cursor-pointer ${
       isOrdersChildNav(id)
         ? `${activeBg} text-white font-bold shadow-sm`
         : 'hover:bg-slate-800 hover:text-slate-200 text-slate-500'
@@ -2787,40 +2804,26 @@ export default function App() {
     return <LoginPage onLoginSuccess={handleLoginSuccess} />;
   }
 
-  const ordersChildNavigation = (
+  const renderOrdersChildNavigation = (compact: boolean) => (
     <div role="group" aria-label="Các mục trong Quản lý đơn hàng" className="space-y-1">
-      <button type="button" onClick={() => goOrdersTab('web_orders')}
-        className={ordersChildNavClass('web_orders', 'bg-indigo-600')}
-        aria-current={isOrdersChildNav('web_orders') ? 'page' : undefined}>
+      <button type="button" onClick={() => goOrdersTab('web_orders')} className={ordersChildNavClass('web_orders', 'bg-indigo-600', compact)} title="ĐƠN TRÊN WEB">
         <span className="w-3.5 h-3.5 bg-indigo-600 text-white font-extrabold text-[9px] rounded flex items-center justify-center shrink-0">W</span>
-        <span className="flex-1">ĐƠN TRÊN WEB</span>
-        <span className="rounded-full bg-indigo-100 px-1.5 text-[10px] font-bold text-indigo-800 tabular-nums">{webOrderCount}</span>
+        <span className={compact ? 'sr-only' : 'flex-1'}>ĐƠN TRÊN WEB</span>
+        <span className={compact ? 'absolute right-1 top-1 rounded-full bg-indigo-100 px-1 text-[9px] font-bold text-indigo-800' : 'rounded-full bg-indigo-100 px-1.5 text-[10px] font-bold text-indigo-800 tabular-nums'}>{webOrderCount}</span>
       </button>
-      <button type="button" onClick={() => goOrdersTab('quick_pos')} className={ordersChildNavClass('quick_pos', 'bg-sky-600')}>
-        <Zap className="w-3.5 h-3.5 shrink-0" /> Tạo đơn nhanh
+      <button type="button" onClick={() => goOrdersTab('quick_pos')} className={ordersChildNavClass('quick_pos', 'bg-sky-600', compact)} title="Tạo đơn nhanh">
+        <Zap className="w-3.5 h-3.5 shrink-0" /> <span className={compact ? 'sr-only' : ''}>Tạo đơn nhanh</span>
       </button>
-      <button type="button" onClick={() => goOrdersTab('create_external')} className={ordersChildNavClass('create_external', 'bg-emerald-600')}>
-        <PlusSquare className="w-3.5 h-3.5 shrink-0" /> Tạo đơn ngoại sàn
+      <button type="button" onClick={() => goOrdersTab('create_external')} className={ordersChildNavClass('create_external', 'bg-emerald-600', compact)} title="Tạo đơn ngoại sàn">
+        <PlusSquare className="w-3.5 h-3.5 shrink-0" /> <span className={compact ? 'sr-only' : ''}>Tạo đơn ngoại sàn</span>
       </button>
-      <button
-        type="button"
-        onClick={() => goOrdersTab('external_orders')}
-        className={ordersChildNavClass('external_orders', 'bg-emerald-600')}
-        aria-current={isOrdersChildNav('external_orders') ? 'page' : undefined}
-      >
+      <button type="button" onClick={() => goOrdersTab('external_orders')} className={ordersChildNavClass('external_orders', 'bg-emerald-600', compact)} title="Danh Sách Đơn Ngoài Sàn">
         <ShoppingBag className="w-3.5 h-3.5 shrink-0" />
-        <span className="flex-1">Danh Sách Đơn Ngoài Sàn</span>
-        <span className="rounded-full bg-emerald-100 px-1.5 text-[10px] font-bold text-emerald-800 tabular-nums">
-          {externalOrderCount}
-        </span>
+        <span className={compact ? 'sr-only' : 'flex-1'}>Danh Sách Đơn Ngoài Sàn</span>
+        <span className={compact ? 'absolute right-1 top-1 rounded-full bg-emerald-100 px-1 text-[9px] font-bold text-emerald-800' : 'rounded-full bg-emerald-100 px-1.5 text-[10px] font-bold text-emerald-800 tabular-nums'}>{externalOrderCount}</span>
       </button>
-      <button
-        type="button"
-        onClick={() => goOrdersTab('drafts')}
-        className={ordersChildNavClass('drafts', 'bg-amber-600')}
-        aria-current={isOrdersChildNav('drafts') ? 'page' : undefined}
-      >
-        <FileText className="w-3.5 h-3.5 shrink-0" /> Đơn nháp
+      <button type="button" onClick={() => goOrdersTab('drafts')} className={ordersChildNavClass('drafts', 'bg-amber-600', compact)} title="Đơn nháp">
+        <FileText className="w-3.5 h-3.5 shrink-0" /> <span className={compact ? 'sr-only' : ''}>Đơn nháp</span>
       </button>
     </div>
   );
@@ -2859,63 +2862,103 @@ export default function App() {
         </div>
       )}
       {/* Sidebar Navigation */}
-      <aside className="sidebar-panel max-md:hidden md:fixed md:inset-y-0 md:left-0 md:z-40 md:flex md:w-64 md:flex-col shrink-0 h-screen overflow-hidden bg-slate-900 text-slate-300 border-r border-slate-800" id="sidebar-panel">
+      <aside
+        className={`sidebar-panel max-md:hidden md:fixed md:inset-y-0 md:left-0 md:z-40 md:flex ${desktopSidebarExpanded ? 'md:w-64' : 'md:w-16'} md:flex-col shrink-0 h-screen overflow-hidden bg-slate-900 text-slate-300 border-r border-slate-800 md:transition-[width,box-shadow] md:duration-200 md:ease-out ${desktopSidebarExpanded && !desktopSidebarPinned ? 'shadow-2xl shadow-slate-950/50' : ''}`}
+        id="sidebar-panel"
+        onMouseEnter={() => setDesktopSidebarHovered(true)}
+        onMouseLeave={() => setDesktopSidebarHovered(false)}
+        onFocusCapture={() => setDesktopSidebarFocused(true)}
+        onBlurCapture={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+            setDesktopSidebarFocused(false);
+          }
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape' && !desktopSidebarPinned) {
+            setDesktopSidebarFocused(false);
+            (event.target as HTMLElement).blur();
+          }
+        }}
+      >
         {/* Brand Header */}
-        <div className="p-6 border-b border-slate-800 shrink-0">
-          <BrandHeader logoSize={48} />
+        <div className={`${desktopSidebarExpanded ? 'px-4 py-4 justify-between' : 'p-2 flex-col'} flex items-center gap-2 border-b border-slate-800 shrink-0`}>
+          {desktopSidebarExpanded ? <BrandHeader logoSize={40} /> : <BrandLogo size={32} className="rounded-lg bg-white" />}
+          <button
+            type="button"
+            onClick={toggleDesktopSidebarPinned}
+            aria-pressed={desktopSidebarPinned}
+            aria-label={desktopSidebarPinned ? 'Bỏ ghim thanh menu' : 'Ghim mở rộng thanh menu'}
+            title={desktopSidebarPinned ? 'Bỏ ghim thanh menu' : 'Ghim mở rộng thanh menu'}
+            className="grid min-h-9 min-w-9 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
+          >
+            {desktopSidebarPinned ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
+          </button>
         </div>
 
         {/* Navigation Items */}
-        <nav className="sidebar-nav-scroll flex-1 min-h-0 p-4 space-y-1 overflow-y-auto" id="sidebar-nav">
+        <nav className={`sidebar-nav-scroll flex-1 min-h-0 p-4 space-y-1 overflow-y-auto ${desktopSidebarExpanded ? '' : 'sidebar-compact'}`} id="sidebar-nav">
           <button
+            type="button"
             onClick={() => navigateTab('dashboard')}
-            className={navButtonClass('dashboard')}
+            className={navButtonClass('dashboard', !desktopSidebarExpanded)}
+            aria-label="Tổng quan"
+            title="Tổng quan"
           >
-            <LayoutDashboard className="w-4 h-4 shrink-0" /> Tổng quan
+            <LayoutDashboard className="w-4 h-4 shrink-0" /> <span className={navLabelClass(!desktopSidebarExpanded)}>Tổng quan</span>
           </button>
 
           <button
+            type="button"
             onClick={() => navigateTab('products')}
-            className={navButtonClass('products')}
+            className={navButtonClass('products', !desktopSidebarExpanded)}
+            aria-label="Kho & Sản phẩm"
+            title="Kho & Sản phẩm"
           >
-            <Package className="w-4 h-4 shrink-0" /> Kho & Sản phẩm
+            <Package className="w-4 h-4 shrink-0" /> <span className={navLabelClass(!desktopSidebarExpanded)}>Kho & Sản phẩm</span>
           </button>
 
           <button
+            type="button"
             onClick={() => navigateTab('publish')}
-            className={navButtonClass('publish')}
+            className={navButtonClass('publish', !desktopSidebarExpanded)}
+            aria-label="Đăng bán sỉ đa sàn"
+            title="Đăng bán sỉ đa sàn"
           >
-            <Globe className="w-4 h-4 shrink-0" /> Đăng bán sỉ đa sàn
+            <Globe className="w-4 h-4 shrink-0" /> <span className={navLabelClass(!desktopSidebarExpanded)}>Đăng bán sỉ đa sàn</span>
           </button>
 
           <button
             type="button"
             onClick={() => navigateTab('chat')}
-            className={`w-full flex items-center gap-2 px-3 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
+            className={`relative w-full flex items-center ${desktopSidebarExpanded ? 'gap-2 px-3' : 'justify-center gap-0 px-0'} py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
               activeTab === 'chat'
                 ? 'bg-blue-600 text-white font-extrabold shadow-sm'
                 : 'hover:bg-slate-800 hover:text-white text-slate-400'
             }`}
+            aria-label="Trả Lời Tin Nhắn Khách"
+            title="Trả Lời Tin Nhắn Khách"
           >
             <MessageSquare className="w-4 h-4 shrink-0" />
-            <span className="min-w-0 flex-1 truncate text-left">Trả Lời Tin Nhắn Khách</span>
-            <span className="ml-auto inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-black leading-none text-white tabular-nums">
+            <span className={desktopSidebarExpanded ? 'min-w-0 flex-1 truncate text-left' : 'sr-only'}>Trả Lời Tin Nhắn Khách</span>
+            <span className={desktopSidebarExpanded ? 'ml-auto inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-black leading-none text-white tabular-nums' : 'absolute right-1 top-1 inline-flex min-w-3 h-3 items-center justify-center rounded-full bg-red-500 px-0.5 text-[8px] font-black leading-none text-white'}>
               {totalUnreadCount}
             </span>
           </button>
 
           <button
             onClick={() => goOrdersTab()}
-            className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
+            className={`w-full flex items-center ${desktopSidebarExpanded ? 'gap-3 px-4' : 'justify-center gap-0 px-0'} py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
               activeTab === 'orders' && !isOrdersChildTab && !isOrdersReturnSidebarTab
                 ? 'bg-blue-600 text-white font-extrabold shadow-sm'
                 : 'hover:bg-slate-800 hover:text-white text-slate-400'
             }`}
+            aria-label="Quản lý đơn hàng"
+            title="Quản lý đơn hàng"
           >
-            <ClipboardList className="w-4 h-4 shrink-0" /> Quản lý đơn hàng
+            <ClipboardList className="w-4 h-4 shrink-0" /> <span className={navLabelClass(!desktopSidebarExpanded)}>Quản lý đơn hàng</span>
           </button>
 
-          {ordersChildNavigation}
+          {renderOrdersChildNavigation(!desktopSidebarExpanded)}
 
           <button
             onClick={() => navigateTab('orders', { ordersSubTab: 'cancel_returns' })}
@@ -2952,52 +2995,73 @@ export default function App() {
           </button>
 
           <button
+            type="button"
             onClick={() => navigateTab('suppliers')}
-            className={navButtonClass('suppliers')}
+            className={navButtonClass('suppliers', !desktopSidebarExpanded)}
+            aria-label="Nhà Cung Cấp"
+            title="Nhà Cung Cấp"
           >
-            <Users className="w-4 h-4 shrink-0" /> Nhà Cung Cấp
+            <Users className="w-4 h-4 shrink-0" /> <span className={navLabelClass(!desktopSidebarExpanded)}>Nhà Cung Cấp</span>
           </button>
 
           <button
+            type="button"
             onClick={() => navigateTab('vip-customers')}
-            className={navButtonClass('vip-customers')}
+            className={navButtonClass('vip-customers', !desktopSidebarExpanded)}
+            aria-label="Khách hàng VIP"
+            title="Khách hàng VIP"
           >
-            <Crown className="w-4 h-4 shrink-0" /> Khách hàng VIP
+            <Crown className="w-4 h-4 shrink-0" /> <span className={navLabelClass(!desktopSidebarExpanded)}>Khách hàng VIP</span>
           </button>
 
           <button
+            type="button"
             onClick={() => navigateTab('imports')}
-            className={navButtonClass('imports')}
+            className={navButtonClass('imports', !desktopSidebarExpanded)}
+            aria-label="Nhập Hàng"
+            title="Nhập Hàng"
           >
-            <ArrowDownToLine className="w-4 h-4 shrink-0" /> Nhập Hàng
+            <ArrowDownToLine className="w-4 h-4 shrink-0" /> <span className={navLabelClass(!desktopSidebarExpanded)}>Nhập Hàng</span>
           </button>
 
           <button
+            type="button"
             onClick={() => navigateTab('material-imports')}
-            className={navButtonClass('material-imports')}
+            className={navButtonClass('material-imports', !desktopSidebarExpanded)}
+            aria-label="Nhập Vật Tư"
+            title="Nhập Vật Tư"
           >
-            <Layers className="w-4 h-4 shrink-0" /> Nhập Vật Tư
+            <Layers className="w-4 h-4 shrink-0" /> <span className={navLabelClass(!desktopSidebarExpanded)}>Nhập Vật Tư</span>
           </button>
 
           <button
+            type="button"
             onClick={() => navigateTab('financials')}
-            className={navButtonClass('financials')}
+            className={navButtonClass('financials', !desktopSidebarExpanded)}
+            aria-label="Chi Phí Bán Hàng"
+            title="Chi Phí Bán Hàng"
           >
-            <Coins className="w-4 h-4 shrink-0" /> Chi Phí Bán Hàng
+            <Coins className="w-4 h-4 shrink-0" /> <span className={navLabelClass(!desktopSidebarExpanded)}>Chi Phí Bán Hàng</span>
           </button>
 
           <button
+            type="button"
             onClick={() => navigateTab('reconciliation')}
-            className={navButtonClass('reconciliation')}
+            className={navButtonClass('reconciliation', !desktopSidebarExpanded)}
+            aria-label="Đối soát tiền"
+            title="Đối soát tiền"
           >
-            <Wallet className="w-4 h-4 shrink-0" /> Đối soát tiền
+            <Wallet className="w-4 h-4 shrink-0" /> <span className={navLabelClass(!desktopSidebarExpanded)}>Đối soát tiền</span>
           </button>
 
           <button
+            type="button"
             onClick={() => navigateTab('settings')}
-            className={navButtonClass('settings')}
+            className={navButtonClass('settings', !desktopSidebarExpanded)}
+            aria-label="Cấu hình & Kết nối"
+            title="Cấu hình & Kết nối"
           >
-            <Settings className="w-4 h-4 shrink-0" /> Cấu hình & Kết nối
+            <Settings className="w-4 h-4 shrink-0" /> <span className={navLabelClass(!desktopSidebarExpanded)}>Cấu hình & Kết nối</span>
           </button>
 
           <button
@@ -3012,7 +3076,7 @@ export default function App() {
         </nav>
 
         {/* Sidebar Footer */}
-        <div className="p-4 border-t border-slate-800 text-center space-y-1.5 text-[10px] text-slate-500 font-medium shrink-0">
+        <div className={`${desktopSidebarExpanded ? '' : 'hidden'} p-4 border-t border-slate-800 text-center space-y-1.5 text-[10px] text-slate-500 font-medium shrink-0`}>
           <p>{APP_TITLE}</p>
           <p>© 2026 Linh Kiện Âm Thanh</p>
         </div>
@@ -3074,7 +3138,7 @@ export default function App() {
               >
                 <ClipboardList className="w-4 h-4 shrink-0" /> Quản lý đơn hàng
               </button>
-              {ordersChildNavigation}
+              {renderOrdersChildNavigation(false)}
               <button
                 onClick={() => navigateTab('orders', { ordersSubTab: 'cancel_returns' })}
                 className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
@@ -3139,7 +3203,7 @@ export default function App() {
       )}
 
       {/* Main Content Area — md:ml-64 tránh bị sidebar fixed đè lên */}
-      <main className={`md:flex-1 min-w-0 w-full md:ml-64 ${activeTab === 'orders' && !focusScanner ? 'max-md:bg-[#F1F5F9]' : ''}`}>
+      <main className={`md:flex-1 min-w-0 w-full ${desktopSidebarPinned ? 'md:ml-64' : 'md:ml-16'} md:transition-[margin-left] md:duration-200 ${activeTab === 'orders' && !focusScanner ? 'max-md:bg-[#F1F5F9]' : ''}`}>
         {/* Header toolbar */}
         <header className={`bg-white border-b border-gray-100 shadow-xs shrink-0 ${focusScanner ? 'max-md:hidden' : 'max-md:flex'} ${hideDesktopOrdersHeader ? 'md:hidden' : 'md:flex'} ${activeTab === 'orders' ? 'max-md:border-slate-900 max-md:bg-slate-900' : ''}`}>
           <div className="app-main-container w-full px-4 md:px-6 py-3 md:py-4 flex items-center justify-between gap-3">
