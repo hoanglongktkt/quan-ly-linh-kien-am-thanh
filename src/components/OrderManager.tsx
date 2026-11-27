@@ -10007,7 +10007,7 @@ export default function OrderManager({
                 setSearchQuery(e.target.value);
                 setCurrentPage(1);
               }}
-              className="w-full rounded-xl border-2 border-blue-300 bg-white py-3 pl-10 pr-10 text-sm font-semibold text-slate-900 shadow-sm outline-none transition-all placeholder:text-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+              className="w-full rounded-xl border-2 border-blue-300 bg-white py-3 pl-10 pr-10 text-sm font-semibold text-slate-900 shadow-sm outline-none transition-all placeholder:text-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100 xl:h-[34px] xl:py-0"
             />
             {searchQuery && (
               <button
