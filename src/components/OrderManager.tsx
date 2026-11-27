@@ -9829,13 +9829,13 @@ export default function OrderManager({
 
       {!isMobileViewport && (
       <div
-        className="om-orders-sub-tabs flex flex-col gap-1 rounded-xl border border-blue-700 bg-blue-600 p-1 whitespace-nowrap scrollbar-hide md:flex-row md:flex-nowrap md:items-center md:overflow-x-auto shadow-sm"
+        className="om-orders-sub-tabs sticky top-0 z-30 flex flex-col gap-1 rounded-xl border border-slate-200 bg-white/95 p-1 whitespace-nowrap shadow-sm backdrop-blur-sm scrollbar-hide md:flex-row md:flex-nowrap md:items-center md:overflow-x-auto"
       >        <button
           onClick={() => selectOrdersSubTab('all')}
           className={`om-orders-mobile-hide-subtab inline-flex shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-normal leading-tight transition-all cursor-pointer ${
             activeSubTab === 'all' 
-              ? 'border-white bg-white text-blue-700 font-extrabold shadow-sm'
-              : 'border-blue-400/70 bg-blue-500/80 text-white hover:border-blue-300 hover:bg-blue-400'
+              ? 'border-blue-600 bg-blue-600 text-white font-extrabold shadow-sm'
+              : 'border-transparent bg-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-100 hover:text-slate-900'
           }`}
         >
           Tất cả đơn hàng ({getCount('all')})
@@ -9845,8 +9845,8 @@ export default function OrderManager({
           onClick={() => selectOrdersSubTab('pending_confirm')}
           className={`om-orders-mobile-hide-subtab inline-flex shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-normal leading-tight transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'pending_confirm' || activeSubTab === 'pending_verification'
-              ? 'border-white bg-white text-blue-700 font-extrabold shadow-sm'
-              : 'border-blue-400/70 bg-blue-500/80 text-white hover:border-blue-300 hover:bg-blue-400'
+              ? 'border-blue-600 bg-blue-600 text-white font-extrabold shadow-sm'
+              : 'border-transparent bg-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-100 hover:text-slate-900'
           }`}
         >
           <span>Chờ xác nhận</span>
@@ -9859,8 +9859,8 @@ export default function OrderManager({
           onClick={() => selectOrdersSubTab('unprocessed')}
           className={`om-orders-mobile-show-subtab inline-flex shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-normal leading-tight transition-all cursor-pointer ${
             activeSubTab === 'unprocessed' 
-              ? 'border-white bg-white text-blue-700 font-extrabold shadow-sm'
-              : 'border-blue-400/70 bg-blue-500/80 text-white hover:border-blue-300 hover:bg-blue-400'
+              ? 'border-blue-600 bg-blue-600 text-white font-extrabold shadow-sm'
+              : 'border-transparent bg-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-100 hover:text-slate-900'
           }`}
         >
           <span className="uppercase text-left">Đơn chưa xử lý</span>
@@ -9873,8 +9873,8 @@ export default function OrderManager({
           onClick={() => selectOrdersSubTab('processed')}
           className={`om-orders-mobile-show-subtab inline-flex shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-normal leading-tight transition-all cursor-pointer ${
             activeSubTab === 'processed' 
-              ? 'border-white bg-white text-blue-700 font-extrabold shadow-sm'
-              : 'border-blue-400/70 bg-blue-500/80 text-white hover:border-blue-300 hover:bg-blue-400'
+              ? 'border-blue-600 bg-blue-600 text-white font-extrabold shadow-sm'
+              : 'border-transparent bg-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-100 hover:text-slate-900'
           }`}
         >
           <span className="uppercase text-left">Chờ lấy hàng (Đã xử lý)</span>
@@ -9887,8 +9887,8 @@ export default function OrderManager({
           onClick={() => openHandedOverCarrierTab({ skipFetch: false })}
           className={`om-orders-mobile-show-subtab inline-flex shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-normal leading-tight transition-all cursor-pointer ${
             activeSubTab === 'handed_over_carrier' 
-              ? 'border-white bg-white text-blue-700 font-extrabold shadow-sm'
-              : 'border-blue-400/70 bg-blue-500/80 text-white hover:border-blue-300 hover:bg-blue-400'
+              ? 'border-blue-600 bg-blue-600 text-white font-extrabold shadow-sm'
+              : 'border-transparent bg-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-100 hover:text-slate-900'
           }`}
         >
           <span className="uppercase text-left">Đã giao cho ĐVVC</span>
@@ -9901,8 +9901,8 @@ export default function OrderManager({
           onClick={() => selectOrdersSubTab('shipping')}
           className={`om-orders-mobile-hide-subtab inline-flex shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-normal leading-tight transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'shipping' 
-              ? 'border-white bg-white text-blue-700 font-extrabold shadow-sm'
-              : 'border-blue-400/70 bg-blue-500/80 text-white hover:border-blue-300 hover:bg-blue-400'
+              ? 'border-blue-600 bg-blue-600 text-white font-extrabold shadow-sm'
+              : 'border-transparent bg-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-100 hover:text-slate-900'
           }`}
         >
           <span>Đang giao</span>
@@ -9915,8 +9915,8 @@ export default function OrderManager({
           onClick={() => selectOrdersSubTab('order_products')}
           className={`om-orders-mobile-show-subtab inline-flex shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-normal leading-tight transition-all cursor-pointer ${
             activeSubTab === 'order_products'
-              ? 'border-white bg-white text-blue-700 font-extrabold shadow-sm'
-              : 'border-blue-400/70 bg-blue-500/80 text-white hover:border-blue-300 hover:bg-blue-400'
+              ? 'border-blue-600 bg-blue-600 text-white font-extrabold shadow-sm'
+              : 'border-transparent bg-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-100 hover:text-slate-900'
           }`}
         >
           <span className="uppercase text-left">Những sản phẩm có trong đơn</span>
@@ -9996,20 +9996,86 @@ export default function OrderManager({
       {/* 4. FILTER BOX — search + ĐVVC (ẩn trên màn sản phẩm trong đơn) */}
       {activeSubTab !== 'order_products' && (
       <div className="om-orders-filters-panel bg-white p-5 max-md:p-4 rounded-3xl border border-gray-100 shadow-xs">
-        <div className="flex flex-col lg:flex-row lg:items-center gap-3">
-          <div className="relative w-full flex-1">
-            <Search className="absolute left-3.5 top-3.5 text-gray-400 w-4 h-4" />
-            <input 
-              type="text" 
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+          <div className="relative w-full min-w-0 xl:w-[380px] xl:shrink-0">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-blue-600 w-4 h-4" />
+            <input
+              type="text"
               placeholder="Tìm theo tên khách, số điện thoại, mã đơn hoặc mã vận đơn..."
               value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.target.value);
                 setCurrentPage(1);
               }}
-              className="w-full pl-10 pr-4 py-2.5 bg-gray-50/50 rounded-xl border border-gray-100 focus:border-blue-500 focus:bg-white text-xs outline-none transition-all font-medium"
+              className="w-full rounded-xl border-2 border-blue-300 bg-white py-3 pl-10 pr-10 text-sm font-semibold text-slate-900 shadow-sm outline-none transition-all placeholder:text-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
             />
+            {searchQuery && (
+              <button
+                type="button"
+                aria-label="Xóa tìm kiếm"
+                onClick={() => {
+                  setSearchQuery('');
+                  setCurrentPage(1);
+                }}
+                className="absolute right-2 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-lg text-slate-400 hover:bg-blue-50 hover:text-blue-700"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
           </div>
+
+          {(activeSubTab === 'pending_confirm' ||
+            activeSubTab === 'pending_verification' ||
+            activeSubTab === 'unprocessed' ||
+            activeSubTab === 'processed' ||
+            activeSubTab === 'cancel_returns' ||
+            activeSubTab === 'received_cancel_returns' ||
+            activeSubTab === 'handed_over_carrier') && (
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-2 xl:border-l xl:border-slate-200 xl:pl-3">
+              <span className="shrink-0 text-xs font-bold text-slate-600">Đơn vị vận chuyển</span>
+              {(
+                [
+                  { key: 'ghn' as const, label: 'Giao Hàng Nhanh', highlight: false },
+                  { key: 'all' as const, label: 'Tất cả', highlight: false },
+                  { key: 'spx' as const, label: 'SPX Express', highlight: false },
+                  { key: 'instant' as const, label: 'Đơn Hỏa Tốc', highlight: true },
+                  { key: 'other' as const, label: 'ĐVVC Khác', highlight: false },
+                ] as const
+              ).map((opt) => {
+                const count = ordersListReady ? shippingCarrierCounts[opt.key] : null;
+                const active = selectedShippingCarrier === opt.key;
+                return (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    disabled={!ordersListReady}
+                    onClick={() => {
+                      if (!ordersListReady) return;
+                      setSelectedShippingCarrier(opt.key);
+                      setSelectedOrderIds([]);
+                      setCurrentPage(1);
+                    }}
+                    className={`text-[11px] px-3.5 py-1.5 rounded-full transition-all whitespace-nowrap ${
+                      !ordersListReady
+                        ? 'border border-gray-200 text-slate-400 bg-slate-50 font-bold cursor-not-allowed opacity-60'
+                        : opt.highlight
+                        ? active
+                          ? 'border-2 border-orange-500 text-orange-600 bg-orange-100 font-black shadow-sm'
+                          : 'border-2 border-orange-400 text-orange-500 bg-orange-50 font-black hover:bg-orange-100'
+                        : active
+                          ? 'border border-[#ee4d2d] text-[#ee4d2d] bg-orange-50/40 font-bold'
+                          : 'border border-gray-200 text-slate-700 bg-white font-bold hover:border-gray-300'
+                    }`}
+                  >
+                    {opt.label} ({count ?? '…'})
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3">
           <OrderDateFilter
             preset={datePreset}
             customStart={customStartDate}
@@ -10038,55 +10104,6 @@ export default function OrderManager({
               Ưu tiên đơn 1 sản phẩm (Gom nhóm nhặt hàng)
             </span>
           </label>
-        )}
-        {(activeSubTab === 'pending_confirm' ||
-          activeSubTab === 'pending_verification' ||
-          activeSubTab === 'unprocessed' ||
-          activeSubTab === 'processed' ||
-          activeSubTab === 'cancel_returns' ||
-          activeSubTab === 'received_cancel_returns' ||
-          activeSubTab === 'handed_over_carrier') && (
-          <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
-            <span className="text-xs font-bold text-slate-600 shrink-0">Đơn vị vận chuyển</span>
-            {(
-              [
-                { key: 'ghn' as const, label: 'Giao Hàng Nhanh', highlight: false },
-                { key: 'all' as const, label: 'Tất cả', highlight: false },
-                { key: 'spx' as const, label: 'SPX Express', highlight: false },
-                { key: 'instant' as const, label: 'Đơn Hỏa Tốc', highlight: true },
-                { key: 'other' as const, label: 'ĐVVC Khác', highlight: false },
-              ] as const
-            ).map((opt) => {
-              const count = ordersListReady ? shippingCarrierCounts[opt.key] : null;
-              const active = selectedShippingCarrier === opt.key;
-              return (
-                <button
-                  key={opt.key}
-                  type="button"
-                  disabled={!ordersListReady}
-                  onClick={() => {
-                    if (!ordersListReady) return;
-                    setSelectedShippingCarrier(opt.key);
-                    setSelectedOrderIds([]);
-                    setCurrentPage(1);
-                  }}
-                  className={`text-[11px] px-3.5 py-1.5 rounded-full transition-all whitespace-nowrap ${
-                    !ordersListReady
-                      ? 'border border-gray-200 text-slate-400 bg-slate-50 font-bold cursor-not-allowed opacity-60'
-                      : opt.highlight
-                      ? active
-                        ? 'border-2 border-orange-500 text-orange-600 bg-orange-100 font-black shadow-sm'
-                        : 'border-2 border-orange-400 text-orange-500 bg-orange-50 font-black hover:bg-orange-100'
-                      : active
-                        ? 'border border-[#ee4d2d] text-[#ee4d2d] bg-orange-50/40 font-bold'
-                        : 'border border-gray-200 text-slate-700 bg-white font-bold hover:border-gray-300'
-                  }`}
-                >
-                  {opt.label} ({count ?? '…'})
-                </button>
-              );
-            })}
-          </div>
         )}
       </div>
       )}
