@@ -9803,13 +9803,13 @@ export default function OrderManager({
 
       {!isMobileViewport && (
       <div
-        className="om-orders-sub-tabs flex flex-col gap-1.5 rounded-xl border border-blue-950 bg-blue-900 p-1.5 whitespace-normal scrollbar-hide md:flex-row md:flex-wrap md:items-center md:overflow-x-visible shadow-sm"
+        className="om-orders-sub-tabs flex flex-col gap-1.5 rounded-xl border border-blue-700 bg-blue-600 p-1.5 whitespace-normal scrollbar-hide md:flex-row md:flex-wrap md:items-center md:overflow-x-visible shadow-sm"
       >        <button
           onClick={() => selectOrdersSubTab('all')}
           className={`om-orders-mobile-hide-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer ${
             activeSubTab === 'all' 
-              ? 'border-white bg-white text-blue-950 font-extrabold shadow-sm'
-              : 'border-blue-700/80 bg-blue-800/80 text-white hover:border-blue-500 hover:bg-blue-700'
+              ? 'border-white bg-white text-blue-700 font-extrabold shadow-sm'
+              : 'border-blue-400/70 bg-blue-500/80 text-white hover:border-blue-300 hover:bg-blue-400'
           }`}
         >
           Tất cả đơn hàng ({getCount('all')})
@@ -9819,8 +9819,8 @@ export default function OrderManager({
           onClick={() => selectOrdersSubTab('pending_confirm')}
           className={`om-orders-mobile-hide-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'pending_confirm' || activeSubTab === 'pending_verification'
-              ? 'border-white bg-white text-blue-950 font-extrabold shadow-sm'
-              : 'border-blue-700/80 bg-blue-800/80 text-white hover:border-blue-500 hover:bg-blue-700'
+              ? 'border-white bg-white text-blue-700 font-extrabold shadow-sm'
+              : 'border-blue-400/70 bg-blue-500/80 text-white hover:border-blue-300 hover:bg-blue-400'
           }`}
         >
           <span>Chờ xác nhận</span>
@@ -9833,8 +9833,8 @@ export default function OrderManager({
           onClick={() => selectOrdersSubTab('unprocessed')}
           className={`om-orders-mobile-show-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer ${
             activeSubTab === 'unprocessed' 
-              ? 'border-white bg-white text-blue-950 font-extrabold shadow-sm'
-              : 'border-blue-700/80 bg-blue-800/80 text-white hover:border-blue-500 hover:bg-blue-700'
+              ? 'border-white bg-white text-blue-700 font-extrabold shadow-sm'
+              : 'border-blue-400/70 bg-blue-500/80 text-white hover:border-blue-300 hover:bg-blue-400'
           }`}
         >
           <span className="uppercase text-left">Đơn chưa xử lý</span>
@@ -9847,8 +9847,8 @@ export default function OrderManager({
           onClick={() => selectOrdersSubTab('processed')}
           className={`om-orders-mobile-show-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer ${
             activeSubTab === 'processed' 
-              ? 'border-white bg-white text-blue-950 font-extrabold shadow-sm'
-              : 'border-blue-700/80 bg-blue-800/80 text-white hover:border-blue-500 hover:bg-blue-700'
+              ? 'border-white bg-white text-blue-700 font-extrabold shadow-sm'
+              : 'border-blue-400/70 bg-blue-500/80 text-white hover:border-blue-300 hover:bg-blue-400'
           }`}
         >
           <span className="uppercase text-left">Chờ lấy hàng (Đã xử lý)</span>
@@ -9861,8 +9861,8 @@ export default function OrderManager({
           onClick={() => openHandedOverCarrierTab({ skipFetch: false })}
           className={`om-orders-mobile-show-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer ${
             activeSubTab === 'handed_over_carrier' 
-              ? 'border-white bg-white text-blue-950 font-extrabold shadow-sm'
-              : 'border-blue-700/80 bg-blue-800/80 text-white hover:border-blue-500 hover:bg-blue-700'
+              ? 'border-white bg-white text-blue-700 font-extrabold shadow-sm'
+              : 'border-blue-400/70 bg-blue-500/80 text-white hover:border-blue-300 hover:bg-blue-400'
           }`}
         >
           <span className="uppercase text-left">Đã giao cho ĐVVC</span>
@@ -9875,8 +9875,8 @@ export default function OrderManager({
           onClick={() => selectOrdersSubTab('shipping')}
           className={`om-orders-mobile-hide-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'shipping' 
-              ? 'border-white bg-white text-blue-950 font-extrabold shadow-sm'
-              : 'border-blue-700/80 bg-blue-800/80 text-white hover:border-blue-500 hover:bg-blue-700'
+              ? 'border-white bg-white text-blue-700 font-extrabold shadow-sm'
+              : 'border-blue-400/70 bg-blue-500/80 text-white hover:border-blue-300 hover:bg-blue-400'
           }`}
         >
           <span>Đang giao</span>
@@ -9889,8 +9889,8 @@ export default function OrderManager({
           onClick={() => selectOrdersSubTab('order_products')}
           className={`om-orders-mobile-show-subtab inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-semibold uppercase tracking-wide leading-snug transition-all cursor-pointer ${
             activeSubTab === 'order_products'
-              ? 'border-white bg-white text-blue-950 font-extrabold shadow-sm'
-              : 'border-blue-700/80 bg-blue-800/80 text-white hover:border-blue-500 hover:bg-blue-700'
+              ? 'border-white bg-white text-blue-700 font-extrabold shadow-sm'
+              : 'border-blue-400/70 bg-blue-500/80 text-white hover:border-blue-300 hover:bg-blue-400'
           }`}
         >
           <span className="uppercase text-left">Những sản phẩm có trong đơn</span>

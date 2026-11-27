@@ -223,11 +223,11 @@ export function MobileOrderTabs<T extends string>({ tabs, active, onSelect }: {
   }, [active]);
 
   return (
-    <nav ref={strip} aria-label="Trạng thái đơn hàng" className="scrollbar-hide sticky top-0 z-30 -mx-2 flex items-center gap-1.5 overflow-x-auto overscroll-x-contain border-y border-blue-950 bg-blue-900 px-3 py-1.5 shadow-sm" onTouchStart={(event) => event.stopPropagation()}>
+    <nav ref={strip} aria-label="Trạng thái đơn hàng" className="scrollbar-hide sticky top-0 z-30 -mx-2 flex items-center gap-1.5 overflow-x-auto overscroll-x-contain border-y border-blue-700 bg-blue-600 px-3 py-1.5 shadow-sm" onTouchStart={(event) => event.stopPropagation()}>
       {tabs.map(({ id, label, count }) => (
-        <button key={id} type="button" aria-pressed={active === id} onClick={() => onSelect(id)} className={`inline-flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3.5 py-1.5 text-xs font-semibold leading-tight transition-colors ${active === id ? 'border-white bg-white text-blue-950 shadow-sm' : 'border-blue-700 bg-blue-800 text-white active:bg-blue-700'}`}>
+        <button key={id} type="button" aria-pressed={active === id} onClick={() => onSelect(id)} className={`inline-flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3.5 py-1.5 text-xs font-semibold leading-tight transition-colors ${active === id ? 'border-white bg-white text-blue-700 shadow-sm' : 'border-blue-400 bg-blue-500 text-white active:bg-blue-400'}`}>
           {label}
-          <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none tabular-nums ${active === id ? 'bg-blue-900 text-white' : 'bg-blue-950/70 text-blue-100'}`}>{count}</span>
+          <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none tabular-nums ${active === id ? 'bg-blue-600 text-white' : 'bg-blue-700/80 text-blue-50'}`}>{count}</span>
         </button>
       ))}
     </nav>
