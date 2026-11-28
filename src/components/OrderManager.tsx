@@ -116,6 +116,7 @@ import QuickPosPage from './QuickPosPage';
 import OrderDraftsPage from './OrderDraftsPage';
 import type { OrderDraft } from '../utils/orderDrafts';
 import { ExternalOrdersTable } from './ExternalOrdersTable';
+import OrderShopFilterDropdown from './OrderShopFilterDropdown';
 import { createTimeoutSignal, resolveLabelFetchUrl, parseJsonResponse, readResponseJson } from '../utils/apiClient';
 import type { AggregatedOrderProduct } from '../utils/aggregateOrderProducts';
 import { getCarrierWaybillDisplay } from '../utils/orderTracking';
@@ -9422,6 +9423,23 @@ export default function OrderManager({
     playNotificationSound();
   };
 
+  const handleShopFilterChange = (value: typeof shopFilterValue) => {
+    setSearchQuery('');
+    setCurrentPage(1);
+    if (value === 'web') {
+      setSelectedPlatform('woocommerce');
+      setSelectedShopId('all');
+      if (activeSubTab !== 'web_orders') selectOrdersSubTab('web_orders');
+      return;
+    }
+    const next = parseOrderShopFilterValue(value, shops);
+    if (activeSubTab === 'web_orders' || activeSubTab === 'external_orders') {
+      selectOrdersSubTab('all');
+    }
+    setSelectedPlatform(next.platform as typeof selectedPlatform);
+    setSelectedShopId(next.shopId);
+  };
+
   return (
     <div
       className="space-y-6 max-md:space-y-2 om-orders-page relative"
@@ -9448,6 +9466,14 @@ export default function OrderManager({
             {!audioEnabled && <button type="button" onClick={enableOrderAudio} aria-label="Bật âm thanh thông báo" className="om-mobile-inline-price inline-flex shrink-0 items-center gap-1 rounded-lg px-1.5 text-amber-800 active:bg-amber-100"><BellOff className="size-3.5" aria-hidden="true" /> Bật âm báo</button>}
           </div>
           <MobileQuickOrderButton onClick={() => selectMobileTab('quick_pos')} />
+          <div className="px-1">
+            <OrderShopFilterDropdown
+              value={shopFilterValue}
+              options={shopFilterOptions}
+              onChange={handleShopFilterChange}
+              className="w-full"
+            />
+          </div>
         </>
       )}
       {pushOrderId && onDismissPushOrder && (
@@ -9839,32 +9865,11 @@ export default function OrderManager({
       <div
         className="om-orders-sub-tabs sticky top-0 z-40 flex min-w-0 flex-col gap-1 rounded-xl border border-slate-200 bg-white p-1 whitespace-nowrap shadow-sm scrollbar-hide md:flex-row md:flex-nowrap md:items-center md:overflow-x-auto"
       >
-        <select
-          aria-label="Lọc gian hàng"
+        <OrderShopFilterDropdown
           value={shopFilterValue}
-          onChange={(event) => {
-            const value = event.target.value;
-            setSearchQuery('');
-            setCurrentPage(1);
-            if (value === 'web') {
-              setSelectedPlatform('woocommerce');
-              setSelectedShopId('all');
-              if (activeSubTab !== 'web_orders') selectOrdersSubTab('web_orders');
-              return;
-            }
-            const next = parseOrderShopFilterValue(value, shops);
-            if (activeSubTab === 'web_orders' || activeSubTab === 'external_orders') {
-              selectOrdersSubTab('all');
-            }
-            setSelectedPlatform(next.platform as typeof selectedPlatform);
-            setSelectedShopId(next.shopId);
-          }}
-          className="order-0 min-w-[180px] shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-slate-700"
-        >
-          {shopFilterOptions.map((option) => (
-            <option key={String(option.value)} value={option.value}>{option.label}</option>
-          ))}
-        </select>
+          options={shopFilterOptions}
+          onChange={handleShopFilterChange}
+        />
         <button type="button" onClick={handleQuickSyncOrders} disabled={isSyncing || ordersLoading} title="Đồng bộ nhanh 3h" aria-label="Đồng bộ nhanh 3h" className="order-last ml-auto inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-amber-200 bg-amber-50 text-amber-700 disabled:opacity-50">
           <RefreshCw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
         </button>
