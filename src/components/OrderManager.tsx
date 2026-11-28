@@ -127,7 +127,11 @@ import {
 } from '../utils/shippingCarrier';
 import { resolveOrderShopDisplayName } from '../utils/resolveOrderShopName';
 import {
-  matchesOrderShopGroup,
+  deriveOrderShopFilterValue,
+  getConfiguredShopId,
+  getOrderShopFilterOptions,
+  matchesOrderSelectedShop,
+  parseOrderShopFilterValue,
   resolveShopIdsForFetch,
 } from '../utils/orderShopGroup';
 import { orderCreatedAtMs } from '../utils/sanitizeOrder';
@@ -1186,8 +1190,6 @@ export default function OrderManager({
   /** Primitive key — chỉ đổi khi sub-tab Hủy/Hoàn thật sự đổi, tránh object/array deps. */
   const listFetchKind = activeSubTab === 'cancel_returns' ? cancelReturnTab : '';
   const [selectedShopId, setSelectedShopId] = useState<string>('all');
-  // Nhóm gian hàng hiển thị trong dropdown mới, ánh xạ về shopId/platform thật.
-  const [selectedShopGroup, setSelectedShopGroup] = useState<'all' | 'audio' | 'lkat' | 'web'>('all');
   const [selectedPlatform, setSelectedPlatform] = useState<'all' | 'shopee' | 'tiktok' | 'lazada' | 'woocommerce' | 'manual'>('all');
   const [showShopeeDropdown, setShowShopeeDropdown] = useState(false);
   const [showWooDropdown, setShowWooDropdown] = useState(false);
@@ -1196,10 +1198,10 @@ export default function OrderManager({
   const resolvedShopIds = useMemo(
     () => isExternalOrdersTab
       ? []
-      : resolveShopIdsForFetch(shops, selectedShopId, selectedPlatform, selectedShopGroup),
+      : resolveShopIdsForFetch(shops, selectedShopId, selectedPlatform),
     // shopsKey = primitive fingerprint — CẤM đưa `shops` array vào deps (loop re-render).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [isExternalOrdersTab, selectedShopId, selectedPlatform, selectedShopGroup, shopsKey],
+    [isExternalOrdersTab, selectedShopId, selectedPlatform, shopsKey],
   );
   const shopIdsKey = resolvedShopIds.join(',');
   const shopScopeRef = useRef({ shopIds: resolvedShopIds, shopIdsKey, selectedPlatform });
@@ -1662,15 +1664,12 @@ export default function OrderManager({
     setShowCreateOrderPage(false);
     if (nextTab === 'web_orders') {
       setSelectedPlatform('woocommerce');
-      setSelectedShopGroup('web');
       setSelectedShopId('all');
     } else if (nextTab === 'external_orders') {
       setSelectedPlatform('manual');
-      setSelectedShopGroup('all');
       setSelectedShopId('all');
     } else {
       setSelectedPlatform('all');
-      setSelectedShopGroup('all');
       setSelectedShopId('all');
     }
     setActiveSubTab(nextTab);
@@ -2286,11 +2285,9 @@ export default function OrderManager({
         : normalizeOrderTab(initialOrdersSubTab) || initialOrdersSubTab;
     if (next === 'web_orders') {
       setSelectedPlatform('woocommerce');
-      setSelectedShopGroup('web');
       setSelectedShopId('all');
     } else if (next !== 'external_orders') {
       setSelectedPlatform('all');
-      setSelectedShopGroup('all');
       setSelectedShopId('all');
     }
     if (next === 'cancel_returns') {
@@ -2815,28 +2812,26 @@ export default function OrderManager({
   printStatusFilterRef.current = printStatusFilter;
   const [resettingPrintIds, setResettingPrintIds] = useState<string[]>([]);
   const shopeeShops = shops.filter((shop) => shop.platform === 'shopee');
+  const shopFilterOptions = useMemo(() => getOrderShopFilterOptions(shops), [shopsKey]);
+  const shopFilterValue = deriveOrderShopFilterValue(selectedPlatform, selectedShopId);
+
+  useEffect(() => {
+    if (!shops.length || selectedShopId === 'all' || selectedPlatform === 'woocommerce') return;
+    const validShopIds = new Set(
+      shops
+        .filter((shop) => shop.connected !== false && shop.platform === selectedPlatform)
+        .map(getConfiguredShopId)
+        .filter(Boolean),
+    );
+    if (!validShopIds.has(String(selectedShopId).trim())) {
+      setSelectedPlatform('all');
+      setSelectedShopId('all');
+    }
+  }, [shops, shopsKey, selectedPlatform, selectedShopId]);
 
   const matchesSelectedShop = (order: Order): boolean => {
-    if (selectedShopId === 'all') return true;
-
-    const orderShopId = String(order.shopId || '').trim();
-    const selected = String(selectedShopId || '').trim();
-    if (orderShopId && orderShopId === selected) return true;
-
-    // Đơn cũ có thể lưu ID nội bộ, còn đơn mới lưu shop_id thật từ sàn.
-    const selectedShop = shops.find(
-      (shop) => String(shop.shopId || '') === selected || String(shop.id || '') === selected,
-    );
-    if (!selectedShop) return false;
-    return (
-      orderShopId === String(selectedShop.shopId || '') ||
-      orderShopId === String(selectedShop.id || '')
-    );
-  };
-
-  const matchesSelectedShopGroup = (order: Order): boolean => {
     if (activeSubTab === 'external_orders') return true;
-    return matchesOrderShopGroup(order, selectedShopGroup, shopeeShops);
+    return matchesOrderSelectedShop(order, selectedPlatform, selectedShopId, shops);
   };
 
   /**
@@ -2856,7 +2851,6 @@ export default function OrderManager({
     }
     setPrintStatusFilter('all');
     setSearchQuery('');
-    setSelectedShopGroup('all');
     setSelectedPlatform('all');
     setSelectedShopId('all');
     setActiveSubTab(UI_TAB_HANDED_OVER_CARRIER);
@@ -7532,7 +7526,6 @@ export default function OrderManager({
 
     // Backend đã lọc tab/khoảng ngày/ĐVVC; chỉ giữ bộ lọc hiển thị còn lại.
     if (isBackendCancelReturnTab) {
-      if (!matchesSelectedShopGroup(order)) return false;
       if (!matchesSelectedShop(order)) return false;
       if (printStatusFilter === 'printed' && !isOrderPrintedEffective(order)) return false;
       if (printStatusFilter === 'unprinted' && isOrderPrintedEffective(order)) return false;
@@ -7540,18 +7533,6 @@ export default function OrderManager({
     }
 
     if (activeSubTab === 'external_orders' && order.channel !== 'manual') return false;
-    if (!matchesSelectedShopGroup(order)) return false;
-    if (activeSubTab !== 'external_orders' && selectedPlatform !== 'all') {
-      if (selectedPlatform === 'lazada') return false;
-      const orderChannel = String(order.channel || '');
-      const isWebOrder = orderChannel === 'woocommerce' || orderChannel === 'web';
-      if (selectedPlatform === 'woocommerce' && selectedShopGroup === 'web' && isWebOrder) {
-        // Giữ dữ liệu Woo cũ dùng channel="web".
-      } else if (order.channel !== selectedPlatform) {
-        return false;
-      }
-    }
-
     if (activeSubTab !== 'external_orders' && !matchesSelectedShop(order)) return false;
 
     if (printStatusFilter === 'printed' && !isOrderPrintedEffective(order)) return false;
@@ -7591,7 +7572,7 @@ export default function OrderManager({
       pendingPosOrders,
       selectedPlatform,
       selectedShopId,
-      selectedShopGroup,
+      shopsKey,
       searchQuery,
       printStatusFilter,
       activeSubTab,
@@ -9322,7 +9303,6 @@ export default function OrderManager({
   };
   const showExternalOrders = () => {
     setSelectedPlatform('manual');
-    setSelectedShopGroup('all');
     setSelectedShopId('all');
     selectOrdersSubTab('external_orders');
   };
@@ -9417,7 +9397,6 @@ export default function OrderManager({
   const selectMobileTab = (tab: OrderTab) => {
     setSearchQuery('');
     setSelectedPlatform(tab === 'web_orders' ? 'woocommerce' : 'all');
-    setSelectedShopGroup(tab === 'web_orders' ? 'web' : 'all');
     setSelectedShopId('all');
     if (tab === 'handed_over_carrier') {
       openHandedOverCarrierTab({ skipFetch: false });
@@ -9660,8 +9639,7 @@ export default function OrderManager({
                 setShowShopeeDropdown(!showShopeeDropdown);
                 setShowWooDropdown(false);
                 if (selectedPlatform !== 'shopee') {
-                  setSelectedShopGroup('all');
-                  setSelectedPlatform('shopee');
+                              setSelectedPlatform('shopee');
                   setSelectedShopId('all');
                 }
               }}
@@ -9678,8 +9656,7 @@ export default function OrderManager({
               <div className="absolute top-11 left-0 bg-white border border-gray-100 rounded-2xl shadow-xl py-2 w-64 z-20 animate-in fade-in duration-100">
                 <button
                   onClick={() => {
-                    setSelectedShopGroup('all');
-                    setSelectedPlatform('shopee');
+                                  setSelectedPlatform('shopee');
                     setSelectedShopId('all');
                     setShowShopeeDropdown(false);
                   }}
@@ -9693,8 +9670,7 @@ export default function OrderManager({
                   <button
                     key={shop.id}
                     onClick={() => {
-                      setSelectedShopGroup('all');
-                      setSelectedPlatform('shopee');
+                                      setSelectedPlatform('shopee');
                       setSelectedShopId(String(shop.shopId));
                       setShowShopeeDropdown(false);
                     }}
@@ -9715,8 +9691,7 @@ export default function OrderManager({
                 setShowWooDropdown(!showWooDropdown);
                 setShowShopeeDropdown(false);
                 if (selectedPlatform !== 'woocommerce') {
-                  setSelectedShopGroup('all');
-                  setSelectedPlatform('woocommerce');
+                              setSelectedPlatform('woocommerce');
                   setSelectedShopId('all');
                 }
               }}
@@ -9733,8 +9708,7 @@ export default function OrderManager({
               <div className="absolute top-11 left-0 bg-white border border-gray-100 rounded-2xl shadow-xl py-2 w-64 z-20 animate-in fade-in duration-100">
                 <button
                   onClick={() => {
-                    setSelectedShopGroup('all');
-                    setSelectedPlatform('woocommerce');
+                                  setSelectedPlatform('woocommerce');
                     setSelectedShopId('all');
                     setShowWooDropdown(false);
                   }}
@@ -9751,8 +9725,7 @@ export default function OrderManager({
                     <button
                       key={shop.id}
                       onClick={() => {
-                        setSelectedShopGroup('all');
-                        setSelectedPlatform('woocommerce');
+                                          setSelectedPlatform('woocommerce');
                         setSelectedShopId(String(shop.shopId));
                         setShowWooDropdown(false);
                       }}
@@ -9771,8 +9744,7 @@ export default function OrderManager({
           <button 
             type="button"
             onClick={() => {
-              setSelectedShopGroup('all');
-              setSelectedPlatform('manual');
+                      setSelectedPlatform('manual');
               setSelectedShopId('all');
             }}
             className={`px-4 py-2 bg-white hover:bg-emerald-50 border rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 shadow-xs cursor-pointer ${
@@ -9787,8 +9759,7 @@ export default function OrderManager({
           {(selectedPlatform !== 'all' || selectedShopId !== 'all') && (
             <button
               onClick={() => {
-                setSelectedShopGroup('all');
-                setSelectedPlatform('all');
+                          setSelectedPlatform('all');
                 setSelectedShopId('all');
               }}
               className="px-2.5 py-1.5 bg-blue-50 text-blue-600 rounded-xl text-xs font-bold hover:bg-blue-100 transition-all"
@@ -9859,31 +9830,29 @@ export default function OrderManager({
       >
         <select
           aria-label="Lọc gian hàng"
-          value={selectedShopGroup}
+          value={shopFilterValue}
           onChange={(event) => {
-            const value = event.target.value as 'all' | 'audio' | 'lkat' | 'web';
-            setSelectedShopGroup(value);
+            const value = event.target.value;
             setSearchQuery('');
             setCurrentPage(1);
             if (value === 'web') {
               setSelectedPlatform('woocommerce');
               setSelectedShopId('all');
+              if (activeSubTab !== 'web_orders') selectOrdersSubTab('web_orders');
               return;
             }
-            if (value === 'all') {
-              setSelectedPlatform('all');
-              setSelectedShopId('all');
-              return;
+            const next = parseOrderShopFilterValue(value, shops);
+            if (activeSubTab === 'web_orders' || activeSubTab === 'external_orders') {
+              selectOrdersSubTab('all');
             }
-            setSelectedPlatform('shopee');
-            setSelectedShopId('all');
+            setSelectedPlatform(next.platform as typeof selectedPlatform);
+            setSelectedShopId(next.shopId);
           }}
-          className="order-0 min-w-[150px] shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-slate-700"
+          className="order-0 min-w-[180px] shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-slate-700"
         >
-          <option value="all">Tất cả gian hàng</option>
-          <option value="audio">Gian hàng audio</option>
-          <option value="lkat">Gian hàng LKAT</option>
-          <option value="web">Đơn trên web</option>
+          {shopFilterOptions.map((option) => (
+            <option key={String(option.value)} value={option.value}>{option.label}</option>
+          ))}
         </select>
         <button type="button" onClick={handleQuickSyncOrders} disabled={isSyncing || ordersLoading} title="Đồng bộ nhanh 3h" aria-label="Đồng bộ nhanh 3h" className="order-last ml-auto inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-amber-200 bg-amber-50 text-amber-700 disabled:opacity-50">
           <RefreshCw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
