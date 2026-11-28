@@ -1190,7 +1190,13 @@ export default function OrderManager({
   /** Primitive key — chỉ đổi khi sub-tab Hủy/Hoàn thật sự đổi, tránh object/array deps. */
   const listFetchKind = activeSubTab === 'cancel_returns' ? cancelReturnTab : '';
   const [selectedShopId, setSelectedShopId] = useState<string>('all');
-  const [selectedPlatform, setSelectedPlatform] = useState<'all' | 'shopee' | 'tiktok' | 'lazada' | 'woocommerce' | 'manual'>('all');
+  const [selectedPlatform, setSelectedPlatform] = useState<'all' | 'shopee' | 'tiktok' | 'lazada' | 'woocommerce' | 'manual'>(() =>
+    activeSubTab === 'web_orders'
+      ? 'woocommerce'
+      : activeSubTab === 'external_orders'
+        ? 'manual'
+        : 'all',
+  );
   const [showShopeeDropdown, setShowShopeeDropdown] = useState(false);
   const [showWooDropdown, setShowWooDropdown] = useState(false);
   const shopsKey = shopsIdentityKey(shops);
@@ -2286,7 +2292,10 @@ export default function OrderManager({
     if (next === 'web_orders') {
       setSelectedPlatform('woocommerce');
       setSelectedShopId('all');
-    } else if (next !== 'external_orders') {
+    } else if (next === 'external_orders') {
+      setSelectedPlatform('manual');
+      setSelectedShopId('all');
+    } else {
       setSelectedPlatform('all');
       setSelectedShopId('all');
     }
@@ -2827,7 +2836,9 @@ export default function OrderManager({
       setSelectedPlatform('all');
       setSelectedShopId('all');
     }
-  }, [shops, shopsKey, selectedPlatform, selectedShopId]);
+    // shopsKey = primitive fingerprint — tránh chạy lại khi parent chỉ tạo array mới.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shopsKey, selectedPlatform, selectedShopId]);
 
   const matchesSelectedShop = (order: Order): boolean => {
     if (activeSubTab === 'external_orders') return true;

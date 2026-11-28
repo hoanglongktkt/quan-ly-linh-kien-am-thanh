@@ -53,6 +53,7 @@ export function parseOrderShopFilterValue(
   if (value === 'all') return { platform: 'all', shopId: 'all' };
 
   const rawId = value.startsWith('shop:') ? value.slice(5).trim() : '';
+  if (!rawId) return { platform: 'all', shopId: 'all' };
   const shop = shops.find(
     (candidate) => candidate.platform === 'shopee' && getConfiguredShopId(candidate) === rawId,
   );
@@ -67,9 +68,9 @@ export function resolveShopIdsForFetch(
   selectedShopId: string,
   selectedPlatform: string,
 ): string[] {
+  if (selectedPlatform !== 'shopee' && selectedPlatform !== 'tiktok') return [];
   const selected = String(selectedShopId || '').trim();
   if (selected && selected !== 'all') return [selected];
-  if (selectedPlatform !== 'shopee' && selectedPlatform !== 'tiktok') return [];
 
   return [...new Set(
     shops
@@ -86,9 +87,7 @@ export function matchesOrderSelectedShop(
   shops: ConnectedShop[],
 ): boolean {
   const channel = String(order.channel || '');
-  if (selectedPlatform === 'all' || selectedPlatform === 'manual' || selectedPlatform === 'lazada') {
-    return true;
-  }
+  if (selectedPlatform === 'all') return true;
   if (selectedPlatform === 'woocommerce') {
     return channel === 'woocommerce' || channel === 'web';
   }
@@ -97,10 +96,12 @@ export function matchesOrderSelectedShop(
   const selected = String(selectedShopId || '').trim();
   if (!selected || selected === 'all') return true;
   const orderShopId = normalizedOrderShopId(order);
+  if (!orderShopId) return false;
   if (orderShopId === selected) return true;
 
   const configured = shops.find(
     (shop) => getConfiguredShopId(shop) === selected && shop.platform === selectedPlatform,
   );
-  return Boolean(configured && orderShopId === String(configured.id || '').trim());
+  const configuredId = String(configured?.id || '').trim();
+  return Boolean(configuredId && orderShopId === configuredId);
 }
